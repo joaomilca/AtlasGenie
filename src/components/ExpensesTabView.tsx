@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ExpenseCategory,
   ExpenseSplitMode,
   FullTripBundle,
 } from '../types/models';
 import { computeExpenseBalancesAndSettlement } from '../utils/domainLogic';
-import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
 
 interface ExpensesTabViewProps {
@@ -17,7 +17,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
   bundle,
   preselectedActivityId = '',
 }) => {
-  const { t } = useI18n();
+  const { t } = useTranslation();
   const { addExpense, toggleExpenseSettled, showToast } = useAtlas();
 
   const [description, setDescription] = useState('');
@@ -69,7 +69,6 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
             : Math.round((amount / count) * 100) / 100;
       });
     } else {
-      // custom amounts
       bundle.travelers.forEach((tr) => {
         splits[tr.id] = Number(customValues[tr.id] ?? amount / count);
       });
@@ -93,14 +92,14 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
 
   const handleCopySummary = () => {
     const lines = [
-      `AtlasGenie Expense Summary — ${bundle.trip.destination}`,
-      `Total Spent: €${summary.totalSpent.toFixed(2)}`,
+      `AtlasGenie — ${bundle.trip.destination}`,
+      `${t('budget.actualSpent')}: €${summary.totalSpent.toFixed(2)}`,
       ...summary.settlements.map(
-        (s) => `${s.fromName} pays ${s.toName} €${s.amount.toFixed(2)}`
+        (s) => `${s.fromName} ${t('expenses.pays')} ${s.toName} €${s.amount.toFixed(2)}`
       ),
     ];
     navigator.clipboard?.writeText(lines.join('\n')).catch(() => {});
-    showToast('Copied settlement summary to clipboard!');
+    showToast(t('expenses.copySummary'));
   };
 
   const handleExportCsv = () => {
@@ -126,7 +125,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Exported expenses CSV.');
+    showToast(t('expenses.exportCsv'));
   };
 
   return (
@@ -146,14 +145,14 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
           <button
             type="button"
             onClick={handleCopySummary}
-            className="px-3.5 py-2 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg whitespace-nowrap"
+            className="px-3.5 py-2 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
           >
             {t('expenses.copySummary')}
           </button>
           <button
             type="button"
             onClick={handleExportCsv}
-            className="px-3.5 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg whitespace-nowrap"
+            className="px-3.5 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
           >
             {t('expenses.exportCsv')}
           </button>
@@ -175,7 +174,8 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
                 <div>
                   <span className="font-semibold text-sm">{b.displayName}</span>
                   <span className="text-slate-500 ml-2 font-mono-tabular">
-                    (Paid €{b.paidTotal.toFixed(2)} · Share €{b.owedTotal.toFixed(2)})
+                    ({t('expenses.paid')} €{b.paidTotal.toFixed(2)} · {t('expenses.share')} €
+                    {b.owedTotal.toFixed(2)})
                   </span>
                 </div>
                 <span
@@ -199,7 +199,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
             {t('expenses.settleTitle')}
           </h3>
           {summary.settlements.length === 0 ? (
-            <p className="text-xs text-slate-500">All balances are settled! Everyone is at €0.00.</p>
+            <p className="text-xs text-slate-500">{t('expenses.allSettled')}</p>
           ) : (
             <ul className="space-y-2.5 text-sm">
               {summary.settlements.map((s, idx) => (
@@ -230,22 +230,22 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div className="sm:col-span-2">
               <label htmlFor="exp-desc" className="block text-xs font-medium mb-1">
-                Description
+                {t('expenses.descLabel')}
               </label>
               <input
                 id="exp-desc"
                 type="text"
                 required
-                placeholder="e.g. Tasca dinner, Museum tickets, Bolt taxi…"
+                placeholder={t('expenses.descPlaceholder')}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
             </div>
 
             <div>
               <label htmlFor="exp-amount" className="block text-xs font-medium mb-1">
-                Amount (€)
+                {t('expenses.amountLabel')}
               </label>
               <input
                 id="exp-amount"
@@ -255,25 +255,25 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
                 required
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 font-mono-tabular"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
             </div>
 
             <div>
               <label htmlFor="exp-cat" className="block text-xs font-medium mb-1">
-                Category
+                {t('expenses.categoryLabel')}
               </label>
               <select
                 id="exp-cat"
                 value={category}
                 onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
-                <option value="food">Food &amp; Drinks</option>
-                <option value="activities">Activities &amp; Tickets</option>
-                <option value="transport">Transport</option>
-                <option value="accommodation">Accommodation</option>
-                <option value="other">Other</option>
+                <option value="food">{t('expenses.catFood')}</option>
+                <option value="activities">{t('expenses.catActivities')}</option>
+                <option value="transport">{t('expenses.catTransport')}</option>
+                <option value="accommodation">{t('expenses.catAccommodation')}</option>
+                <option value="other">{t('expenses.catOther')}</option>
               </select>
             </div>
           </div>
@@ -281,13 +281,13 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label htmlFor="exp-paidby" className="block text-xs font-medium mb-1">
-                Paid By
+                {t('expenses.paidByLabel')}
               </label>
               <select
                 id="exp-paidby"
                 value={paidBy}
                 onChange={(e) => setPaidBy(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
                 {bundle.travelers.map((tr) => (
                   <option key={tr.id} value={tr.id}>
@@ -299,31 +299,31 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
 
             <div>
               <label htmlFor="exp-splitmode" className="block text-xs font-medium mb-1">
-                Split Mode
+                {t('expenses.splitModeLabel')}
               </label>
               <select
                 id="exp-splitmode"
                 value={splitMode}
                 onChange={(e) => setSplitMode(e.target.value as ExpenseSplitMode)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
-                <option value="equal">Equal Split</option>
-                <option value="shares">By Shares (1x, 2x…)</option>
-                <option value="custom">Custom Exact Amounts (€)</option>
+                <option value="equal">{t('expenses.splitEqual')}</option>
+                <option value="shares">{t('expenses.splitShares')}</option>
+                <option value="custom">{t('expenses.splitCustom')}</option>
               </select>
             </div>
 
             <div>
               <label htmlFor="exp-act" className="block text-xs font-medium mb-1">
-                Link to Activity (Optional)
+                {t('expenses.linkActivityLabel')}
               </label>
               <select
                 id="exp-act"
                 value={activityId}
                 onChange={(e) => setActivityId(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
-                <option value="">General Trip Expense</option>
+                <option value="">{t('expenses.generalExpense')}</option>
                 {allActivities.map((act) => (
                   <option key={act.id} value={act.id}>
                     {act.title}
@@ -337,10 +337,14 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
               {bundle.travelers.map((tr) => (
                 <div key={tr.id}>
-                  <label className="block text-[11px] text-slate-500 mb-1">
-                    {tr.displayName} ({splitMode === 'shares' ? 'Shares' : '€'})
+                  <label
+                    htmlFor={`exp-custom-${tr.id}`}
+                    className="block text-[11px] text-slate-500 mb-1"
+                  >
+                    {tr.displayName} ({splitMode === 'shares' ? t('expenses.sharesUnit') : '€'})
                   </label>
                   <input
+                    id={`exp-custom-${tr.id}`}
                     type="number"
                     min="0"
                     step="0.5"
@@ -351,7 +355,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
                         [tr.id]: Number(e.target.value),
                       }))
                     }
-                    className="w-full px-2.5 py-1.5 text-xs rounded-md border border-slate-300 dark:border-slate-700 font-mono-tabular"
+                    className="w-full px-2.5 py-1.5 text-xs rounded-md border border-slate-300 dark:border-slate-700 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
               ))}
@@ -360,7 +364,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
 
           <button
             type="submit"
-            className="px-5 py-2.5 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors"
+            className="px-5 py-2.5 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
           >
             + {t('expenses.addBtn')}
           </button>
@@ -370,7 +374,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
       {/* Recorded Expenses List */}
       <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
         <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
-          Recorded Expenses ({bundle.expenses.length})
+          {t('expenses.recordedTitle', { count: bundle.expenses.length })}
         </h3>
         <div className="space-y-2.5">
           {bundle.expenses.map((exp) => {
@@ -386,7 +390,9 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
                     {exp.description}
                   </p>
                   <p className="text-xs text-slate-500 font-mono-tabular">
-                    Paid by {payerName} · {exp.category} · Split: {exp.splitMode}
+                    {t('expenses.paidByPrefix')} {payerName} ·{' '}
+                    {t(`interest.${exp.category}`, { defaultValue: exp.category })} ·{' '}
+                    {t('expenses.splitPrefix')} {exp.splitMode}
                   </p>
                 </div>
 
@@ -397,7 +403,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleExpenseSettled(bundle.trip.id, exp.id)}
-                    className={`px-3 py-1 text-xs font-medium rounded-md border transition-colors ${
+                    className={`px-3 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
                       exp.settled
                         ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'

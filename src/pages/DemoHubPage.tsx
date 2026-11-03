@@ -1,31 +1,31 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { DEMO_TRIPS } from '../data/demoTrips';
 import { computeReliabilitySummary } from '../utils/domainLogic';
-import { useI18n } from '../i18n/I18nContext';
 
 export const DemoHubPage: React.FC = () => {
   const navigate = useNavigate();
-  const { t } = useI18n();
+  const { t } = useTranslation();
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-8 py-10 space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-6">
         <div>
           <p className="text-xs font-mono-tabular uppercase text-amber-700 dark:text-amber-400">
-            Instant Interactive Sandbox · Zero Sign-Up Required
+            {t('demo.kicker')}
           </p>
           <h1 className="font-serif-atlas text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white mt-1">
             {t('hero.demoSamplesTitle')}
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">
-            Every sample trip includes verified &amp; estimated badges, pre-generated budget tiers, tourist-trap local alternatives, rainy-day Plan B schedules, and a live group with votes and shared expenses.
+            {t('demo.subtitle')}
           </p>
         </div>
         <button
           type="button"
           onClick={() => navigate('/trips/new')}
-          className="px-5 py-2.5 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+          className="px-5 py-2.5 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
           {t('dash.createBtn')}
         </button>
@@ -45,26 +45,38 @@ export const DemoHubPage: React.FC = () => {
                     {bundle.trip.startDate} → {bundle.trip.endDate}
                   </span>
                   <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
-                    🟢 {reliability.verifiedPercent}% Verified
+                    <span aria-hidden="true">🟢 </span>
+                    <span className="sr-only">Verified Source: </span>
+                    {reliability.verifiedPercent}% {t('trip.verified')}
                   </span>
                 </div>
 
                 <h2 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white">
-                  {bundle.trip.destination} ({bundle.days.length} Days)
+                  {bundle.trip.destination} ({bundle.days.length} {t('hero.days')})
                 </h2>
 
                 <p className="text-xs text-slate-600 dark:text-slate-300">
-                  Interests: {bundle.trip.interests.join(' · ')}
+                  {t('demo.interests')}{' '}
+                  {bundle.trip.interests
+                    .map((intKey) => t(`interest.${intKey}`, { defaultValue: intKey }))
+                    .join(' · ')}
                 </p>
 
                 <div className="pt-2 space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
                   <p>
-                    <strong className="text-slate-900 dark:text-white">Group Travellers:</strong>{' '}
-                    {bundle.travelers.map((tr) => `${tr.displayName} (€${tr.budgetPerPerson})`).join(', ')}
+                    <strong className="text-slate-900 dark:text-white">
+                      {t('demo.groupTravellers')}
+                    </strong>{' '}
+                    {bundle.travelers
+                      .map((tr) => `${tr.displayName} (€${tr.budgetPerPerson})`)
+                      .join(', ')}
                   </p>
                   <p>
-                    <strong className="text-slate-900 dark:text-white">Total Budget:</strong> €
-                    {bundle.trip.totalBudget} · {bundle.expenses.length} logged expenses
+                    <strong className="text-slate-900 dark:text-white">
+                      {t('demo.totalBudget')}
+                    </strong>{' '}
+                    €{bundle.trip.totalBudget} · {bundle.expenses.length}{' '}
+                    {t('demo.loggedExpenses')}
                   </p>
                 </div>
               </div>
@@ -73,23 +85,23 @@ export const DemoHubPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => navigate(`/trips/${bundle.trip.id}`)}
-                  className="col-span-2 py-2.5 px-4 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors"
+                  className="col-span-2 py-2.5 px-4 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors cursor-pointer"
                 >
-                  Explore Itinerary &amp; Map
+                  {t('demo.exploreBtn')}
                 </button>
                 <button
                   type="button"
                   onClick={() => navigate(`/trips/${bundle.trip.id}/budget`)}
-                  className="py-2 px-3 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors"
+                  className="py-2 px-3 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
                 >
-                  What-If Budget
+                  {t('demo.whatIfBtn')}
                 </button>
                 <button
                   type="button"
                   onClick={() => navigate(`/trips/${bundle.trip.id}/group`)}
-                  className="py-2 px-3 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors"
+                  className="py-2 px-3 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
                 >
-                  Group &amp; Votes
+                  {t('demo.groupVotesBtn')}
                 </button>
               </div>
             </article>

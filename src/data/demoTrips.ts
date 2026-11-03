@@ -1172,7 +1172,10 @@ export interface MiniPreviewStop {
   trapScore: number;
 }
 
-export function buildInstantMiniPreview(destinationRaw: string): {
+export function buildInstantMiniPreview(
+  destinationRaw: string,
+  lang: 'en' | 'pt' = 'en'
+): {
   city: string;
   tagline: string;
   day1: MiniPreviewStop[];
@@ -1180,28 +1183,39 @@ export function buildInstantMiniPreview(destinationRaw: string): {
 } {
   const clean = destinationRaw.trim() || 'Lisbon';
   const lower = clean.toLowerCase();
+  const isPt = lang === 'pt';
 
   if (lower.includes('lisbo')) {
     return {
       city: 'Lisbon',
-      tagline: '2-Day Verified Preview · Belém Limestone, Tile Cloisters & Miradouros',
+      tagline: isPt
+        ? 'Amostra Verificada de 2 Dias · Belém, Claustros de Azulejo e Miradouros'
+        : '2-Day Verified Preview · Belém Limestone, Tile Cloisters & Miradouros',
       day1: [
         {
           time: '09:00',
-          title: 'Mosteiro dos Jerónimos Cloisters',
-          whyThis: 'Early entry to UNESCO Manueline arches before tour groups arrive',
+          title: 'Mosteiro dos Jerónimos',
+          whyThis: isPt
+            ? 'Entrada matinal nos claustros manuelinos da UNESCO antes dos grupos turísticos'
+            : 'Early entry to UNESCO Manueline arches before tour groups arrive',
           costEstimate: '18€',
           confidence: 'verified',
-          sourceNote: 'Museus e Monumentos de Portugal (Checked Oct 2026)',
+          sourceNote: isPt
+            ? 'Museus e Monumentos de Portugal (Verificado Out 2026)'
+            : 'Museus e Monumentos de Portugal (Checked Oct 2026)',
           trapScore: 48,
         },
         {
           time: '11:30',
-          title: 'Pastéis de Belém — Warm Custard Tarts',
-          whyThis: 'Original 1837 monastic recipe served in the tiled dining room',
+          title: 'Pastéis de Belém',
+          whyThis: isPt
+            ? 'Receita original de 1837 servida morna nas salas de azulejo'
+            : 'Original 1837 monastic recipe served in the tiled dining room',
           costEstimate: '8€',
           confidence: 'verified',
-          sourceNote: 'pasteisdebelem.pt official menu (Checked Oct 2026)',
+          sourceNote: isPt
+            ? 'Menu oficial pasteisdebelem.pt (Verificado Out 2026)'
+            : 'pasteisdebelem.pt official menu (Checked Oct 2026)',
           trapScore: 62,
         },
       ],
@@ -1209,19 +1223,27 @@ export function buildInstantMiniPreview(destinationRaw: string): {
         {
           time: '10:30',
           title: 'Museu Nacional do Azulejo',
-          whyThis: 'Five centuries of Portuguese ceramic art in a 1509 convent',
+          whyThis: isPt
+            ? 'Cinco séculos de azulejaria portuguesa num convento de 1509'
+            : 'Five centuries of Portuguese ceramic art in a 1509 convent',
           costEstimate: '8€',
           confidence: 'verified',
-          sourceNote: 'museudoazulejo.gov.pt (Checked Oct 2026)',
+          sourceNote: isPt
+            ? 'museudoazulejo.gov.pt (Verificado Out 2026)'
+            : 'museudoazulejo.gov.pt (Checked Oct 2026)',
           trapScore: 22,
         },
         {
           time: '13:15',
-          title: 'Mercado de Campo de Ourique Petiscos',
-          whyThis: 'Local neighbourhood food hall alternative to crowded tourist hubs',
+          title: 'Mercado de Campo de Ourique',
+          whyThis: isPt
+            ? 'Mercado de bairro autêntico como alternativa às zonas turísticas'
+            : 'Local neighbourhood food hall alternative to crowded tourist hubs',
           costEstimate: '~16€',
           confidence: 'estimated',
-          sourceNote: 'Estimated neighbourhood counter lunch',
+          sourceNote: isPt
+            ? 'Almoço estimado nas bancas de bairro'
+            : 'Estimated neighbourhood counter lunch',
           trapScore: 18,
         },
       ],
@@ -1231,44 +1253,60 @@ export function buildInstantMiniPreview(destinationRaw: string): {
   if (lower.includes('porto')) {
     return {
       city: 'Porto',
-      tagline: '2-Day Verified Preview · Azulejos, Siza Architecture & Douro Cellars',
+      tagline: isPt
+        ? 'Amostra Verificada de 2 Dias · Azulejos, Arquitetura Siza e Caves do Douro'
+        : '2-Day Verified Preview · Azulejos, Siza Architecture & Douro Cellars',
       day1: [
         {
           time: '09:30',
-          title: 'São Bento Azulejo Vestibule',
-          whyThis: 'Iconic 20,000-tile historic hall with free entry',
+          title: 'Estação de São Bento',
+          whyThis: isPt
+            ? 'Átrio histórico com 20.000 azulejos e entrada gratuita'
+            : 'Iconic 20,000-tile historic hall with free entry',
           costEstimate: '0€',
           confidence: 'verified',
-          sourceNote: 'Infraestruturas de Portugal (Checked Oct 2026)',
+          sourceNote: isPt
+            ? 'Infraestruturas de Portugal (Verificado Out 2026)'
+            : 'Infraestruturas de Portugal (Checked Oct 2026)',
           trapScore: 30,
         },
         {
           time: '16:00',
-          title: 'Graham’s 1890 Port Lodge Cellar',
-          whyThis: 'Aged Tawny flight overlooking the Douro riverfront',
+          title: 'Graham’s 1890 Port Lodge',
+          whyThis: isPt
+            ? 'Prova de Vinhos do Porto Tawny com vista sobre o Douro'
+            : 'Aged Tawny flight overlooking the Douro riverfront',
           costEstimate: '~25€',
           confidence: 'verified',
-          sourceNote: 'grahams-port.com (Checked Oct 2026)',
+          sourceNote: isPt
+            ? 'grahams-port.com (Verificado Out 2026)'
+            : 'grahams-port.com (Checked Oct 2026)',
           trapScore: 34,
         },
       ],
       day2: [
         {
           time: '10:00',
-          title: 'Fundação de Serralves & Art Deco Villa',
-          whyThis: 'Minimalist architecture & treetop park walk',
+          title: 'Fundação de Serralves & Casa Art Déco',
+          whyThis: isPt
+            ? 'Arquitetura minimalista de Siza Vieira e percurso pelas copas'
+            : 'Minimalist architecture & treetop park walk',
           costEstimate: '20€',
           confidence: 'verified',
-          sourceNote: 'serralves.pt (Checked Oct 2026)',
+          sourceNote: isPt
+            ? 'serralves.pt (Verificado Out 2026)'
+            : 'serralves.pt (Checked Oct 2026)',
           trapScore: 19,
         },
         {
           time: '13:30',
-          title: 'Matosinhos Open-Coal Fish Grill',
-          whyThis: 'Where locals eat fresh Atlantic sea bass by the port',
+          title: 'Matosinhos — Peixe Grelhado no Carvão',
+          whyThis: isPt
+            ? 'Onde os locais comem robalo fresco acabado de chegar da lota'
+            : 'Where locals eat fresh Atlantic sea bass by the port',
           costEstimate: '~32€',
           confidence: 'estimated',
-          sourceNote: 'Estimated market weight price',
+          sourceNote: isPt ? 'Preço médio estimado ao peso' : 'Estimated market weight price',
           trapScore: 22,
         },
       ],
@@ -1278,32 +1316,42 @@ export function buildInstantMiniPreview(destinationRaw: string): {
   if (lower.includes('rom') || lower.includes('ital')) {
     return {
       city: 'Rome',
-      tagline: '2-Day Verified Preview · Imperial Vaults, Bernini & Testaccio Stalls',
+      tagline: isPt
+        ? 'Amostra Verificada de 2 Dias · Fórum Imperial, Bernini e Mercado de Testaccio'
+        : '2-Day Verified Preview · Imperial Vaults, Bernini & Testaccio Stalls',
       day1: [
         {
           time: '09:00',
           title: 'Colosseum & Roman Forum',
-          whyThis: 'Timed entry to the civic heart of Ancient Rome',
+          whyThis: isPt
+            ? 'Entrada com horário marcado no coração da Roma Antiga'
+            : 'Timed entry to the civic heart of Ancient Rome',
           costEstimate: '18€',
           confidence: 'verified',
-          sourceNote: 'colosseo.it official rate (Checked Oct 2026)',
+          sourceNote: isPt
+            ? 'Tarifa oficial colosseo.it (Verificado Out 2026)'
+            : 'colosseo.it official rate (Checked Oct 2026)',
           trapScore: 78,
         },
         {
           time: '13:15',
-          title: 'Mercato di Testaccio Supplì & Pasta',
-          whyThis: 'Authentic neighbourhood food market away from tourist piazzas',
+          title: 'Mercato di Testaccio',
+          whyThis: isPt
+            ? 'Mercado gastronómico autêntico longe das praças turísticas'
+            : 'Authentic neighbourhood food market away from tourist piazzas',
           costEstimate: '~16€',
           confidence: 'estimated',
-          sourceNote: 'Estimated stall average',
+          sourceNote: isPt ? 'Média estimada das bancas' : 'Estimated stall average',
           trapScore: 16,
         },
       ],
       day2: [
         {
           time: '10:00',
-          title: 'Galleria Borghese (Bernini Sculptures)',
-          whyThis: 'Capped 2-hour villa visit with zero crowding inside',
+          title: 'Galleria Borghese (Bernini)',
+          whyThis: isPt
+            ? 'Visita limitada a 2 horas sem multidões no interior'
+            : 'Capped 2-hour villa visit with zero crowding inside',
           costEstimate: '15€',
           confidence: 'verified',
           sourceNote: 'galleriaborghese.beniculturali.it',
@@ -1311,58 +1359,71 @@ export function buildInstantMiniPreview(destinationRaw: string): {
         },
         {
           time: '17:30',
-          title: 'Aventine Keyhole & Orange Garden Sunset',
-          whyThis: 'Panoramic dome view framed by pine trees',
+          title: 'Giardino degli Aranci (Aventino)',
+          whyThis: isPt
+            ? 'Vista panorâmica da cúpula emoldurada por pinheiros mansos'
+            : 'Panoramic dome view framed by pine trees',
           costEstimate: '0€',
           confidence: 'verified',
-          sourceNote: 'Municipal park hours',
+          sourceNote: isPt ? 'Horário municipal do parque' : 'Municipal park hours',
           trapScore: 28,
         },
       ],
     };
   }
 
-  // Dynamic customized preview for any city entered (Madrid, Paris, Seville, Amsterdam, etc.)
   return {
     city: clean,
-    tagline: `2-Day Verified Atlas Preview for ${clean} · Local Markets & Cultural Anchors`,
+    tagline: isPt
+      ? `Amostra Verificada de 2 Dias para ${clean} · Mercados Locais e Cultura`
+      : `2-Day Verified Atlas Preview for ${clean} · Local Markets & Cultural Anchors`,
     day1: [
       {
         time: '09:30',
-        title: `${clean} Historic Quarter & Architectural Landmark`,
-        whyThis: `Morning light walk before tour groups arrive in ${clean}`,
+        title: `${clean} — Centro Histórico`,
+        whyThis: isPt
+          ? `Passeio matinal antes da chegada das excursões em ${clean}`
+          : `Morning light walk before tour groups arrive in ${clean}`,
         costEstimate: '~14€',
         confidence: 'estimated',
-        sourceNote: 'AI Estimate (~) — verified links attached on full generation',
+        sourceNote: isPt
+          ? 'Estimativa IA (~) — fontes verificadas ao gerar roteiro completo'
+          : 'AI Estimate (~) — verified links attached on full generation',
         trapScore: 42,
       },
       {
         time: '13:00',
-        title: `Municipal Covered Food Market of ${clean}`,
-        whyThis: 'Authentic regional tapas & seasonal produce stalls',
+        title: `Mercado Municipal de ${clean}`,
+        whyThis: isPt
+          ? 'Petiscos regionais autênticos e bancas de produtores locais'
+          : 'Authentic regional tapas & seasonal produce stalls',
         costEstimate: '~18€',
         confidence: 'estimated',
-        sourceNote: 'Estimated menu average',
+        sourceNote: isPt ? 'Média estimada de almoço' : 'Estimated menu average',
         trapScore: 24,
       },
     ],
     day2: [
       {
         time: '10:30',
-        title: `${clean} National Fine Arts & Design Collection`,
-        whyThis: 'Curated cultural highlight with indoor Plan B readiness',
+        title: `Museu de Belas-Artes e Design (${clean})`,
+        whyThis: isPt
+          ? 'Destaque cultural com alternativa interior Plano B pronta'
+          : 'Curated cultural highlight with indoor Plan B readiness',
         costEstimate: '~15€',
         confidence: 'estimated',
-        sourceNote: 'Estimated entry tier',
+        sourceNote: isPt ? 'Escalão de entrada estimado' : 'Estimated entry tier',
         trapScore: 31,
       },
       {
         time: '18:00',
-        title: `Sunset Miradouro & Neighbourhood Wine Bar`,
-        whyThis: 'Golden-hour viewpoint paired with local small-batch wine',
+        title: `Miradouro ao Pôr do Sol (${clean})`,
+        whyThis: isPt
+          ? 'Vista panorâmica ao final da tarde com vinho regional'
+          : 'Golden-hour viewpoint paired with local small-batch wine',
         costEstimate: '~22€',
         confidence: 'estimated',
-        sourceNote: 'Estimated evening spend',
+        sourceNote: isPt ? 'Despesa estimada ao final do dia' : 'Estimated evening spend',
         trapScore: 19,
       },
     ],

@@ -1,6 +1,6 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { ProposalChange } from '../types/models';
-import { useI18n } from '../i18n/I18nContext';
 
 interface DiffReviewBannerProps {
   proposals: ProposalChange[];
@@ -17,34 +17,34 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
   onAcceptAll,
   onRejectAll,
 }) => {
-  const { t } = useI18n();
+  const { t } = useTranslation();
 
   if (proposals.length === 0) return null;
 
   return (
     <section
-      aria-label="Pending AI Itinerary Changes"
+      aria-label={t('diff.bannerTitle')}
       className="mb-6 rounded-xl bg-amber-50/90 dark:bg-slate-900 border border-amber-300 dark:border-amber-700/70 p-4 sm:p-5"
     >
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200 dark:border-slate-800">
         <div>
-          <h3 className="font-serif-atlas text-base font-semibold text-slate-900 dark:text-slate-100">
+          <h2 className="font-serif-atlas text-base font-semibold text-slate-900 dark:text-slate-100">
             {t('diff.bannerTitle')} ({proposals.length})
-          </h3>
+          </h2>
           <p className="text-xs text-slate-600 dark:text-slate-400">{t('diff.bannerSub')}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={onAcceptAll}
-            className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors whitespace-nowrap"
+            className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-600 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
           >
             {t('diff.acceptAll')}
           </button>
           <button
             type="button"
             onClick={onRejectAll}
-            className="px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 rounded-lg transition-colors whitespace-nowrap"
+            className="px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
           >
             {t('diff.rejectAll')}
           </button>
@@ -62,10 +62,10 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
             : 'bg-amber-100/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200';
 
           const badgeLabel = isAdd
-            ? '+ ADD SUGGESTION'
+            ? t('diff.addBadge')
             : isRemove
-            ? '− REMOVE SUGGESTION'
-            : '⇄ REPLACE / MOVE SUGGESTION';
+            ? t('diff.removeBadge')
+            : t('diff.replaceBadge');
 
           return (
             <div
@@ -76,15 +76,20 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
                 <div className="flex items-center gap-2 text-xs font-mono-tabular font-semibold">
                   <span>{badgeLabel}</span>
                   <span>·</span>
-                  <span>Day {prop.dayNumber}</span>
+                  <span>
+                    {t('trip.dayWord')} {prop.dayNumber}
+                  </span>
                 </div>
-                <p className="text-sm font-semibold">
+                <h3 className="text-sm font-semibold">
                   {prop.type === 'replace' && prop.targetActivityTitle && prop.payload
-                    ? `Swap "${prop.targetActivityTitle}" → "${prop.payload.title}"`
+                    ? t('diff.swapText', {
+                        from: prop.targetActivityTitle,
+                        to: prop.payload.title,
+                      })
                     : prop.type === 'remove'
-                    ? `Remove "${prop.targetActivityTitle}"`
+                    ? t('diff.removeText', { title: prop.targetActivityTitle })
                     : prop.payload?.title || prop.targetActivityTitle}
-                </p>
+                </h3>
                 <p className="text-xs opacity-90">{prop.reason}</p>
               </div>
 
@@ -92,14 +97,14 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
                 <button
                   type="button"
                   onClick={() => onAccept(prop.id)}
-                  className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-600 rounded-md transition-colors whitespace-nowrap"
+                  className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-600 rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
                 >
                   {t('diff.accept')}
                 </button>
                 <button
                   type="button"
                   onClick={() => onReject(prop.id)}
-                  className="px-3 py-1.5 text-xs font-medium text-rose-800 dark:text-rose-200 bg-white/80 dark:bg-slate-800 border border-rose-300 dark:border-rose-700 hover:bg-rose-100 rounded-md transition-colors whitespace-nowrap"
+                  className="px-3 py-1.5 text-xs font-medium text-rose-800 dark:text-rose-200 bg-white/80 dark:bg-slate-800 border border-rose-300 dark:border-rose-700 hover:bg-rose-100 rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
                 >
                   {t('diff.reject')}
                 </button>

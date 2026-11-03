@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FullTripBundle } from '../types/models';
 import {
   computeExpenseBalancesAndSettlement,
   optimizeBudgetTiers,
 } from '../utils/domainLogic';
-import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
 
 interface BudgetTabViewProps {
@@ -12,7 +12,7 @@ interface BudgetTabViewProps {
 }
 
 export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
-  const { t } = useI18n();
+  const { t } = useTranslation();
   const { applyBudgetSelections } = useAtlas();
 
   const [whatIfBudget, setWhatIfBudget] = useState<number>(bundle.trip.totalBudget);
@@ -77,13 +77,15 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
               {t('budget.title')}
             </h2>
             <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-              {t('budget.whatIfLabel')} · All unverified prices are marked as estimates (~).
+              {t('budget.whatIfLabel')} · {t('budget.unverifiedNote')}
             </p>
           </div>
 
           <div className="flex items-center gap-6 font-mono-tabular">
             <div>
-              <span className="block text-[11px] text-slate-500 uppercase">Target Budget</span>
+              <span className="block text-[11px] text-slate-500 uppercase">
+                {t('budget.targetBudget')}
+              </span>
               <span className="text-xl font-bold text-slate-900 dark:text-white">
                 €{whatIfBudget}
               </span>
@@ -111,10 +113,11 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
         <div className="space-y-2 pt-2">
           <div className="flex items-center justify-between text-xs font-medium">
             <label htmlFor="what-if-slider">
-              Slide Total Trip Budget (€150 – €3,000 for {bundle.trip.travelersCount} travellers)
+              {t('budget.sliderLabel', { count: bundle.trip.travelersCount })}
             </label>
             <span className="font-mono-tabular font-semibold">
-              €{Math.round(whatIfBudget / Math.max(1, bundle.trip.travelersCount))} / person
+              €{Math.round(whatIfBudget / Math.max(1, bundle.trip.travelersCount))}{' '}
+              {t('budget.perPerson')}
             </span>
           </div>
           <input
@@ -124,8 +127,11 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
             max={3000}
             step={25}
             value={whatIfBudget}
+            aria-valuemin={150}
+            aria-valuemax={3000}
+            aria-valuenow={whatIfBudget}
             onChange={(e) => setWhatIfBudget(Number(e.target.value))}
-            className="w-full accent-amber-600 cursor-pointer"
+            className="w-full accent-amber-600 cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
           />
 
           {/* Progress Bar */}
@@ -153,7 +159,7 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
         <div className="rounded-lg bg-[#FAF6F0] dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <h3 className="text-xs font-mono-tabular font-semibold uppercase text-slate-700 dark:text-slate-300">
-              What-If Tier Rebalance Summary ({optimization.changes.length} activity adjustments)
+              {t('budget.rebalanceSummary', { count: optimization.changes.length })}
             </h3>
             <div className="flex items-center gap-2">
               <button
@@ -165,14 +171,14 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
                     optimization.selections
                   )
                 }
-                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap"
+                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
                 {t('budget.applyChanges')}
               </button>
               <button
                 type="button"
                 onClick={() => setWhatIfBudget(bundle.trip.totalBudget)}
-                className="px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg whitespace-nowrap"
+                className="px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
                 {t('budget.discardChanges')}
               </button>
@@ -181,7 +187,7 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
 
           {optimization.changes.length === 0 ? (
             <p className="text-xs text-slate-600 dark:text-slate-400">
-              Current activity tiers are already optimal for €{whatIfBudget}. Drag the slider left or right to preview upgrades or savings.
+              {t('budget.optimalNote', { budget: whatIfBudget })}
             </p>
           ) : (
             <ul className="space-y-1.5 text-xs">
@@ -191,10 +197,18 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
                   className="flex items-center justify-between gap-2 py-1 border-b border-slate-200/60 dark:border-slate-800 last:border-b-0"
                 >
                   <span>
-                    <strong className={chg.costDelta >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
-                      {chg.costDelta >= 0 ? '+ Upgraded' : '− Economised'} Day {chg.dayNumber}:
+                    <strong
+                      className={
+                        chg.costDelta >= 0
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-amber-700 dark:text-amber-400'
+                      }
+                    >
+                      {chg.costDelta >= 0 ? t('budget.upgraded') : t('budget.economised')}{' '}
+                      {t('trip.dayWord')} {chg.dayNumber}:
                     </strong>{' '}
-                    {chg.activityTitle} → <em>{chg.newOptionTitle}</em> ({chg.fromTier} → {chg.toTier})
+                    {chg.activityTitle} → <em>{chg.newOptionTitle}</em> ({chg.fromTier} →{' '}
+                    {chg.toTier})
                   </span>
                   <span className="font-mono-tabular font-semibold whitespace-nowrap">
                     {chg.costDelta >= 0 ? `+€${chg.costDelta}` : `-€${Math.abs(chg.costDelta)}`}
@@ -210,7 +224,7 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
           <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
-            Estimated vs Actual by Category
+            {t('budget.estVsActualTitle')}
           </h3>
           <div className="space-y-2.5 text-xs">
             {Object.entries(breakdown.byCat)
@@ -222,9 +236,11 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
                     key={cat}
                     className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800"
                   >
-                    <span className="capitalize font-medium">{cat}</span>
+                    <span className="font-medium">
+                      {t(`interest.${cat}`, { defaultValue: cat })}
+                    </span>
                     <span className="font-mono-tabular">
-                      Est: ~€{est} · Actual: €{actual.toFixed(2)}
+                      {t('budget.estShort')} ~€{est} · {t('budget.actualShort')} €{actual.toFixed(2)}
                     </span>
                   </div>
                 );
@@ -234,7 +250,7 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
 
         <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
           <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
-            Daily Cost &amp; Group Per-Person Targets
+            {t('budget.dailyTargetsTitle')}
           </h3>
           <div className="space-y-2 text-xs">
             {breakdown.byDay.map((d) => (
@@ -243,9 +259,11 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
                 className="flex items-center justify-between py-1.5 border-b border-slate-100 dark:border-slate-800"
               >
                 <span>
-                  Day {d.dayNumber} ({d.date})
+                  {t('trip.dayWord')} {d.dayNumber} ({d.date})
                 </span>
-                <span className="font-mono-tabular font-semibold">~€{d.estimated} group total</span>
+                <span className="font-mono-tabular font-semibold">
+                  ~€{d.estimated} {t('budget.groupTotal')}
+                </span>
               </div>
             ))}
           </div>
@@ -253,7 +271,7 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
           {bundle.travelers.length > 0 && (
             <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-1.5 text-xs">
               <p className="font-semibold text-slate-800 dark:text-slate-200">
-                Per-Person Group Budget Status:
+                {t('budget.perPersonStatus')}
               </p>
               {bundle.travelers.map((tr) => {
                 const estPerPerson = Math.round(
@@ -263,10 +281,17 @@ export const BudgetTabView: React.FC<BudgetTabViewProps> = ({ bundle }) => {
                 return (
                   <div key={tr.id} className="flex items-center justify-between font-mono-tabular">
                     <span>
-                      {tr.displayName} (Limit €{tr.budgetPerPerson})
+                      {tr.displayName} ({t('budget.limit')} €{tr.budgetPerPerson})
                     </span>
-                    <span className={overPersonal ? 'text-rose-600 font-semibold' : 'text-emerald-700 dark:text-emerald-400'}>
-                      ~€{estPerPerson} {overPersonal ? '⚠️ Above personal cap' : '✓ Within cap'}
+                    <span
+                      className={
+                        overPersonal
+                          ? 'text-rose-600 font-semibold'
+                          : 'text-emerald-700 dark:text-emerald-400'
+                      }
+                    >
+                      ~€{estPerPerson}{' '}
+                      {overPersonal ? t('budget.aboveCap') : t('budget.withinCap')}
                     </span>
                   </div>
                 );

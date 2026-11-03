@@ -1,10 +1,43 @@
-import React, { useState, useMemo } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
+  GripVertical,
+  Download,
+  Printer,
+  Calendar as CalendarIcon,
+  Compass,
+  ChevronDown,
+  Gauge,
+  Clock,
+  Footprints,
+  Coffee,
+  X,
+} from 'lucide-react';
 import { useAtlas } from '../context/AtlasContext';
 import { useI18n } from '../i18n/I18nContext';
 import {
   computePaceMetrics,
   computeReliabilitySummary,
+  reorderActivitiesList,
+  generateIcsCalendar,
+  downloadIcsFile,
 } from '../utils/domainLogic';
 import { Activity, BudgetTier, ProposalChange, VoteValue } from '../types/models';
 import { TrustBadge } from '../components/TrustBadge';
@@ -13,13 +46,297 @@ import { AtlasMap } from '../components/AtlasMap';
 import { BudgetTabView } from '../components/BudgetTabView';
 import { GroupTabView } from '../components/GroupTabView';
 import { ExpensesTabView } from '../components/ExpensesTabView';
-import { requestAiProposals } from '../services/api';
+import { SkeletonItinerary } from '../components/SkeletonItinerary';
+import { GuidedTourOverlay } from '../components/GuidedTourOverlay';
+import { requestAiProposals, streamAtlasGenieChat } from '../services/api';
+
+interface SortableActivityCardProps {
+  act: Activity;
+  idx: number;
+  totalCount: number;
+  selectedActivityId: string | null;
+  activeTravelerId: string;
+  onSelect: (id: string) => void;
+  onMove: (index: number, direction: -1 | 1) => void;
+  onRemove: (id: string) => void;
+  onTierSelect: (id: string, tier: BudgetTier) => void;
+  onEscapeCrowds: (act: Activity) => void;
+  onVote: (actId: string, vote: VoteValue) => void;
+  onQuickExpense: () => void;
+  getTierLabel: (tier: BudgetTier) => string;
+}
+
+const SortableActivityCard: React.FC<SortableActivityCardProps> = ({
+  act,
+  idx,
+  totalCount,
+  selectedActivityId,
+  activeTravelerId,
+  onSelect,
+  onMove,
+  onRemove,
+  onTierSelect,
+  onEscapeCrowds,
+  onVote,
+  onQuickExpense,
+  getTierLabel,
+}) => {
+  const { t } = useTranslation();
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: act.id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 30 : undefined,
+  };
+
+  const selectedCost = act.costOptions[act.selectedTier];
+  const pricePrefix = act.priceConfidence.status === 'verified' ? '' : '~';
+  const isTrap = act.touristTrapScore >= 70;
+  const downVotes = Object.values(act.votes || {}).filter((v) => v === 'down').length;
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`list-none ${isDragging ? 'opacity-90 scale-[1.01]' : ''}`}
+    >
+      {/* Travel Connector from previous activity (Feature B6) */}
+      {idx > 0 && act.travelFromPrevious && (
+        <div className="pl-7 pb-4 flex items-center gap-2 text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
+          <span aria-hidden="true">↓</span>
+          <span>
+            {act.travelFromPrevious.mode === 'WALKING'
+              ? `🚶 ${t('trip.walk')}`
+              : act.travelFromPrevious.mode === 'TRANSIT'
+              ? `🚋 ${t('trip.transit')}`
+              : `🚕 ${t('trip.drive')}`}{' '}
+            · {act.travelFromPrevious.minutes} min ({act.travelFromPrevious.distanceKm} km)
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            {t('hero.sourceLabel')}{' '}
+            {act.travelFromPrevious.source === 'maps_api'
+              ? t('trip.mapsApiSource')
+              : t('trip.estimatedSource')}
+          </span>
+        </div>
+      )}
+
+      {/* Activity Card with generous breathing room */}
+      <article
+        onClick={() => onSelect(act.id)}
+        className={`rounded-2xl bg-white dark:bg-slate-900 border p-6 sm:p-7 space-y-4 shadow-xs transition-all print:border-slate-300 print:shadow-none print:break-inside-avoid ${
+          isDragging
+            ? 'border-amber-500 shadow-xl ring-2 ring-amber-500/30'
+            : selectedActivityId === act.id
+            ? 'border-amber-500 dark:border-amber-500 ring-1 ring-amber-500/20'
+            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+        }`}
+      >
+        {/* Top row: Drag Handle, Pin number, Time, Title & Reorder/Delete controls */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            {/* Drag Handle */}
+            <button
+              type="button"
+              {...attributes}
+              {...listeners}
+              onClick={(e) => e.stopPropagation()}
+              aria-label={t('dnd.dragHandleAria', { title: act.title })}
+              title={t('dnd.dragHint')}
+              className="print:hidden mt-0.5 p-1.5 rounded-lg text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing transition-colors shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <GripVertical className="w-4 h-4" aria-hidden="true" />
+            </button>
+
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
+                <span className="font-bold text-amber-700 dark:text-amber-400">
+                  #{idx + 1} · {act.startTime} ({act.durationMin} min)
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>{act.location.name}</span>
+                {downVotes > 0 && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-rose-700 dark:text-rose-400 font-semibold">
+                      ⚠️ {t('trip.needsDiscussion')}
+                    </span>
+                  </>
+                )}
+              </div>
+              <h3 className="font-serif-atlas text-lg font-bold text-slate-900 dark:text-white">
+                {act.title}
+              </h3>
+            </div>
+          </div>
+
+          <div className="print:hidden flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMove(idx, -1);
+              }}
+              disabled={idx === 0}
+              aria-label={`Move ${act.title} up`}
+              className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <span aria-hidden="true">↑</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMove(idx, 1);
+              }}
+              disabled={idx === totalCount - 1}
+              aria-label={`Move ${act.title} down`}
+              className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <span aria-hidden="true">↓</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(act.id);
+              }}
+              aria-label={`${t('dash.delete')} ${act.title}`}
+              className="px-2 py-1 text-xs text-rose-600 rounded border border-slate-200 dark:border-slate-700 hover:bg-rose-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+        </div>
+
+        <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+          {act.description}
+        </p>
+
+        {/* "Why this activity?" (Feature B7) */}
+        <p className="text-xs text-teal-800 dark:text-teal-300 font-medium">
+          <span aria-hidden="true">✨ </span>
+          {t('trip.whyThis')} {act.whyThis}
+        </p>
+
+        {/* Trust Layer Badges (Feature B1: Price & Opening Hours) */}
+        <div
+          data-tour={idx === 0 ? 'trust-badges-card' : undefined}
+          className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1"
+        >
+          <TrustBadge
+            type="price"
+            confidence={act.priceConfidence}
+            valueText={`${pricePrefix}${selectedCost.estimatedCost}€ (${selectedCost.title})`}
+          />
+          <TrustBadge
+            type="hours"
+            confidence={act.hoursConfidence}
+            valueText={act.openingHoursText || '09:30 – 18:00'}
+          />
+        </div>
+
+        {/* Cost Tier Selector + Anti-Tourist-Trap + Voting & Expense Quick Action */}
+        <div className="print:hidden pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          {/* Budget / Mid / Premium switcher */}
+          <div
+            role="group"
+            aria-label={`${act.title} ${t('hero.budget')}`}
+            className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg"
+          >
+            {(['budget', 'mid', 'premium'] as BudgetTier[]).map((tier) => (
+              <button
+                key={tier}
+                type="button"
+                aria-pressed={act.selectedTier === tier}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTierSelect(act.id, tier);
+                }}
+                className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                  act.selectedTier === tier
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                {getTierLabel(tier)}: €{act.costOptions[tier].estimatedCost}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Anti-Tourist-Trap Filter (Feature B4: score >= 70) */}
+            {isTrap && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEscapeCrowds(act);
+                }}
+                className="px-3 py-1.5 text-xs font-semibold text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 hover:bg-amber-200 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                <span aria-hidden="true">🧭 </span>
+                {t('trip.escapeCrowds')} ({act.touristTrapScore}/100)
+              </button>
+            )}
+
+            {/* Quick Vote */}
+            <div className="flex items-center gap-1">
+              {(['up', 'down'] as VoteValue[]).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onVote(act.id, v);
+                  }}
+                  aria-label={`Vote ${v} ${act.title}`}
+                  aria-pressed={act.votes?.[activeTravelerId] === v}
+                  className={`px-2 py-1 text-xs rounded border cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                    act.votes?.[activeTravelerId] === v
+                      ? 'bg-slate-900 text-white dark:bg-amber-600'
+                      : 'border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  <span aria-hidden="true">{v === 'up' ? '👍' : '👎'}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Quick Add Expense Link */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuickExpense();
+              }}
+              className="px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:underline whitespace-nowrap cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              {t('trip.addExpenseQuick')}
+            </button>
+          </div>
+        </div>
+      </article>
+    </li>
+  );
+};
 
 export const TripWorkspacePage: React.FC = () => {
   const { id = 'demo-lisbon-4d' } = useParams<{ id: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const { t } = useI18n();
+  const [searchParams] = useSearchParams();
+  const { t } = useTranslation();
+  const { language } = useI18n();
   const {
     trips,
     proposalsByTrip,
@@ -56,13 +373,57 @@ export const TripWorkspacePage: React.FC = () => {
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState<{ sender: 'user' | 'genie'; text: string }[]>([
-    {
-      sender: 'genie',
-      text: `Welcome to your ${bundle.trip.destination} Atlas! Ask me anything or tap a quick action below—every change I suggest appears as an Accept/Reject diff so you stay in control.`,
-    },
-  ]);
+  const [chatHistory, setChatHistory] = useState<
+    { id: string; sender: 'user' | 'genie'; text: string; grounded?: boolean }[]
+  >([]);
   const [chatLoading, setChatLoading] = useState(false);
+  const [fetchingPlaceName, setFetchingPlaceName] = useState<string | null>(null);
+  const [vibeRecalculating, setVibeRecalculating] = useState(false);
+
+  // Export Dropdown State
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement | null>(null);
+
+  // Collapsible Trust Badges Legend State (Closed by default for decluttered UI)
+  const [badgesLegendOpen, setBadgesLegendOpen] = useState(false);
+
+  // Guided Tour State (First-time itinerary visitor onboarding)
+  const [tourOpen, setTourOpen] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'plan') return;
+    if (searchParams.get('notour') === '1') return;
+    try {
+      const seen = localStorage.getItem('atlasgenie_tour_seen_v1');
+      if (!seen) {
+        const timer = setTimeout(() => setTourOpen(true), 450);
+        return () => clearTimeout(timer);
+      }
+    } catch {
+      // Ignore storage access errors
+    }
+  }, [activeTab, searchParams]);
+
+  const handleCloseTour = () => {
+    setTourOpen(false);
+    try {
+      localStorage.setItem('atlasgenie_tour_seen_v1', 'true');
+    } catch {
+      // Ignore
+    }
+  };
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportDropdownOpen(false);
+      }
+    };
+    if (exportDropdownOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [exportDropdownOpen]);
 
   // Add Activity Modal State
   const [addingActivity, setAddingActivity] = useState(false);
@@ -79,16 +440,88 @@ export const TripWorkspacePage: React.FC = () => {
   const reliability = useMemo(() => computeReliabilitySummary(bundle.days), [bundle.days]);
   const paceMetrics = useMemo(() => computePaceMetrics(currentDay), [currentDay]);
 
+  // DnD Sensors (Pointer with 5px activation distance so card clicks work seamlessly + Keyboard)
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = activeActivities.findIndex((a) => a.id === active.id);
+    const newIndex = activeActivities.findIndex((a) => a.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const reordered = reorderActivitiesList(activeActivities, oldIndex, newIndex);
+    await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
+    showToast(t('toast.itineraryUpdated'));
+  };
+
+  const localizedPaceLabel =
+    paceMetrics.label === 'Packed'
+      ? t('trip.pacePacked')
+      : paceMetrics.label === 'Relaxed'
+      ? t('trip.paceRelaxed')
+      : t('trip.paceBalanced');
+
+  const getTierLabel = (tier: BudgetTier) => {
+    if (tier === 'budget') return t('trip.tierBudget');
+    if (tier === 'mid') return t('trip.tierMid');
+    return t('trip.tierPremium');
+  };
+
   const handleVibeSliderChange = async (nextPace: number) => {
-    await updateDayActivities(bundle.trip.id, currentDay.id, activeActivities, nextPace);
-    const res = await requestAiProposals({
-      taskType: 'pace',
-      destination: bundle.trip.destination,
-      message: `Adjust day pace to level ${nextPace}/5`,
-      currentDay: { ...currentDay, paceLevel: nextPace },
-      travelers: bundle.travelers,
-    });
-    addProposals(bundle.trip.id, res.proposals);
+    setVibeRecalculating(true);
+    try {
+      await updateDayActivities(bundle.trip.id, currentDay.id, activeActivities, nextPace);
+      const [res] = await Promise.all([
+        requestAiProposals({
+          taskType: 'pace',
+          destination: bundle.trip.destination,
+          message: `Adjust day pace to level ${nextPace}/5`,
+          currentDay: { ...currentDay, paceLevel: nextPace },
+          travelers: bundle.travelers,
+        }),
+        new Promise((resolve) => setTimeout(resolve, 900)),
+      ]);
+      addProposals(bundle.trip.id, res.proposals);
+    } finally {
+      setVibeRecalculating(false);
+    }
+  };
+
+  const handleExportPdf = () => {
+    setExportDropdownOpen(false);
+    showToast(t('export.printToast'));
+    setTimeout(() => {
+      window.print();
+    }, 120);
+  };
+
+  const handleExportIcsDay = () => {
+    setExportDropdownOpen(false);
+    const ics = generateIcsCalendar(bundle, currentDay);
+    const slug = bundle.trip.destination.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const filename = `atlasgenie-${slug}-day-${currentDay.dayNumber}.ics`;
+    downloadIcsFile(ics, filename);
+    showToast(t('export.icsToast', { filename }));
+  };
+
+  const handleExportIcsFull = () => {
+    setExportDropdownOpen(false);
+    const ics = generateIcsCalendar(bundle);
+    const slug = bundle.trip.destination.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const filename = `atlasgenie-${slug}-full-trip.ics`;
+    downloadIcsFile(ics, filename);
+    showToast(t('export.icsToast', { filename }));
   };
 
   const handleEscapeCrowds = (act: Activity) => {
@@ -107,19 +540,19 @@ export const TripWorkspacePage: React.FC = () => {
           location: alt.location,
           costOptions: {
             budget: {
-              title: `${alt.title} (Light option)`,
+              title: `${alt.title} (${t('trip.tierBudget')})`,
               estimatedCost: Math.max(0, Math.round(alt.estimatedCost * 0.6)),
-              description: 'Local entry/snack',
+              description: alt.description,
             },
             mid: {
-              title: `${alt.title} (Standard)`,
+              title: `${alt.title} (${t('trip.tierMid')})`,
               estimatedCost: alt.estimatedCost,
               description: alt.description,
             },
             premium: {
-              title: `${alt.title} (Full Tasting / Guided)`,
+              title: `${alt.title} (${t('trip.tierPremium')})`,
               estimatedCost: Math.round(alt.estimatedCost * 1.8),
-              description: 'Curated local experience',
+              description: alt.description,
             },
           },
           selectedTier: 'mid',
@@ -132,12 +565,12 @@ export const TripWorkspacePage: React.FC = () => {
       : {
           ...act,
           id: `${act.id}-local`,
-          title: `Local Neighbourhood Gem near ${act.location.name}`,
-          description: 'Authentic low-crowd alternative within 12 minutes.',
+          title: `Local Gem · ${act.location.name}`,
+          description: act.description,
           touristTrapScore: 20,
-          priceConfidence: { status: 'to_confirm', notes: 'Local spot — confirm on arrival' },
-          hoursConfidence: { status: 'to_confirm', notes: 'Confirm local hours' },
-          whyThis: 'Locals actually go here to avoid tour bus crowds.',
+          priceConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
+          hoursConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
+          whyThis: act.whyThis,
         };
 
     const prop: ProposalChange = {
@@ -149,31 +582,36 @@ export const TripWorkspacePage: React.FC = () => {
       targetActivityTitle: act.title,
       payload: replacementPayload,
       reason: alt
-        ? `${alt.reason} (${alt.travelMinutesAway} min away via ${alt.travelSource === 'maps_api' ? 'Maps API' : 'estimate'})`
-        : 'Authentic local alternative within 12 minutes',
+        ? `${alt.reason} (${alt.travelMinutesAway} min · ${alt.travelSource === 'maps_api' ? 'Maps API' : '~'})`
+        : replacementPayload.whyThis,
       source: 'local_alt',
       status: 'pending',
     };
 
     addProposals(bundle.trip.id, [prop]);
-    showToast('Local alternative proposed in the Diff Bar above!');
+    showToast(
+      language === 'pt'
+        ? 'Alternativa local proposta na barra de revisão acima!'
+        : 'Local alternative proposed in the Diff Bar above!'
+    );
   };
 
   const handleMoveActivity = async (index: number, direction: -1 | 1) => {
     const targetIdx = index + direction;
     if (targetIdx < 0 || targetIdx >= activeActivities.length) return;
-    const copy = [...activeActivities];
-    const temp = copy[index];
-    copy[index] = copy[targetIdx];
-    copy[targetIdx] = temp;
-    await updateDayActivities(bundle.trip.id, currentDay.id, copy);
-    showToast('Reordered stops and recalculated travel times.');
+    const reordered = reorderActivitiesList(activeActivities, index, targetIdx);
+    await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
+    showToast(t('toast.itineraryUpdated'));
   };
 
   const handleRemoveActivityDirect = async (activityId: string) => {
     const next = activeActivities.filter((a) => a.id !== activityId);
     await updateDayActivities(bundle.trip.id, currentDay.id, next);
-    showToast('Removed activity and updated travel times.');
+    showToast(
+      language === 'pt'
+        ? 'Atividade removida e tempos de deslocação atualizados.'
+        : 'Removed activity and updated travel times.'
+    );
   };
 
   const handleTierSelect = async (activityId: string, tier: BudgetTier) => {
@@ -195,7 +633,10 @@ export const TripWorkspacePage: React.FC = () => {
       id: `custom-${Date.now().toString(36)}`,
       title: newActTitle.trim(),
       category: 'culture',
-      description: 'Custom stop added to your personal atlas.',
+      description:
+        language === 'pt'
+          ? 'Paragem personalizada adicionada ao seu atlas pessoal.'
+          : 'Custom stop added to your personal atlas.',
       startTime: newActTime,
       durationMin: 75,
       openingHoursText: '09:30 – 19:00',
@@ -207,14 +648,26 @@ export const TripWorkspacePage: React.FC = () => {
         lng: refLoc.lng + 0.002,
       },
       costOptions: {
-        budget: { title: 'Budget Option', estimatedCost: Math.max(0, Math.round(newActCost * 0.6)), description: 'Basic entry' },
-        mid: { title: 'Standard Option', estimatedCost: Number(newActCost), description: 'Standard cost' },
-        premium: { title: 'Premium Option', estimatedCost: Math.round(newActCost * 1.8), description: 'Enhanced experience' },
+        budget: {
+          title: t('trip.tierBudget'),
+          estimatedCost: Math.max(0, Math.round(newActCost * 0.6)),
+          description: t('trip.tierBudget'),
+        },
+        mid: {
+          title: t('trip.tierMid'),
+          estimatedCost: Number(newActCost),
+          description: t('trip.tierMid'),
+        },
+        premium: {
+          title: t('trip.tierPremium'),
+          estimatedCost: Math.round(newActCost * 1.8),
+          description: t('trip.tierPremium'),
+        },
       },
       selectedTier: 'mid',
-      priceConfidence: { status: 'to_confirm', notes: 'User-added activity — confirm rate' },
-      hoursConfidence: { status: 'to_confirm', notes: 'Confirm opening hours' },
-      whyThis: 'Added directly by you.',
+      priceConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
+      hoursConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
+      whyThis: language === 'pt' ? 'Adicionada diretamente por si.' : 'Added directly by you.',
       touristTrapScore: 20,
       votes: {},
     };
@@ -224,71 +677,155 @@ export const TripWorkspacePage: React.FC = () => {
     await updateDayActivities(bundle.trip.id, currentDay.id, next);
     setNewActTitle('');
     setAddingActivity(false);
-    showToast(`Added "${created.title}".`);
   };
 
   const handleSendChat = async (promptText: string) => {
     const clean = promptText.trim();
     if (!clean) return;
-    setChatHistory((prev) => [...prev, { sender: 'user', text: clean }]);
+    const userMsgId = `msg-user-${Date.now()}`;
+    const genieMsgId = `msg-genie-${Date.now() + 1}`;
+
+    setChatHistory((prev) => [
+      ...prev,
+      { id: userMsgId, sender: 'user', text: clean },
+      { id: genieMsgId, sender: 'genie', text: '' },
+    ]);
     setChatInput('');
     setChatLoading(true);
+    setFetchingPlaceName(null);
+
     try {
-      const res = await requestAiProposals({
-        taskType: 'chat',
+      const res = await streamAtlasGenieChat({
         destination: bundle.trip.destination,
         message: clean,
         currentDay,
         travelers: bundle.travelers,
+        language,
+        onToolFetching: (info) => {
+          setFetchingPlaceName(info.placeName);
+        },
+        onChunk: (accumulatedText) => {
+          setChatHistory((prev) =>
+            prev.map((m) =>
+              m.id === genieMsgId
+                ? { ...m, text: accumulatedText }
+                : m
+            )
+          );
+        },
       });
-      setChatHistory((prev) => [...prev, { sender: 'genie', text: res.reply }]);
-      addProposals(bundle.trip.id, res.proposals);
+
+      setChatHistory((prev) =>
+        prev.map((m) =>
+          m.id === genieMsgId
+            ? {
+                ...m,
+                text: res.reply,
+                grounded: res.toolUsed === 'fetch_google_place_details',
+              }
+            : m
+        )
+      );
+
+      if (res.proposals && res.proposals.length > 0) {
+        addProposals(bundle.trip.id, res.proposals);
+      }
     } finally {
       setChatLoading(false);
+      setFetchingPlaceName(null);
     }
   };
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-8 py-6 pb-24 md:pb-12">
+    <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 pb-28 md:pb-16 print:py-2 print:px-0">
+      {/* Print-Only Header (visible only when printing / exporting PDF) */}
+      <div className="hidden print:block pb-4 mb-6 border-b-2 border-slate-900" aria-hidden="true">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-mono-tabular uppercase tracking-widest text-slate-600">
+              AtlasGenie · {t('export.printSubtitle')}
+            </p>
+            <p className="font-serif-atlas text-3xl font-bold text-slate-900 mt-0.5">
+              {bundle.trip.destination} {t('trip.atlasSuffix')}
+            </p>
+          </div>
+          <div className="text-right text-xs font-mono-tabular text-slate-700">
+            <p>
+              {bundle.trip.startDate} → {bundle.trip.endDate}
+            </p>
+            <p>
+              {bundle.trip.travelersCount} {t('hero.travellers')} · {t('hero.budget')} €
+              {bundle.trip.totalBudget}
+            </p>
+            <p>
+              {t('trip.reliability')}: {reliability.verifiedPercent}% {t('trip.verified')}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Prominent Clear Navigation: Back to My Trips */}
+      <div className="print:hidden mb-4">
+        <Link
+          to="/dashboard"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 transition-colors shadow-2xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          {t('trip.backToMyTrips')}
+        </Link>
+      </div>
+
       {/* Top Trip Workspace Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 mb-6 border-b border-slate-200 dark:border-slate-800">
-        <div className="space-y-1">
+      <div className="print:hidden flex flex-col lg:flex-row lg:items-center justify-between gap-5 pb-6 mb-8 border-b border-slate-200 dark:border-slate-800">
+        <div className="space-y-1.5">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono-tabular">
-            <span>{bundle.trip.startDate} → {bundle.trip.endDate}</span>
-            <span>·</span>
-            <span>{bundle.trip.travelersCount} Travellers</span>
-            <span>·</span>
-            <span>Budget €{bundle.trip.totalBudget}</span>
-            <span>·</span>
+            <span>
+              {bundle.trip.startDate} → {bundle.trip.endDate}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {bundle.trip.travelersCount} {t('hero.travellers')}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {t('hero.budget')} €{bundle.trip.totalBudget}
+            </span>
+            <span aria-hidden="true">·</span>
             <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
-              {t('trip.reliability')}: 🟢 {reliability.verifiedPercent}% {t('trip.verified')} ({reliability.verifiedCount}/{reliability.totalChecks})
+              {t('trip.reliability')}: <span aria-hidden="true">🟢</span>{' '}
+              <span className="sr-only">Verified Source </span>
+              {reliability.verifiedPercent}% {t('trip.verified')} ({reliability.verifiedCount}/
+              {reliability.totalChecks})
             </span>
           </div>
           <h1 className="font-serif-atlas text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
-            {bundle.trip.destination} Atlas
+            {bundle.trip.destination} {t('trip.atlasSuffix')}
           </h1>
         </div>
 
-        {/* Sub-route Navigation Tabs */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Sub-route Navigation Tabs + Guided Tour + Export Dropdown + Assistant */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {undoStack.length > 0 && (
             <button
               type="button"
               onClick={() => undoLastChange(bundle.trip.id)}
-              className="px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 rounded-lg whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 rounded-lg whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               ↶ {t('trip.undoLast')}
             </button>
           )}
 
+          {/* Workspace Tabs (Target #4 of Guided Tour) */}
           <div
+            data-tour="workspace-tabs"
             role="tablist"
-            aria-label="Trip Workspace Views"
+            aria-label={t('trip.tabPlan')}
             className="hidden md:flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-lg"
           >
             <Link
               to={`/trips/${bundle.trip.id}`}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+              role="tab"
+              aria-selected={activeTab === 'plan'}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-amber-500 ${
                 activeTab === 'plan'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                   : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
@@ -298,7 +835,9 @@ export const TripWorkspacePage: React.FC = () => {
             </Link>
             <Link
               to={`/trips/${bundle.trip.id}/budget`}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+              role="tab"
+              aria-selected={activeTab === 'budget'}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-amber-500 ${
                 activeTab === 'budget'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                   : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
@@ -308,7 +847,9 @@ export const TripWorkspacePage: React.FC = () => {
             </Link>
             <Link
               to={`/trips/${bundle.trip.id}/group`}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+              role="tab"
+              aria-selected={activeTab === 'group'}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-amber-500 ${
                 activeTab === 'group'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                   : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
@@ -318,7 +859,9 @@ export const TripWorkspacePage: React.FC = () => {
             </Link>
             <Link
               to={`/trips/${bundle.trip.id}/expenses`}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+              role="tab"
+              aria-selected={activeTab === 'expenses'}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-amber-500 ${
                 activeTab === 'expenses'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                   : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
@@ -328,24 +871,117 @@ export const TripWorkspacePage: React.FC = () => {
             </Link>
           </div>
 
+          {/* Interactive Onboarding Guided Tour Trigger */}
           <button
             type="button"
-            onClick={() => setChatOpen((prev) => !prev)}
-            className="px-3.5 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap"
+            onClick={() => setTourOpen(true)}
+            aria-label={t('tour.triggerAria')}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
           >
-            💬 {t('chat.title')}
+            <Compass className="w-3.5 h-3.5 text-[#D97706]" aria-hidden="true" />
+            <span>{t('tour.triggerBtn')}</span>
+          </button>
+
+          {/* Magic Export (PDF & Calendar .ics) Dropdown */}
+          <div ref={exportRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setExportDropdownOpen((prev) => !prev)}
+              aria-expanded={exportDropdownOpen}
+              aria-haspopup="menu"
+              aria-controls="export-dropdown-menu"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-amber-500 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <Download className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" aria-hidden="true" />
+              <span>{t('export.buttonLabel')}</span>
+              <ChevronDown className="w-3.5 h-3.5 opacity-70" aria-hidden="true" />
+            </button>
+
+            {exportDropdownOpen && (
+              <div
+                id="export-dropdown-menu"
+                role="menu"
+                className="absolute right-0 mt-2 w-64 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl py-1.5 z-50"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleExportPdf}
+                  className="w-full px-4 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-start gap-2.5 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-inset"
+                >
+                  <Printer className="w-4 h-4 text-[#D97706] mt-0.5 shrink-0" aria-hidden="true" />
+                  <div>
+                    <p className="text-xs font-semibold text-slate-900 dark:text-white">
+                      {t('export.pdfOption')}
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {t('export.pdfDesc')}
+                    </p>
+                  </div>
+                </button>
+
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleExportIcsDay}
+                  className="w-full px-4 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-start gap-2.5 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-inset"
+                >
+                  <CalendarIcon className="w-4 h-4 text-teal-600 dark:text-teal-400 mt-0.5 shrink-0" aria-hidden="true" />
+                  <div>
+                    <p className="text-xs font-semibold text-slate-900 dark:text-white">
+                      {t('export.icsDayOption')} ({t('trip.dayWord')} {currentDay.dayNumber})
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {t('export.icsDayDesc')}
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleExportIcsFull}
+                  className="w-full px-4 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-start gap-2.5 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-inset"
+                >
+                  <CalendarIcon className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" aria-hidden="true" />
+                  <div>
+                    <p className="text-xs font-semibold text-slate-900 dark:text-white">
+                      {t('export.icsFullOption')}
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {t('export.icsFullDesc')}
+                    </p>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            aria-expanded={chatOpen}
+            aria-controls="genie-chat-panel"
+            onClick={() => setChatOpen((prev) => !prev)}
+            className="px-3.5 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+          >
+            <span aria-hidden="true">💬 </span>
+            {t('chat.title')}
           </button>
         </div>
       </div>
 
       {/* Visual Diff Accept / Reject Bar (AI Architecture Rule #4) */}
-      <DiffReviewBanner
-        proposals={proposals}
-        onAccept={(pId) => acceptProposal(bundle.trip.id, pId)}
-        onReject={(pId) => rejectProposal(bundle.trip.id, pId)}
-        onAcceptAll={() => acceptAllProposals(bundle.trip.id)}
-        onRejectAll={() => rejectAllProposals(bundle.trip.id)}
-      />
+      <div className="print:hidden">
+        <DiffReviewBanner
+          proposals={proposals}
+          onAccept={(pId) => acceptProposal(bundle.trip.id, pId)}
+          onReject={(pId) => rejectProposal(bundle.trip.id, pId)}
+          onAcceptAll={() => acceptAllProposals(bundle.trip.id)}
+          onRejectAll={() => rejectAllProposals(bundle.trip.id)}
+        />
+      </div>
 
       {/* Sub-Views: Budget / Group / Expenses */}
       {activeTab === 'budget' && <BudgetTabView bundle={bundle} />}
@@ -354,85 +990,214 @@ export const TripWorkspacePage: React.FC = () => {
 
       {/* Main Itinerary + Map View */}
       {activeTab === 'plan' && (
-        <div className="space-y-6">
-          {/* Day Selector Tabs & One-Tap Plan B Toggle */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {bundle.days.map((day, idx) => (
+        <div className="space-y-8">
+          {/* Day Selector Tabs, Collapsible Badges Toggle & Action Controls */}
+          <div className="print:hidden space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div
+                role="tablist"
+                aria-label={t('hero.days')}
+                className="flex items-center gap-2 overflow-x-auto pb-1"
+              >
+                {bundle.days.map((day, idx) => (
+                  <button
+                    key={day.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selectedDayIndex === idx}
+                    onClick={() => setSelectedDayIndex(idx)}
+                    className={`px-4 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                      selectedDayIndex === idx
+                        ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-amber-600 dark:border-amber-500'
+                        : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    {t('trip.dayWord')} {day.dayNumber} · {day.date.slice(5)}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {/* Collapsible Trust Layer Badges Trigger (Target #1 of Guided Tour, closed by default) */}
                 <button
-                  key={day.id}
+                  id="trust-badges-legend-btn"
                   type="button"
-                  onClick={() => setSelectedDayIndex(idx)}
-                  className={`px-4 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
-                    selectedDayIndex === idx
-                      ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-amber-600 dark:border-amber-500'
-                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+                  data-tour="trust-badges"
+                  aria-expanded={badgesLegendOpen}
+                  aria-controls="trust-badges-legend-panel"
+                  onClick={() => setBadgesLegendOpen((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                    badgesLegendOpen
+                      ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400'
                   }`}
                 >
-                  Day {day.dayNumber} · {day.date.slice(5)}
+                  <span>{t('trip.understandBadgesBtn')}</span>
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      badgesLegendOpen ? 'rotate-180' : ''
+                    }`}
+                  />
                 </button>
-              ))}
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await requestAiProposals({
+                      taskType: 'chat',
+                      destination: bundle.trip.destination,
+                      message: 'Suggest a verified local afternoon highlight',
+                      currentDay,
+                      travelers: bundle.travelers,
+                    });
+                    addProposals(bundle.trip.id, res.proposals);
+                    showToast(
+                      language === 'pt'
+                        ? 'Proposta de alteração pronta acima — clique em Aceitar ou Rejeitar!'
+                        : 'Visual Diff Proposal ready above — click Accept or Reject!'
+                    );
+                  }}
+                  className="px-3 py-2 text-xs font-semibold text-amber-900 dark:text-amber-200 bg-amber-100/90 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 hover:bg-amber-200/80 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  {t('trip.testDiffBtn')}
+                </button>
+                {/* Plan B Toggle Button (Target #3 of Guided Tour) */}
+                <button
+                  type="button"
+                  data-tour="plan-b"
+                  aria-pressed={currentDay.activePlan === 'B'}
+                  onClick={() => togglePlanB(bundle.trip.id, currentDay.id)}
+                  className={`px-3.5 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 ${
+                    currentDay.activePlan === 'B'
+                      ? 'bg-teal-700 text-white border-teal-700'
+                      : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <span aria-hidden="true">☔ </span>
+                  {currentDay.activePlan === 'B' ? t('trip.planBActive') : t('trip.planBBtn')}
+                </button>
+                <button
+                  type="button"
+                  aria-expanded={addingActivity}
+                  onClick={() => setAddingActivity((prev) => !prev)}
+                  className="px-3.5 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
+                >
+                  + {t('trip.addActivity')}
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => togglePlanB(bundle.trip.id, currentDay.id)}
-                className={`px-3.5 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap ${
-                  currentDay.activePlan === 'B'
-                    ? 'bg-teal-700 text-white border-teal-700'
-                    : 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-100'
-                }`}
-              >
-                ☔ {currentDay.activePlan === 'B' ? t('trip.planBActive') : t('trip.planBBtn')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setAddingActivity((prev) => !prev)}
-                className="px-3.5 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors whitespace-nowrap"
-              >
-                + {t('trip.addActivity')}
-              </button>
+            {/* Collapsible Trust Layer Confidence Badge Legend (Closed by default) */}
+            <div
+              id="trust-badges-legend-panel"
+              role="region"
+              aria-labelledby="trust-badges-legend-btn"
+              hidden={!badgesLegendOpen}
+              className={
+                badgesLegendOpen
+                  ? 'flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs shadow-xs'
+                  : 'hidden'
+              }
+            >
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {t('trip.trustLegendTitle')}
+                </span>
+                <span className="inline-flex items-center gap-1 text-emerald-800 dark:text-emerald-300 font-medium">
+                  <span aria-hidden="true">🟢</span>
+                  <span className="sr-only">Verified Source:</span>
+                  <strong>{t('trip.verified')}</strong> {t('trip.trustLegendVerified')}
+                </span>
+                <span className="inline-flex items-center gap-1 text-amber-800 dark:text-amber-300 font-medium">
+                  <span aria-hidden="true">🟡</span>
+                  <span className="sr-only">AI Estimated:</span>
+                  <strong>{t('trip.estimated')}</strong> {t('trip.trustLegendEstimated')}
+                </span>
+                <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-400">
+                  <span aria-hidden="true">⚪</span>
+                  <strong>{t('trip.toConfirm')}</strong> {t('trip.trustLegendConfirm')}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-mono-tabular text-[11px] text-slate-500">
+                  {t('dnd.dragHint')} · {t('trip.trustLegendHint')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setBadgesLegendOpen(false)}
+                  aria-label={t('trip.hideBadgesBtn')}
+                  className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  <X className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Vibe Slider & Deterministic Pace Indicator Bar */}
-          <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          {/* Day Header + Stat Chips Row + Vibe Slider (Target #2 of Guided Tour) */}
+          <div
+            data-tour="vibe-slider"
+            className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4 shadow-2xs"
+          >
+            <div className="space-y-3">
               <div>
                 <p className="text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
-                  Day {currentDay.dayNumber} {currentDay.activePlan === 'B' ? '(PLAN B INDOOR ACTIVE)' : ''}
+                  {t('trip.dayWord')} {currentDay.dayNumber} · {currentDay.date}{' '}
+                  {currentDay.activePlan === 'B' ? t('trip.planBIndoorTag') : ''}
                 </p>
-                <h2 className="font-serif-atlas text-xl font-bold text-slate-900 dark:text-white">
-                  {currentDay.theme || `Day ${currentDay.dayNumber} Itinerary`}
+                <h2 className="font-serif-atlas text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mt-0.5">
+                  {currentDay.theme || `${t('trip.dayWord')} ${currentDay.dayNumber}`}
                 </h2>
               </div>
 
-              <div className="flex flex-wrap items-center gap-4 text-xs font-mono-tabular">
-                <span>
-                  Pace Indicator:{' '}
-                  <strong
-                    className={
-                      paceMetrics.label === 'Packed'
-                        ? 'text-amber-700 dark:text-amber-400'
-                        : paceMetrics.label === 'Relaxed'
-                        ? 'text-teal-700 dark:text-teal-400'
-                        : 'text-slate-900 dark:text-white'
-                    }
-                  >
-                    {paceMetrics.label} ({paceMetrics.paceScore}/100)
-                  </strong>
+              {/* Single Row of Clean Stat Chips Below Day Title */}
+              <div className="flex flex-wrap items-center gap-2.5 pt-0.5">
+                {/* Pace Indicator Chip */}
+                <span
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-mono-tabular font-medium ${
+                    paceMetrics.label === 'Packed'
+                      ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300'
+                      : paceMetrics.label === 'Relaxed'
+                      ? 'bg-teal-50 dark:bg-teal-950/40 border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300'
+                      : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
+                  }`}
+                >
+                  <Gauge className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {t('trip.paceIndicator')} <strong>{localizedPaceLabel}</strong> ({paceMetrics.paceScore}/100)
+                  </span>
                 </span>
-                <span>·</span>
-                <span>Scheduled: {Math.round((paceMetrics.scheduledMinutes / 60) * 10) / 10}h</span>
-                <span>·</span>
-                <span>Transit/Walk: {paceMetrics.travelMinutes}m</span>
-                <span>·</span>
-                <span>Free Buffer: {Math.round((paceMetrics.freeBufferMinutes / 60) * 10) / 10}h</span>
+
+                {/* Scheduled Time Chip */}
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#FAF6F0] dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 text-xs font-mono-tabular text-slate-700 dark:text-slate-200">
+                  <Clock className="w-3.5 h-3.5 text-[#D97706] shrink-0" />
+                  <span>
+                    {t('trip.scheduled')}{' '}
+                    <strong>{Math.round((paceMetrics.scheduledMinutes / 60) * 10) / 10}h</strong>
+                  </span>
+                </span>
+
+                {/* Transit Time Chip */}
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#FAF6F0] dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 text-xs font-mono-tabular text-slate-700 dark:text-slate-200">
+                  <Footprints className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
+                  <span>
+                    {t('trip.transitWalk')} <strong>{paceMetrics.travelMinutes}m</strong>
+                  </span>
+                </span>
+
+                {/* Free Buffer Chip */}
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#FAF6F0] dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 text-xs font-mono-tabular text-slate-700 dark:text-slate-200">
+                  <Coffee className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
+                  <span>
+                    {t('trip.freeBuffer')}{' '}
+                    <strong>{Math.round((paceMetrics.freeBufferMinutes / 60) * 10) / 10}h</strong>
+                  </span>
+                </span>
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="print:hidden flex flex-col sm:flex-row sm:items-center gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
               <label htmlFor="vibe-slider" className="text-xs font-medium whitespace-nowrap">
                 {t('trip.vibeSlider')} (1 = {t('trip.paceRelaxed')} → 5 = {t('trip.pacePacked')}):
               </label>
@@ -443,11 +1208,15 @@ export const TripWorkspacePage: React.FC = () => {
                 max={5}
                 step={1}
                 value={currentDay.paceLevel}
+                aria-valuemin={1}
+                aria-valuemax={5}
+                aria-valuenow={currentDay.paceLevel}
+                aria-valuetext={`${t('trip.step')} ${currentDay.paceLevel} (${localizedPaceLabel})`}
                 onChange={(e) => handleVibeSliderChange(Number(e.target.value))}
-                className="flex-1 accent-amber-600 cursor-pointer"
+                className="flex-1 accent-amber-600 cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
               />
               <span className="text-xs font-mono-tabular font-semibold whitespace-nowrap">
-                Step {currentDay.paceLevel}/5
+                {t('trip.step')} {currentDay.paceLevel}/5
               </span>
             </div>
 
@@ -465,37 +1234,37 @@ export const TripWorkspacePage: React.FC = () => {
           {addingActivity && (
             <form
               onSubmit={handleAddActivitySubmit}
-              className="rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-4 flex flex-col sm:flex-row items-end gap-3"
+              className="print:hidden rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-4 flex flex-col sm:flex-row items-end gap-3"
             >
               <div className="flex-1 w-full">
                 <label htmlFor="new-act-title" className="block text-xs font-medium mb-1">
-                  Activity Name
+                  {t('trip.actNameLabel')}
                 </label>
                 <input
                   id="new-act-title"
                   type="text"
                   required
-                  placeholder="e.g. Miradouro de Santa Catarina Sunset"
+                  placeholder={t('trip.actNamePlaceholder')}
                   value={newActTitle}
                   onChange={(e) => setNewActTitle(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700"
+                  className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
               <div>
                 <label htmlFor="new-act-time" className="block text-xs font-medium mb-1">
-                  Start Time
+                  {t('trip.actStartTime')}
                 </label>
                 <input
                   id="new-act-time"
                   type="time"
                   value={newActTime}
                   onChange={(e) => setNewActTime(e.target.value)}
-                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular"
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
               <div>
                 <label htmlFor="new-act-cost" className="block text-xs font-medium mb-1">
-                  Est. Cost (€)
+                  {t('trip.actEstCost')}
                 </label>
                 <input
                   id="new-act-cost"
@@ -503,238 +1272,71 @@ export const TripWorkspacePage: React.FC = () => {
                   min={0}
                   value={newActCost}
                   onChange={(e) => setNewActCost(Number(e.target.value))}
-                  className="w-24 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular"
+                  className="w-24 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg"
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
-                Save Stop
+                {t('trip.saveStopBtn')}
               </button>
             </form>
           )}
 
-          {/* Split Desktop Grid: Timeline Left (7 cols) + Map Right (5 cols) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Split Desktop Grid with Generous Breathing Room: Timeline Left (7 cols) + Map Right (5 cols) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-start print:block">
             {/* Timeline Column */}
             <div
-              className={`lg:col-span-7 space-y-4 ${
-                mobileView === 'map' ? 'hidden lg:block' : 'block'
+              className={`lg:col-span-7 print:w-full space-y-6 ${
+                mobileView === 'map' ? 'hidden lg:block print:block' : 'block'
               }`}
             >
-              {activeActivities.map((act, idx) => {
-                const selectedCost = act.costOptions[act.selectedTier];
-                const pricePrefix = act.priceConfidence.status === 'verified' ? '' : '~';
-                const isTrap = act.touristTrapScore >= 70;
-                const downVotes = Object.values(act.votes || {}).filter((v) => v === 'down').length;
-
-                return (
-                  <React.Fragment key={act.id}>
-                    {/* Travel Connector from previous activity (Feature B6) */}
-                    {idx > 0 && act.travelFromPrevious && (
-                      <div className="pl-6 flex items-center gap-2 text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
-                        <span>↓</span>
-                        <span>
-                          {act.travelFromPrevious.mode === 'WALKING'
-                            ? '🚶 Walk'
-                            : act.travelFromPrevious.mode === 'TRANSIT'
-                            ? '🚋 Transit'
-                            : '🚕 Drive'}{' '}
-                          · {act.travelFromPrevious.minutes} min ({act.travelFromPrevious.distanceKm} km)
-                        </span>
-                        <span>·</span>
-                        <span>
-                          Source:{' '}
-                          {act.travelFromPrevious.source === 'maps_api'
-                            ? 'Google Maps API'
-                            : 'estimated (~)'}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Activity Card */}
-                    <article
-                      onClick={() => setSelectedActivityId(act.id)}
-                      className={`rounded-xl bg-white dark:bg-slate-900 border p-5 space-y-3.5 transition-colors ${
-                        selectedActivityId === act.id
-                          ? 'border-amber-500 dark:border-amber-500'
-                          : 'border-slate-200 dark:border-slate-800'
-                      }`}
+              {vibeRecalculating ? (
+                <SkeletonItinerary cardsCount={3} destination={bundle.trip.destination} />
+              ) : (
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={activeActivities.map((a) => a.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <ul
+                      aria-label={`${t('trip.dayWord')} ${currentDay.dayNumber} ${t('trip.tabPlan')}`}
+                      className="space-y-6 list-none p-0 m-0"
                     >
-                      {/* Top row: Pin number, Time, Title & Reorder/Delete controls */}
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
-                            <span className="font-bold text-amber-700 dark:text-amber-400">
-                              #{idx + 1} · {act.startTime} ({act.durationMin} min)
-                            </span>
-                            <span>·</span>
-                            <span>{act.location.name}</span>
-                            {downVotes > 0 && (
-                              <>
-                                <span>·</span>
-                                <span className="text-rose-700 dark:text-rose-400 font-semibold">
-                                  ⚠️ {t('trip.needsDiscussion')}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                          <h3 className="font-serif-atlas text-lg font-bold text-slate-900 dark:text-white">
-                            {act.title}
-                          </h3>
-                        </div>
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMoveActivity(idx, -1);
-                            }}
-                            disabled={idx === 0}
-                            aria-label={`Move ${act.title} earlier`}
-                            className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMoveActivity(idx, 1);
-                            }}
-                            disabled={idx === activeActivities.length - 1}
-                            aria-label={`Move ${act.title} later`}
-                            className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30"
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRemoveActivityDirect(act.id);
-                            }}
-                            aria-label={`Remove ${act.title}`}
-                            className="px-2 py-1 text-xs text-rose-600 rounded border border-slate-200 dark:border-slate-700 hover:bg-rose-50"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-
-                      <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                        {act.description}
-                      </p>
-
-                      {/* "Why this activity?" (Feature B7) */}
-                      <p className="text-xs text-teal-800 dark:text-teal-300 font-medium">
-                        ✨ {t('trip.whyThis')} {act.whyThis}
-                      </p>
-
-                      {/* Trust Layer Badges (Feature B1: Price & Opening Hours) */}
-                      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1">
-                        <TrustBadge
-                          type="price"
-                          confidence={act.priceConfidence}
-                          valueText={`${pricePrefix}${selectedCost.estimatedCost}€ (${selectedCost.title})`}
+                      {activeActivities.map((act, idx) => (
+                        <SortableActivityCard
+                          key={act.id}
+                          act={act}
+                          idx={idx}
+                          totalCount={activeActivities.length}
+                          selectedActivityId={selectedActivityId}
+                          activeTravelerId={activeTravelerId}
+                          onSelect={(actId) => setSelectedActivityId(actId)}
+                          onMove={handleMoveActivity}
+                          onRemove={handleRemoveActivityDirect}
+                          onTierSelect={handleTierSelect}
+                          onEscapeCrowds={handleEscapeCrowds}
+                          onVote={(actId, v) =>
+                            castVote(bundle.trip.id, currentDay.id, actId, activeTravelerId, v)
+                          }
+                          onQuickExpense={() => navigate(`/trips/${bundle.trip.id}/expenses`)}
+                          getTierLabel={getTierLabel}
                         />
-                        <TrustBadge
-                          type="hours"
-                          confidence={act.hoursConfidence}
-                          valueText={act.openingHoursText || '09:30 – 18:00'}
-                        />
-                      </div>
-
-                      {/* Cost Tier Selector + Anti-Tourist-Trap + Voting & Expense Quick Action */}
-                      <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-                        {/* Budget / Mid / Premium switcher */}
-                        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                          {(['budget', 'mid', 'premium'] as BudgetTier[]).map((tier) => (
-                            <button
-                              key={tier}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleTierSelect(act.id, tier);
-                              }}
-                              className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap ${
-                                act.selectedTier === tier
-                                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                                  : 'text-slate-600 dark:text-slate-400'
-                              }`}
-                            >
-                              {tier}: €{act.costOptions[tier].estimatedCost}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          {/* Anti-Tourist-Trap Filter (Feature B4: score >= 70) */}
-                          {isTrap && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEscapeCrowds(act);
-                              }}
-                              className="px-3 py-1.5 text-xs font-semibold text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 hover:bg-amber-200 rounded-lg transition-colors whitespace-nowrap"
-                            >
-                              🧭 {t('trip.escapeCrowds')} ({act.touristTrapScore}/100)
-                            </button>
-                          )}
-
-                          {/* Quick Vote */}
-                          <div className="flex items-center gap-1">
-                            {(['up', 'down'] as VoteValue[]).map((v) => (
-                              <button
-                                key={v}
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  castVote(
-                                    bundle.trip.id,
-                                    currentDay.id,
-                                    act.id,
-                                    activeTravelerId,
-                                    v
-                                  );
-                                }}
-                                aria-label={`Vote ${v} for ${act.title}`}
-                                className={`px-2 py-1 text-xs rounded border ${
-                                  act.votes?.[activeTravelerId] === v
-                                    ? 'bg-slate-900 text-white dark:bg-amber-600'
-                                    : 'border-slate-200 dark:border-slate-700'
-                                }`}
-                              >
-                                {v === 'up' ? '👍' : '👎'}
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* Quick Add Expense Link */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/trips/${bundle.trip.id}/expenses`);
-                            }}
-                            className="px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:underline whitespace-nowrap"
-                          >
-                            + Expense
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  </React.Fragment>
-                );
-              })}
+                      ))}
+                    </ul>
+                  </SortableContext>
+                </DndContext>
+              )}
             </div>
 
-            {/* Sticky Map Column */}
+            {/* Sticky Map Column with Elevated Breathing Room (Hidden in print mode) */}
             <div
-              className={`lg:col-span-5 lg:sticky lg:top-20 h-[440px] lg:h-[600px] ${
+              className={`print:hidden lg:col-span-5 lg:sticky lg:top-24 h-[460px] lg:h-[620px] p-3 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs ${
                 mobileView === 'plan' ? 'hidden lg:block' : 'block'
               }`}
             >
@@ -748,34 +1350,42 @@ export const TripWorkspacePage: React.FC = () => {
         </div>
       )}
 
-      {/* Collapsible Conversational Assistant Side Panel (Feature A7) */}
+      {/* Interactive 4-Step First-Time User Onboarding Guided Tour */}
+      <GuidedTourOverlay isOpen={tourOpen} onClose={handleCloseTour} />
+
+      {/* Collapsible Conversational Assistant Side Panel (Feature A7, hidden in print) */}
       {chatOpen && (
         <aside
-          aria-label="Atlas Genie Conversational Assistant"
-          className="fixed right-4 bottom-20 md:bottom-6 z-40 w-[calc(100vw-2rem)] sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-2xl flex flex-col max-h-[520px]"
+          id="genie-chat-panel"
+          aria-label={t('chat.title')}
+          className="print:hidden fixed right-4 bottom-20 md:bottom-6 z-40 w-[calc(100vw-2rem)] sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-2xl flex flex-col max-h-[520px]"
         >
           <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
             <div>
-              <h3 className="font-serif-atlas text-base font-bold text-slate-900 dark:text-white">
+              <h2 className="font-serif-atlas text-base font-bold text-slate-900 dark:text-white">
                 {t('chat.title')}
-              </h3>
+              </h2>
               <p className="text-[11px] text-slate-500">
-                Proposes non-destructive diffs for Day {currentDay.dayNumber}
+                {t('chat.subtitle', { day: currentDay.dayNumber })}
               </p>
             </div>
             <button
               type="button"
               onClick={() => setChatOpen(false)}
-              aria-label="Close assistant panel"
-              className="text-slate-400 hover:text-slate-700 dark:hover:text-white"
+              aria-label={t('support.closeAria')}
+              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
-              ✕
+              <span aria-hidden="true">✕</span>
             </button>
           </div>
 
           {/* Quick-Action Chips */}
           <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto">
             {[
+              {
+                label: t('chat.chipPlaceDetails'),
+                prompt: 'What are the opening hours, rating, and reviews for Time Out Market in Lisbon?',
+              },
               { label: t('chat.chipCheaper'), prompt: 'Make today cheaper with local budget spots' },
               { label: t('chat.chipLessWalking'), prompt: 'Less walking and shorter transit legs' },
               { label: t('chat.chipMoreLocal'), prompt: 'Replace touristy stops with authentic local taverns' },
@@ -785,7 +1395,7 @@ export const TripWorkspacePage: React.FC = () => {
                 key={chip.label}
                 type="button"
                 onClick={() => handleSendChat(chip.prompt)}
-                className="px-2.5 py-1 text-[11px] font-medium bg-[#FAF6F0] dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md hover:border-amber-500 whitespace-nowrap shrink-0"
+                className="px-2.5 py-1 text-[11px] font-medium bg-[#FAF6F0] dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md hover:border-amber-500 whitespace-nowrap shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
                 {chip.label}
               </button>
@@ -794,21 +1404,42 @@ export const TripWorkspacePage: React.FC = () => {
 
           {/* Messages */}
           <div className="p-4 flex-1 overflow-y-auto space-y-3 text-xs max-h-64">
-            {chatHistory.map((m, i) => (
-              <div
-                key={i}
-                className={`p-3 rounded-xl ${
-                  m.sender === 'user'
-                    ? 'bg-[#0F172A] text-white ml-8'
-                    : 'bg-[#FAF6F0] dark:bg-slate-800 text-slate-800 dark:text-slate-200 mr-6'
-                }`}
-              >
-                {m.text}
+            {chatHistory.length === 0 && (
+              <div className="p-3 rounded-xl bg-[#FAF6F0] dark:bg-slate-800 text-slate-800 dark:text-slate-200 mr-6">
+                {language === 'pt'
+                  ? `Bem-vindo ao seu Atlas de ${bundle.trip.destination}! Faça perguntas sobre qualquer local (horários, avaliação, preços) ou toque num botão acima — cada sugestão aparece na barra de revisão para manter o controlo.`
+                  : `Welcome to your ${bundle.trip.destination} Atlas! Ask about any place (rating, hours, reviews) or tap a quick action above—every itinerary change appears as an Accept/Reject diff so you stay in control.`}
               </div>
-            ))}
+            )}
+            {chatHistory
+              .filter((m) => m.sender === 'user' || m.text.trim().length > 0)
+              .map((m) => (
+                <div
+                  key={m.id}
+                  className={`p-3 rounded-xl whitespace-pre-line leading-relaxed ${
+                    m.sender === 'user'
+                      ? 'bg-[#0F172A] text-white ml-8'
+                      : 'bg-[#FAF6F0] dark:bg-slate-800 text-slate-800 dark:text-slate-200 mr-6'
+                  }`}
+                >
+                  {m.grounded && (
+                    <div className="mb-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold">
+                      <span aria-hidden="true">🟢</span>
+                      <span>{t('chat.groundedBadge')}</span>
+                    </div>
+                  )}
+                  <div>{m.text}</div>
+                </div>
+              ))}
             {chatLoading && (
-              <p className="text-xs text-amber-700 dark:text-amber-400 italic">
-                {t('hero.miniGenLoading')}
+              <p
+                role="status"
+                aria-live="polite"
+                className="text-xs text-amber-700 dark:text-amber-400 italic"
+              >
+                {fetchingPlaceName
+                  ? t('chat.fetchingPlace', { place: fetchingPlaceName })
+                  : t('hero.miniGenLoading')}
               </p>
             )}
           </div>
@@ -820,27 +1451,31 @@ export const TripWorkspacePage: React.FC = () => {
             }}
             className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2"
           >
+            <label htmlFor="genie-chat-input" className="sr-only">
+              {t('chat.placeholder')}
+            </label>
             <input
+              id="genie-chat-input"
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder={t('chat.placeholder')}
-              className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
+              className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
             <button
               type="submit"
-              className="px-3.5 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg"
+              className="px-3.5 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
-              Send
+              {t('chat.sendBtn')}
             </button>
           </form>
         </aside>
       )}
 
-      {/* Mobile Bottom Navigation Bar (Plan / Map / Budget / Group / Expenses) */}
+      {/* Mobile Bottom Navigation Bar (Plan / Map / Budget / Group / Expenses, hidden in print) */}
       <nav
-        aria-label="Mobile Workspace Navigation"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 items-center text-center text-[11px] font-medium"
+        aria-label={t('nav.mainNavAria')}
+        className="print:hidden md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 items-center text-center text-[11px] font-medium"
       >
         <button
           type="button"
@@ -854,7 +1489,7 @@ export const TripWorkspacePage: React.FC = () => {
               : 'text-slate-600 dark:text-slate-400'
           }
         >
-          Plan
+          {t('trip.mobilePlan')}
         </button>
         <button
           type="button"
@@ -868,7 +1503,7 @@ export const TripWorkspacePage: React.FC = () => {
               : 'text-slate-600 dark:text-slate-400'
           }
         >
-          Map
+          {t('trip.mobileMap')}
         </button>
         <Link
           to={`/trips/${bundle.trip.id}/budget`}
@@ -878,7 +1513,7 @@ export const TripWorkspacePage: React.FC = () => {
               : 'text-slate-600 dark:text-slate-400'
           }
         >
-          Budget
+          {t('trip.mobileBudget')}
         </Link>
         <Link
           to={`/trips/${bundle.trip.id}/group`}
@@ -888,7 +1523,7 @@ export const TripWorkspacePage: React.FC = () => {
               : 'text-slate-600 dark:text-slate-400'
           }
         >
-          Group
+          {t('trip.mobileGroup')}
         </Link>
         <Link
           to={`/trips/${bundle.trip.id}/expenses`}
@@ -898,7 +1533,7 @@ export const TripWorkspacePage: React.FC = () => {
               : 'text-slate-600 dark:text-slate-400'
           }
         >
-          Expenses
+          {t('trip.mobileExpenses')}
         </Link>
       </nav>
     </main>

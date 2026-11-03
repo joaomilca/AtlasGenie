@@ -1,6 +1,10 @@
 import { createRoot } from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import './index.css';
+
+// Register PWA Service Worker for offline capability (Airplane mode support)
+registerSW({ immediate: true });
 
 // Tier 1 Google Maps Platform Demo Key Quota Defense (Mandatory per GMP Skill Section 8 Case A)
 (window as any).gm_authFailure = () => {
@@ -16,3 +20,4 @@ console.error = (...args: unknown[]) => {
 };
 
 createRoot(document.getElementById('root')!).render(<App />);
+

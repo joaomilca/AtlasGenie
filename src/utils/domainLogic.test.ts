@@ -6,9 +6,13 @@ import {
   optimizeBudgetTiers,
   computeExpenseBalancesAndSettlement,
   applySingleProposalChange,
+  applyProposalChanges,
+  applyBudgetOptimizationToDays,
   computeGroupFairness,
+  reorderActivitiesList,
+  generateIcsCalendar,
 } from './domainLogic';
-import { Activity, Day, Expense, Traveler } from '../types/models';
+import { Activity, Day, Expense, FullTripBundle, Traveler } from '../types/models';
 
 const sampleActivity = (
   id: string,
@@ -239,6 +243,36 @@ test('applySingleProposalChange replaces activity and recalculates travel times'
 
   assert.equal(updated[0].activities[0].id, 'a1-local');
   assert.equal(updated[0].activities[0].title, 'Authentic Local Spot');
+
+  // Verify idempotency & batch application via applyProposalChanges
+  const addedAct = sampleActivity('a2-evening', 'Sunset Viewpoint', '18:30', 60, 0, 10, 25);
+  const batched = applyProposalChanges(updated, [
+    {
+      id: 'p2',
+      dayId: 'd1',
+      dayNumber: 1,
+      type: 'add',
+      payload: addedAct,
+      reason: 'Add evening stop',
+      source: 'chat',
+      status: 'accepted',
+    },
+    {
+      id: 'p2-dup',
+      dayId: 'd1',
+      dayNumber: 1,
+      type: 'add',
+      payload: addedAct,
+      reason: 'Duplicate real-time event',
+      source: 'chat',
+      status: 'accepted',
+    },
+  ]);
+  assert.equal(batched[0].activities.length, 2);
+
+  const tierUpdated = applyBudgetOptimizationToDays(batched, { 'a1-local': 'budget', 'a2-evening': 'premium' });
+  assert.equal(tierUpdated[0].activities[0].selectedTier, 'budget');
+  assert.equal(tierUpdated[0].activities[1].selectedTier, 'premium');
 });
 
 test('computeGroupFairness produces balanced scores for travelers', () => {
@@ -273,3 +307,148 @@ test('computeGroupFairness produces balanced scores for travelers', () => {
   assert.ok(report.overallFairnessIndex > 0);
   assert.equal(report.perPerson[0].matchedActivitiesCount, 1);
 });
+
+test('reorderActivitiesList moves activity to target index and recalculates travelFromPrevious', () => {
+  const act1 = {
+    ...sampleActivity('a1', 'Stop 1', '09:00', 60, 5, 10, 20),
+    location: { name: 'Alfama', lat: 38.711, lng: -9.13 },
+  };
+  const act2 = {
+    ...sampleActivity('a2', 'Stop 2', '11:00', 60, 5, 10, 20),
+    location: { name: 'Chiado', lat: 38.710, lng: -9.142 },
+  };
+  const act3 = {
+    ...sampleActivity('a3', 'Stop 3', '14:00', 60, 5, 10, 20),
+    location: { name: 'Belem', lat: 38.697, lng: -9.206 },
+  };
+
+  const reordered = reorderActivitiesList([act1, act2, act3], 2, 0);
+  assert.equal(reordered[0].id, 'a3');
+  assert.equal(reordered[1].id, 'a1');
+  assert.equal(reordered[2].id, 'a2');
+  assert.equal(reordered[0].travelFromPrevious, undefined);
+  assert.ok(reordered[1].travelFromPrevious);
+  assert.ok(reordered[1].travelFromPrevious!.minutes >= 4);
+});
+
+test('generateIcsCalendar outputs valid RFC 5545 VCALENDAR with VEVENT entries', () => {
+  const day: Day = {
+    id: 'd1',
+    tripId: 't1',
+    ownerId: 'u1',
+    date: '2026-11-18',
+    dayNumber: 1,
+    paceLevel: 3,
+    paceScore: 50,
+    activePlan: 'A',
+    activities: [
+      sampleActivity('a1', 'Castelo de São Jorge', '09:30', 120, 0, 15, 45),
+      sampleActivity('a2', 'Museu Nacional do Azulejo', '15:15', 105, 8, 14, 48),
+    ],
+    planB: [],
+  };
+
+  const bundle: FullTripBundle = {
+    trip: {
+      id: 't1',
+      ownerId: 'u1',
+      destination: 'Lisbon',
+      startDate: '2026-11-18',
+      endDate: '2026-11-18',
+      currency: 'EUR',
+      totalBudget: 500,
+      travelersCount: 2,
+      interests: ['history'],
+      defaultPace: 3,
+      status: 'planned',
+      memberIds: ['u1'],
+      inviteCode: 'LISBOA26',
+      assumptions: [],
+      groupEnabled: true,
+    },
+    days: [day],
+    travelers: [],
+    expenses: [],
+  };
+
+  const ics = generateIcsCalendar(bundle, day);
+  assert.ok(ics.startsWith('BEGIN:VCALENDAR'));
+  assert.ok(ics.includes('SUMMARY:Castelo de São Jorge'));
+  assert.ok(ics.includes('SUMMARY:Museu Nacional do Azulejo'));
+  assert.ok(ics.includes('DTSTART:20261118T093000Z'));
+  assert.ok(ics.includes('DTEND:20261118T113000Z'));
+  assert.ok(ics.trim().endsWith('END:VCALENDAR'));
+});
+
+test('Gemini Function Calling helpers extract place arguments, build functionResponse, and format grounded output', async () => {
+  const {
+    isInformationalPlaceQuery,
+    extractPlaceQueryArgs,
+    normalizeGooglePlacesApiResponse,
+    resolveVerifiedPlaceDetails,
+    buildFunctionResponsePayload,
+    formatGroundedPlaceReply,
+  } = await import('./domainLogic');
+
+  assert.equal(
+    isInformationalPlaceQuery('What are the opening hours, rating, and reviews for Time Out Market in Lisbon?'),
+    true
+  );
+  assert.equal(
+    isInformationalPlaceQuery('Make today cheaper with local budget spots'),
+    false
+  );
+
+  const extracted = extractPlaceQueryArgs(
+    'What are the opening hours, rating, and reviews for Time Out Market in Lisbon?',
+    'Lisbon'
+  );
+  assert.ok(extracted);
+  assert.equal(extracted!.placeName, 'Time Out Market Lisboa');
+  assert.equal(extracted!.city, 'Lisbon');
+
+  const verifiedDetails = resolveVerifiedPlaceDetails('Time Out Market Lisboa', 'Lisbon');
+  assert.equal(verifiedDetails.rating, 4.5);
+  assert.ok(verifiedDetails.priceLevel.includes('€€'));
+  assert.ok(verifiedDetails.openingHours.length > 0);
+  assert.ok(verifiedDetails.reviewsSummary.includes('food hall'));
+
+  const normalizedApi = normalizeGooglePlacesApiResponse(
+    {
+      displayName: { text: 'Pastéis de Belém' },
+      formattedAddress: 'R. de Belém 84-92, Lisboa',
+      rating: 4.72,
+      userRatingCount: 89400,
+      priceLevel: 'PRICE_LEVEL_INEXPENSIVE',
+      regularOpeningHours: {
+        weekdayDescriptions: ['Monday – Sunday: 08:00 – 21:00'],
+      },
+      reviews: [
+        {
+          authorAttribution: { displayName: 'Ana M.' },
+          rating: 5,
+          text: { text: 'Warm flaky custard tarts right out of the oven.' },
+        },
+      ],
+    },
+    { placeName: 'Pastéis de Belém', city: 'Lisbon' }
+  );
+  assert.equal(normalizedApi.placeName, 'Pastéis de Belém');
+  assert.equal(normalizedApi.rating, 4.7);
+  assert.ok(normalizedApi.priceLevel.includes('Inexpensive'));
+  assert.ok(normalizedApi.reviewsSummary.includes('Warm flaky custard tarts'));
+
+  const fnResponse = buildFunctionResponsePayload('call-123', verifiedDetails);
+  assert.equal(fnResponse.role, 'function');
+  assert.equal(fnResponse.parts[0].functionResponse.id, 'call-123');
+  assert.equal(fnResponse.parts[0].functionResponse.name, 'fetch_google_place_details');
+  assert.equal(fnResponse.parts[0].functionResponse.response.result.placeName, 'Time Out Market Lisboa');
+
+  const groundedEn = formatGroundedPlaceReply(verifiedDetails, 'en');
+  assert.ok(groundedEn.includes('Time Out Market Lisboa'));
+  assert.ok(groundedEn.includes('4.5/5'));
+  assert.ok(groundedEn.includes('Opening Hours:'));
+  assert.ok(groundedEn.includes('Reviews Summary:'));
+});
+
+

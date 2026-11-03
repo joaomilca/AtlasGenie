@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAtlas } from '../context/AtlasContext';
 
 export const JoinTripPage: React.FC = () => {
   const { inviteCode = 'LISBOA26' } = useParams<{ inviteCode: string }>();
   const { findTripByInviteCode, addTraveler } = useAtlas();
+  const { t } = useTranslation();
   const navigate = useNavigate();
 
   const bundle = findTripByInviteCode(inviteCode);
@@ -18,17 +20,16 @@ export const JoinTripPage: React.FC = () => {
   if (!bundle) {
     return (
       <main className="max-w-md mx-auto px-4 py-16 text-center space-y-4">
-        <h1 className="font-serif-atlas text-2xl font-bold">Invite Code Not Found</h1>
+        <h1 className="font-serif-atlas text-2xl font-bold">{t('join.notFoundTitle')}</h1>
         <p className="text-xs text-slate-600 dark:text-slate-400">
-          We couldn’t find a trip matching code <strong>{inviteCode}</strong>. Try{' '}
-          <code>LISBOA26</code>, <code>PORTO26</code>, or <code>ROMA2026</code>.
+          {t('join.notFoundSub', { code: inviteCode })}
         </p>
         <button
           type="button"
           onClick={() => navigate('/demo')}
-          className="px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] rounded-lg"
+          className="px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] rounded-lg cursor-pointer"
         >
-          Browse Demo Trips
+          {t('join.browseDemosBtn')}
         </button>
       </main>
     );
@@ -61,19 +62,19 @@ export const JoinTripPage: React.FC = () => {
       >
         <div>
           <p className="text-xs font-mono-tabular uppercase text-amber-700 dark:text-amber-400">
-            Invite Code · {bundle.trip.inviteCode}
+            {t('group.inviteCode')} · {bundle.trip.inviteCode}
           </p>
           <h1 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white mt-1">
-            Join {bundle.trip.destination} Expedition
+            {t('join.title', { destination: bundle.trip.destination })}
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-            Fill in your short traveller profile so the Fairness Meter and AI Compromise can balance your interests and personal budget.
+            {t('join.subtitle')}
           </p>
         </div>
 
         <div>
           <label htmlFor="join-name" className="block text-xs font-medium mb-1">
-            Your Name
+            {t('join.yourName')}
           </label>
           <input
             id="join-name"
@@ -88,7 +89,7 @@ export const JoinTripPage: React.FC = () => {
 
         <div>
           <label htmlFor="join-interests" className="block text-xs font-medium mb-1">
-            Interests (comma separated)
+            {t('join.interestsLabel')}
           </label>
           <input
             id="join-interests"
@@ -102,7 +103,7 @@ export const JoinTripPage: React.FC = () => {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label htmlFor="join-budget" className="block text-xs font-medium mb-1">
-              Personal Budget (€)
+              {t('group.budgetPlaceholder')}
             </label>
             <input
               id="join-budget"
@@ -116,7 +117,7 @@ export const JoinTripPage: React.FC = () => {
 
           <div>
             <label htmlFor="join-pace" className="block text-xs font-medium mb-1">
-              Preferred Pace (1-5)
+              {t('join.paceLabel')}
             </label>
             <input
               id="join-pace"
@@ -132,12 +133,12 @@ export const JoinTripPage: React.FC = () => {
 
         <div>
           <label htmlFor="join-constraints" className="block text-xs font-medium mb-1">
-            Dietary or Mobility Notes (Optional)
+            {t('join.constraintsLabel')}
           </label>
           <input
             id="join-constraints"
             type="text"
-            placeholder="e.g. Vegetarian, avoid steep stairs"
+            placeholder={t('join.constraintsPlaceholder')}
             value={constraints}
             onChange={(e) => setConstraints(e.target.value)}
             className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
@@ -146,9 +147,9 @@ export const JoinTripPage: React.FC = () => {
 
         <button
           type="submit"
-          className="w-full py-3 px-4 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors"
+          className="w-full py-3 px-4 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors cursor-pointer"
         >
-          Join Group &amp; Open Fairness Meter
+          {t('join.submitBtn')}
         </button>
       </form>
     </main>

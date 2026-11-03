@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Wifi, CheckCircle2 } from 'lucide-react';
 import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
+import { PWAInstallButton, OfflineIndicator } from '../components/PWAInstallControl';
 
 export const SettingsPage: React.FC = () => {
-  const { t, language, setLanguage, theme, setTheme } = useI18n();
+  const { t } = useTranslation();
+  const { language, setLanguage, theme, setTheme } = useI18n();
   const { currentUser, showToast } = useAtlas();
 
   const [email, setEmail] = useState(currentUser?.email || 'traveller@atlasgenie.eu');
@@ -27,20 +31,21 @@ export const SettingsPage: React.FC = () => {
       });
       const data = await res.json();
       setConfirmationPreview(
-        `Scheduled reminder for ${data.email} (${data.daysBefore} days prior to departure) — Subject: "${data.previewSubject || 'Departure Reminder'}"`
+        `${data.email} (${data.daysBefore}d) — "${data.previewSubject || 'Departure Reminder'}"`
       );
-      showToast('Saved notification preferences and dispatched confirmation email.');
+      showToast(t('toast.preferencesSaved'));
     } catch {
-      showToast('Saved notification preferences.');
+      showToast(t('toast.preferencesSaved'));
     }
   };
 
   return (
     <main className="max-w-3xl mx-auto px-4 sm:px-8 py-10 space-y-8">
-      <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
+      <div className="border-b border-slate-200 dark:border-slate-800 pb-4 flex items-center justify-between gap-4">
         <h1 className="font-serif-atlas text-3xl font-bold text-slate-900 dark:text-white">
           {t('settings.title')}
         </h1>
+        <OfflineIndicator />
       </div>
 
       {/* Language & Theme */}
@@ -48,13 +53,13 @@ export const SettingsPage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="font-serif-atlas text-lg font-semibold">{t('settings.language')}</h2>
-            <p className="text-xs text-slate-500">Full bilingual support for PT-PT and English.</p>
+            <p className="text-xs text-slate-500">{t('settings.languageSub')}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setLanguage('en')}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg border ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg border cursor-pointer ${
                 language === 'en'
                   ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-amber-600'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700'
@@ -65,7 +70,7 @@ export const SettingsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => setLanguage('pt')}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg border ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg border cursor-pointer ${
                 language === 'pt'
                   ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-amber-600'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700'
@@ -79,13 +84,13 @@ export const SettingsPage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
           <div>
             <h2 className="font-serif-atlas text-lg font-semibold">{t('settings.theme')}</h2>
-            <p className="text-xs text-slate-500">Switch between Warm Sand and Midnight Atlas.</p>
+            <p className="text-xs text-slate-500">{t('settings.themeSub')}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setTheme('light')}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg border ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg border cursor-pointer ${
                 theme === 'light'
                   ? 'bg-[#0F172A] text-white border-[#0F172A]'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700'
@@ -96,7 +101,7 @@ export const SettingsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => setTheme('dark')}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg border ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg border cursor-pointer ${
                 theme === 'dark'
                   ? 'bg-amber-600 text-white border-amber-500'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700'
@@ -104,6 +109,24 @@ export const SettingsPage: React.FC = () => {
             >
               {t('settings.themeDark')}
             </button>
+          </div>
+        </div>
+
+        {/* PWA & Offline Airplane Mode Readiness */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-start gap-2.5">
+            <Wifi className="w-4 h-4 text-teal-600 dark:text-teal-400 mt-1 shrink-0" />
+            <div>
+              <h2 className="font-serif-atlas text-lg font-semibold">PWA & Airplane Mode</h2>
+              <p className="text-xs text-slate-500">{t('pwa.readyBadge')}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Offline Cache Active</span>
+            </span>
+            <PWAInstallButton />
           </div>
         </div>
       </section>
@@ -125,15 +148,13 @@ export const SettingsPage: React.FC = () => {
             onChange={(e) => setRemindersEnabled(e.target.checked)}
             className="w-4 h-4 accent-amber-600"
           />
-          <span className="text-xs font-medium">
-            Enable automated pre-departure email reminder &amp; Plan B weather check
-          </span>
+          <span className="text-xs font-medium">{t('settings.enableCheckbox')}</span>
         </label>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label htmlFor="rem-email" className="block text-xs font-medium mb-1">
-              Recipient Email
+              {t('settings.recipientEmail')}
             </label>
             <input
               id="rem-email"
@@ -169,7 +190,7 @@ export const SettingsPage: React.FC = () => {
 
         <button
           type="submit"
-          className="px-5 py-2.5 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors"
+          className="px-5 py-2.5 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors cursor-pointer"
         >
           {t('settings.saveBtn')}
         </button>
@@ -177,3 +198,4 @@ export const SettingsPage: React.FC = () => {
     </main>
   );
 };
+

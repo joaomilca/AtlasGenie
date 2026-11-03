@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FullTripBundle, VoteValue } from '../types/models';
 import { computeGroupFairness } from '../utils/domainLogic';
-import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
 import { requestAiProposals } from '../services/api';
 
@@ -10,7 +10,7 @@ interface GroupTabViewProps {
 }
 
 export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
-  const { t } = useI18n();
+  const { t } = useTranslation();
   const {
     activeTravelerIdByTrip,
     setActiveTravelerId,
@@ -37,7 +37,7 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
   const handleCopyInvite = () => {
     const url = `${window.location.origin}/join/${bundle.trip.inviteCode}`;
     navigator.clipboard?.writeText(url).catch(() => {});
-    showToast(`Copied invite link: ${url}`);
+    showToast(`${t('group.copyInvite')}: ${url}`);
   };
 
   const handleAddMember = async (e: React.FormEvent) => {
@@ -77,7 +77,7 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
         travelers: bundle.travelers,
       });
       addProposals(bundle.trip.id, res.proposals);
-      showToast('AI Compromise proposal added to the diff review bar above!');
+      showToast(t('diff.bannerTitle'));
     } finally {
       setLoadingCompromise(false);
     }
@@ -96,19 +96,19 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
             <strong className="font-mono-tabular text-amber-700 dark:text-amber-400">
               {bundle.trip.inviteCode}
             </strong>{' '}
-            · Share with friends to join as a guest or registered user.
+            · {t('group.shareNote')}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs">
-            <span className="text-slate-500">Voting as:</span>
+            <span className="text-slate-500">{t('group.votingAs')}</span>
             {bundle.travelers.map((tr) => (
               <button
                 key={tr.id}
                 type="button"
                 onClick={() => setActiveTravelerId(bundle.trip.id, tr.id)}
-                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
                   activeTravelerId === tr.id
                     ? 'bg-[#0F172A] text-white dark:bg-amber-600'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
@@ -122,7 +122,7 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
           <button
             type="button"
             onClick={handleCopyInvite}
-            className="px-3.5 py-2 text-xs font-semibold text-white bg-[#0D9488] hover:bg-teal-600 rounded-lg transition-colors whitespace-nowrap"
+            className="px-3.5 py-2 text-xs font-semibold text-white bg-[#0D9488] hover:bg-teal-600 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
             {t('group.copyInvite')}
           </button>
@@ -134,19 +134,20 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
-              {t('group.fairnessTitle')} — Overall Balance: {fairness.overallFairnessIndex}%
+              {t('group.fairnessTitle')} — {t('group.overallBalance')}{' '}
+              {fairness.overallFairnessIndex}%
             </h3>
             <p className="text-xs text-slate-600 dark:text-slate-400">
-              Measures how well each person’s stated interests and budgets are served across days.
+              {t('group.fairnessSub')}
             </p>
           </div>
           <button
             type="button"
             onClick={handleGenerateCompromise}
             disabled={loadingCompromise}
-            className="px-4 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors whitespace-nowrap shrink-0"
+            className="px-4 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
-            {loadingCompromise ? 'Consulting the Atlas…' : t('group.compromiseBtn')}
+            {loadingCompromise ? t('group.consulting') : t('group.compromiseBtn')}
           </button>
         </div>
 
@@ -159,7 +160,7 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-sm">{person.displayName}</span>
                 <span className="font-mono-tabular text-xs font-semibold text-teal-700 dark:text-teal-400">
-                  {person.overallScore}% matched
+                  {person.overallScore}% {t('group.matched')}
                 </span>
               </div>
               <div className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
@@ -189,13 +190,13 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
       {/* Group Activity Voting Table */}
       <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
         <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
-          Live Activity Voting (👍 / 😐 / 👎)
+          {t('group.liveVotingTitle')}
         </h3>
         <div className="space-y-4">
           {bundle.days.map((day) => (
             <div key={day.id} className="space-y-2">
               <p className="text-xs font-mono-tabular font-semibold uppercase text-slate-500">
-                Day {day.dayNumber} · {day.theme}
+                {t('trip.dayWord')} {day.dayNumber} · {day.theme}
               </p>
               <div className="space-y-2">
                 {day.activities.map((act) => {
@@ -222,7 +223,14 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
                           {bundle.travelers
                             .map((tr) => {
                               const v = votes[tr.id];
-                              const icon = v === 'up' ? '👍' : v === 'down' ? '👎' : v === 'neutral' ? '😐' : '—';
+                              const icon =
+                                v === 'up'
+                                  ? '👍'
+                                  : v === 'down'
+                                  ? '👎'
+                                  : v === 'neutral'
+                                  ? '😐'
+                                  : '—';
                               return `${tr.displayName}: ${icon}`;
                             })
                             .join(' · ')}
@@ -237,8 +245,8 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
                             onClick={() =>
                               castVote(bundle.trip.id, day.id, act.id, activeTravelerId, val)
                             }
-                            aria-label={`Vote ${val} on ${act.title}`}
-                            className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                            aria-label={`Vote ${val} ${act.title}`}
+                            className={`px-2.5 py-1 text-xs rounded-md border transition-colors cursor-pointer ${
                               myVote === val
                                 ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-amber-600'
                                 : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700'
@@ -266,28 +274,28 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
           <input
             type="text"
             required
-            placeholder="Name (e.g. Tiago)"
+            placeholder={t('group.namePlaceholder')}
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             className="px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
           />
           <input
             type="text"
-            placeholder="Interests (food, art...)"
+            placeholder={t('group.interestsPlaceholder')}
             value={newInterests}
             onChange={(e) => setNewInterests(e.target.value)}
             className="px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
           />
           <input
             type="number"
-            placeholder="Personal Budget (€)"
+            placeholder={t('group.budgetPlaceholder')}
             value={newBudget}
             onChange={(e) => setNewBudget(Number(e.target.value))}
             className="px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 font-mono-tabular"
           />
           <button
             type="submit"
-            className="px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg hover:bg-slate-800 transition-colors"
+            className="px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
           >
             + {t('group.addMember')}
           </button>

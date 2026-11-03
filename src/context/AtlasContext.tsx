@@ -30,6 +30,15 @@ import {
   computePaceMetrics,
   recalculateDayTravelTimes,
 } from '../utils/domainLogic';
+import { i18n } from '../i18n/I18nContext';
+
+export type ToastVariant = 'success' | 'alert';
+
+export interface ToastItem {
+  id: string;
+  message: string;
+  variant: ToastVariant;
+}
 
 interface UndoHistoryEntry {
   tripId: string;
@@ -65,7 +74,9 @@ interface AtlasContextValue {
   toggleExpenseSettled: (tripId: string, expenseId: string) => Promise<void>;
   findTripByInviteCode: (inviteCode: string) => FullTripBundle | undefined;
   toastMessage: string | null;
-  showToast: (msg: string) => void;
+  toasts: ToastItem[];
+  showToast: (msg: string, variant?: ToastVariant) => void;
+  dismissToast: (id: string) => void;
 }
 
 const AtlasContext = createContext<AtlasContextValue | undefined>(undefined);
@@ -94,14 +105,21 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [proposalsByTrip, setProposalsByTrip] = useState<Record<string, ProposalChange[]>>({});
   const [undoHistoryByTrip, setUndoHistoryByTrip] = useState<Record<string, UndoHistoryEntry[]>>({});
   const [activeTravelerIdByTrip, setActiveTravelerIdByTrip] = useState<Record<string, string>>({});
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 4000);
+  const dismissToast = (id: string) => {
+    setToasts((prev) => prev.filter((item) => item.id !== id));
   };
+
+  const showToast = (msg: string, variant: ToastVariant = 'success') => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts((prev) => [...prev.slice(-4), { id, message: msg, variant }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== id));
+    }, 3500);
+  };
+
+  const toastMessage = toasts.length > 0 ? toasts[toasts.length - 1].message : null;
 
   // Persist local/demo state seamlessly
   useEffect(() => {
@@ -264,7 +282,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         handleFirestoreError(err, OperationType.DELETE, `trips/${tripId}`);
       }
     }
-    showToast('Trip removed from your Atlas.');
+    showToast('Trip removed from your Atlas.', 'alert');
   };
 
   const duplicateTrip = async (tripId: string): Promise<string> => {
@@ -330,7 +348,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...prev,
       [tripId]: (prev[tripId] || []).filter((p) => p.id !== proposalId),
     }));
-    showToast('Proposal rejected — your original plan remains untouched.');
+    showToast('Proposal rejected — your original plan remains untouched.', 'alert');
   };
 
   const acceptAllProposals = async (tripId: string) => {
@@ -365,7 +383,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const rejectAllProposals = (tripId: string) => {
     setProposalsByTrip((prev) => ({ ...prev, [tripId]: [] }));
-    showToast('Discarded all pending suggestions.');
+    showToast('Discarded all pending suggestions.', 'alert');
   };
 
   const undoLastChange = async (tripId: string) => {
@@ -381,7 +399,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
     setUndoHistoryByTrip((prev) => ({ ...prev, [tripId]: rest }));
     await syncBundleToFirestore(nextBundle);
-    showToast('Undid last change.');
+    showToast('Undid last change.', 'alert');
   };
 
   const togglePlanB = async (tripId: string, dayId: string) => {
@@ -416,7 +434,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const nextBundle: FullTripBundle = { ...bundle, days: nextDays };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
     await syncBundleToFirestore(nextBundle);
-    showToast('Switched day plan mode.');
+    showToast(String(i18n.t('toast.itineraryUpdated')));
   };
 
   const updateDayActivities = async (
@@ -581,7 +599,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         handleFirestoreError(err, OperationType.CREATE, `trips/${tripId}/expenses/${newExpense.id}`);
       }
     }
-    showToast(`Added expense "${newExpense.description}" (€${newExpense.amount.toFixed(2)}).`);
+    showToast(String(i18n.t('toast.expenseRecorded')));
   };
 
   const toggleExpenseSettled = async (tripId: string, expenseId: string) => {
@@ -633,7 +651,9 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         toggleExpenseSettled,
         findTripByInviteCode,
         toastMessage,
+        toasts,
         showToast,
+        dismissToast,
       }}
     >
       {children}

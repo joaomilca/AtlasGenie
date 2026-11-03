@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   loginWithEmail,
   registerWithEmail,
   resetUserPassword,
   signInWithGoogle,
 } from '../services/firebase';
-import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
 
 export const AuthPage: React.FC = () => {
-  const { t } = useI18n();
+  const { t } = useTranslation();
   const { enableDemoMode, showToast } = useAtlas();
   const location = useLocation();
   const navigate = useNavigate();
@@ -26,7 +26,7 @@ export const AuthPage: React.FC = () => {
     e.preventDefault();
     setError(null);
     if (!email.includes('@') || password.length < 6) {
-      setError('Please enter a valid email address and a password of at least 6 characters.');
+      setError(t('auth.errInvalid'));
       return;
     }
     setLoading(true);
@@ -38,7 +38,7 @@ export const AuthPage: React.FC = () => {
       }
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err?.message || 'Authentication failed. You can also continue in Demo Mode below.');
+      setError(err?.message || t('auth.errFailed'));
     } finally {
       setLoading(false);
     }
@@ -51,7 +51,7 @@ export const AuthPage: React.FC = () => {
       await signInWithGoogle();
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err?.message || 'Google Sign-In could not complete in this preview window.');
+      setError(err?.message || t('auth.errGoogle'));
     } finally {
       setLoading(false);
     }
@@ -59,14 +59,14 @@ export const AuthPage: React.FC = () => {
 
   const handleReset = async () => {
     if (!email.includes('@')) {
-      setError('Enter your email address above first to receive a password reset link.');
+      setError(t('auth.errResetEmail'));
       return;
     }
     try {
       await resetUserPassword(email);
       showToast(t('auth.resetSent'));
     } catch (err: any) {
-      setError(err?.message || 'Could not send reset email.');
+      setError(err?.message || t('auth.errFailed'));
     }
   };
 
@@ -78,7 +78,7 @@ export const AuthPage: React.FC = () => {
             {isSignup ? t('auth.signupTitle') : t('auth.loginTitle')}
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Sync your itineraries, group votes, and expenses in real time with Firestore.
+            {t('auth.subtitle')}
           </p>
         </div>
 
@@ -95,14 +95,14 @@ export const AuthPage: React.FC = () => {
           type="button"
           onClick={handleGoogle}
           disabled={loading}
-          className="w-full py-2.5 px-4 text-xs font-semibold text-slate-900 dark:text-white bg-[#FAF6F0] dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+          className="w-full py-2.5 px-4 text-xs font-semibold text-slate-900 dark:text-white bg-[#FAF6F0] dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
         >
           {t('auth.googleBtn')}
         </button>
 
         <div className="relative flex py-1 items-center">
           <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
-          <span className="flex-shrink mx-3 text-xs text-slate-400">or email</span>
+          <span className="flex-shrink mx-3 text-xs text-slate-400">{t('auth.orEmail')}</span>
           <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
         </div>
 
@@ -154,7 +154,7 @@ export const AuthPage: React.FC = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg transition-colors"
+            className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             {isSignup ? t('nav.signup') : t('nav.login')}
           </button>
@@ -164,7 +164,7 @@ export const AuthPage: React.FC = () => {
           <button
             type="button"
             onClick={handleReset}
-            className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline"
+            className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline cursor-pointer"
           >
             {t('auth.resetPassword')}
           </button>
@@ -175,7 +175,7 @@ export const AuthPage: React.FC = () => {
             to={isSignup ? '/login' : '/signup'}
             className="font-semibold text-amber-700 dark:text-amber-400 hover:underline"
           >
-            {isSignup ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+            {isSignup ? t('auth.alreadyHaveAccount') : t('auth.needAccount')}
           </Link>
           <button
             type="button"
@@ -183,7 +183,7 @@ export const AuthPage: React.FC = () => {
               enableDemoMode();
               navigate('/demo');
             }}
-            className="text-teal-700 dark:text-teal-400 font-medium hover:underline"
+            className="text-teal-700 dark:text-teal-400 font-medium hover:underline cursor-pointer"
           >
             {t('auth.orContinueDemo')}
           </button>

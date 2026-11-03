@@ -1,8 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { Globe, MapPin, Plus, Sparkles, X } from 'lucide-react';
 import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
 import { generateTripItinerary } from '../services/api';
+import { SkeletonItinerary } from '../components/SkeletonItinerary';
+
+const COUNTRY_OPTIONS = [
+  { value: 'Italy', labelEn: 'Italy', labelPt: 'Itália', suggestedCities: ['Rome', 'Florence', 'Venice', 'Milan'] },
+  { value: 'Japan', labelEn: 'Japan', labelPt: 'Japão', suggestedCities: ['Tokyo', 'Kyoto', 'Osaka', 'Hakone'] },
+  { value: 'Portugal', labelEn: 'Portugal', labelPt: 'Portugal', suggestedCities: ['Lisbon', 'Porto', 'Sintra', 'Coimbra'] },
+  { value: 'Spain', labelEn: 'Spain', labelPt: 'Espanha', suggestedCities: ['Barcelona', 'Madrid', 'Seville', 'Granada'] },
+  { value: 'France', labelEn: 'France', labelPt: 'França', suggestedCities: ['Paris', 'Lyon', 'Nice', 'Bordeaux'] },
+  { value: 'Greece', labelEn: 'Greece', labelPt: 'Grécia', suggestedCities: ['Athens', 'Santorini', 'Naxos', 'Chania'] },
+  { value: 'United Kingdom', labelEn: 'United Kingdom', labelPt: 'Reino Unido', suggestedCities: ['London', 'Edinburgh', 'Bath', 'Oxford'] },
+  { value: 'Germany', labelEn: 'Germany', labelPt: 'Alemanha', suggestedCities: ['Berlin', 'Munich', 'Hamburg', 'Heidelberg'] },
+  { value: 'Switzerland', labelEn: 'Switzerland', labelPt: 'Suíça', suggestedCities: ['Zurich', 'Lucerne', 'Interlaken', 'Zermatt'] },
+  { value: 'Netherlands', labelEn: 'Netherlands', labelPt: 'Países Baixos', suggestedCities: ['Amsterdam', 'Utrecht', 'Haarlem', 'Rotterdam'] },
+  { value: 'Austria', labelEn: 'Austria', labelPt: 'Áustria', suggestedCities: ['Vienna', 'Salzburg', 'Innsbruck', 'Hallstatt'] },
+  { value: 'Croatia', labelEn: 'Croatia', labelPt: 'Croácia', suggestedCities: ['Dubrovnik', 'Split', 'Zadar', 'Zagreb'] },
+  { value: 'Morocco', labelEn: 'Morocco', labelPt: 'Marrocos', suggestedCities: ['Marrakech', 'Fes', 'Chefchaouen', 'Essaouira'] },
+  { value: 'United States', labelEn: 'United States', labelPt: 'Estados Unidos', suggestedCities: ['New York', 'San Francisco', 'Boston', 'Chicago'] },
+];
 
 const INTEREST_OPTIONS = [
   { id: 'food', labelEn: 'Food & Markets', labelPt: 'Gastronomia e Mercados', icon: '🍲' },
@@ -15,14 +35,39 @@ const INTEREST_OPTIONS = [
   { id: 'nature', labelEn: 'Parks & Coastal Walks', labelPt: 'Parques e Costa', icon: '🌿' },
 ];
 
+function inferCountryFromCity(cityParam: string | null): { country: string; initialCities: string[] } {
+  if (!cityParam || !cityParam.trim()) {
+    return { country: 'Italy', initialCities: ['Rome', 'Florence'] };
+  }
+  const clean = cityParam.trim();
+  const match = COUNTRY_OPTIONS.find(
+    (c) =>
+      c.value.toLowerCase() === clean.toLowerCase() ||
+      c.suggestedCities.some((sc) => sc.toLowerCase() === clean.toLowerCase())
+  );
+  if (match) {
+    const isCountryName = match.value.toLowerCase() === clean.toLowerCase();
+    return {
+      country: match.value,
+      initialCities: isCountryName ? [] : [clean],
+    };
+  }
+  return { country: 'Italy', initialCities: [clean] };
+}
+
 export const TripWizardPage: React.FC = () => {
-  const { t, language } = useI18n();
+  const { t } = useTranslation();
+  const { language } = useI18n();
   const { currentUser, saveTripBundle, showToast } = useAtlas();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const initialCity = searchParams.get('city') || 'Lisbon';
-  const [destination, setDestination] = useState(initialCity);
+  const inferred = inferCountryFromCity(searchParams.get('city'));
+  const [country, setCountry] = useState<string>(inferred.country);
+  const [cities, setCities] = useState<string[]>(inferred.initialCities);
+  const [cityInput, setCityInput] = useState<string>('');
+  const [letAiDecideCities, setLetAiDecideCities] = useState<boolean>(false);
+
   const [startDate, setStartDate] = useState('2026-11-18');
   const [endDate, setEndDate] = useState('2026-11-21');
   const [travelersCount, setTravelersCount] = useState(2);
@@ -35,15 +80,58 @@ export const TripWizardPage: React.FC = () => {
   const [defaultPace, setDefaultPace] = useState(3);
   const [groupEnabled, setGroupEnabled] = useState(true);
 
-  const [assumptions, setAssumptions] = useState<string[]>([
-    '2 adults travelling together, moderate walking pace',
-    'Mid-range neighbourhood tascas & verified cultural tickets',
-    'Public transit or walking between stops (< 25 min legs)',
-    'Include indoor Plan B backups in case of rain',
+  const [assumptions, setAssumptions] = useState<string[]>(() => [
+    t('wizard.defaultAssump1'),
+    t('wizard.defaultAssump2'),
+    t('wizard.defaultAssump3'),
+    t('wizard.defaultAssump4'),
   ]);
   const [newAssumption, setNewAssumption] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAssumptions([
+      t('wizard.defaultAssump1'),
+      t('wizard.defaultAssump2'),
+      t('wizard.defaultAssump3'),
+      t('wizard.defaultAssump4'),
+    ]);
+  }, [language, t]);
+
+  const handleAddCityChip = (rawValue?: string) => {
+    const candidate = (rawValue ?? cityInput).trim();
+    if (!candidate) return;
+    const parts = candidate
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setCities((prev) => {
+      const next = [...prev];
+      for (const part of parts) {
+        if (!next.some((existing) => existing.toLowerCase() === part.toLowerCase())) {
+          next.push(part);
+        }
+      }
+      return next;
+    });
+    if (rawValue === undefined) {
+      setCityInput('');
+    }
+  };
+
+  const handleCityInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      handleAddCityChip();
+    } else if (e.key === 'Backspace' && !cityInput && cities.length > 0) {
+      setCities((prev) => prev.slice(0, -1));
+    }
+  };
+
+  const handleRemoveCityChip = (cityToRemove: string) => {
+    setCities((prev) => prev.filter((c) => c !== cityToRemove));
+  };
 
   const toggleInterest = (id: string) => {
     setSelectedInterests((prev) =>
@@ -65,70 +153,67 @@ export const TripWizardPage: React.FC = () => {
     setAssumptions((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // Compute display destination string for headers & skeleton loader
+  const pendingTypedCity = !letAiDecideCities && cityInput.trim() ? [cityInput.trim()] : [];
+  const effectiveCities = letAiDecideCities
+    ? []
+    : Array.from(new Set([...cities, ...pendingTypedCity]));
+  const computedDestination =
+    effectiveCities.length > 0 ? `${effectiveCities.join(', ')}, ${country}` : country;
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
-    if (!destination.trim()) {
-      setFormError('Please enter a destination city.');
+    if (!country.trim()) {
+      setFormError(t('wizard.errCountry'));
       return;
     }
     if (selectedInterests.length === 0) {
-      setFormError('Please select at least one travel interest.');
+      setFormError(t('wizard.errInterests'));
       return;
     }
 
     setIsGenerating(true);
     try {
-      const { bundle, usedFallback } = await generateTripItinerary({
-        destination: destination.trim(),
-        startDate,
-        endDate,
-        totalBudget,
-        travelersCount,
-        interests: selectedInterests,
-        defaultPace,
-        assumptions,
-        groupEnabled,
-        ownerId: currentUser?.uid || 'demo-user',
-        ownerName: currentUser?.displayName || 'Ana',
-      });
+      const [{ bundle }] = await Promise.all([
+        generateTripItinerary({
+          destination: computedDestination,
+          country: country.trim(),
+          cities: effectiveCities,
+          letAiDecideCities: letAiDecideCities || effectiveCities.length === 0,
+          startDate,
+          endDate,
+          totalBudget,
+          travelersCount,
+          interests: selectedInterests,
+          defaultPace,
+          assumptions,
+          groupEnabled,
+          ownerId: currentUser?.uid || 'demo-user',
+          ownerName: currentUser?.displayName || 'Ana',
+        }),
+        new Promise((resolve) => setTimeout(resolve, 1800)),
+      ]);
 
       await saveTripBundle(bundle);
-      if (usedFallback) {
-        showToast('Generated your Atlas with verified Demo data.');
-      } else {
-        showToast('Atlas itinerary generated!');
-      }
+      showToast(t('toast.magicComplete'));
       navigate(`/trips/${bundle.trip.id}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
+  const activeCountryOption = COUNTRY_OPTIONS.find((c) => c.value === country);
+
   if (isGenerating) {
     return (
-      <main className="max-w-2xl mx-auto px-4 py-24 text-center space-y-6">
-        <div className="rounded-2xl bg-[#0F172A] text-white p-10 border border-slate-800 space-y-6">
-          <svg viewBox="0 0 320 90" className="w-72 h-24 mx-auto">
-            <path
-              d="M 20 65 C 90 15, 160 80, 230 30 C 260 15, 285 45, 300 25"
-              fill="none"
-              stroke="#D97706"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              className="animate-route-draw"
-            />
-            <circle cx="20" cy="65" r="6" fill="#0D9488" />
-            <circle cx="145" cy="48" r="6" fill="#D97706" />
-            <circle cx="300" cy="25" r="6" fill="#0D9488" />
-          </svg>
-          <h1 className="font-serif-atlas text-2xl font-bold">{t('wizard.generating')}</h1>
-          <p className="text-xs text-slate-300 max-w-md mx-auto">
-            Checking verification sources, computing travel legs, and preparing budget tiers for{' '}
-            <strong>{destination}</strong>…
-          </p>
-        </div>
+      <main className="max-w-3xl mx-auto px-4 py-12 space-y-6">
+        <SkeletonItinerary
+          cardsCount={3}
+          destination={computedDestination}
+          subtitle={t('wizard.generatingSub', { destination: computedDestination })}
+        />
       </main>
     );
   }
@@ -157,25 +242,40 @@ export const TripWizardPage: React.FC = () => {
           </div>
         )}
 
-        {/* Step 1: Destination, Dates, Budget & Group Toggle */}
-        <section className="space-y-4">
+        {/* Step 1: Advanced Destination Selector (Country + Multi-City Chips + AI Route Checkbox), Dates, Budget & Group Toggle */}
+        <section className="space-y-5">
           <h2 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
             {t('wizard.step1')}
           </h2>
 
+          {/* Country Selector + Dates Row */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="sm:col-span-1">
-              <label htmlFor="wiz-dest" className="block text-xs font-medium mb-1">
-                {t('wizard.destination')}
+              <label
+                htmlFor="wiz-country"
+                className="flex items-center gap-1.5 text-xs font-medium mb-1"
+              >
+                <Globe className="w-3.5 h-3.5 text-[#D97706]" />
+                <span>{t('wizard.countryLabel')}</span>
               </label>
-              <input
-                id="wiz-dest"
-                type="text"
+              <select
+                id="wiz-country"
                 required
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
-              />
+                value={country}
+                onChange={(e) => {
+                  const nextCountry = e.target.value;
+                  setCountry(nextCountry);
+                  setCities([]);
+                  setCityInput('');
+                }}
+                className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer"
+              >
+                {COUNTRY_OPTIONS.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {language === 'pt' ? c.labelPt : c.labelEn}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -205,10 +305,123 @@ export const TripWizardPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Multi-City Tag Input & AI Route Decision Checkbox */}
+          <div className="p-4 rounded-xl bg-[#FAF6F0]/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label
+                htmlFor="wiz-cities-input"
+                className="flex items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-white"
+              >
+                <MapPin className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                <span>{t('wizard.citiesLabel')}</span>
+              </label>
+
+              {/* Quick suggestion pills for the selected country */}
+              {!letAiDecideCities && activeCountryOption && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {activeCountryOption.suggestedCities.map((sugCity) => {
+                    const alreadyAdded = cities.some(
+                      (c) => c.toLowerCase() === sugCity.toLowerCase()
+                    );
+                    return (
+                      <button
+                        key={sugCity}
+                        type="button"
+                        disabled={alreadyAdded}
+                        onClick={() => handleAddCityChip(sugCity)}
+                        className={`px-2 py-0.5 text-[11px] rounded-md border transition-colors cursor-pointer ${
+                          alreadyAdded
+                            ? 'bg-slate-200/70 dark:bg-slate-700 text-slate-400 border-transparent cursor-default'
+                            : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-500'
+                        }`}
+                      >
+                        + {sugCity}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {!letAiDecideCities ? (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-amber-500/40">
+                  {cities.map((cityChip) => (
+                    <span
+                      key={cityChip}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[#0F172A] text-white dark:bg-amber-600"
+                    >
+                      <span>{cityChip}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCityChip(cityChip)}
+                        aria-label={t('wizard.removeCityAria', { city: cityChip })}
+                        className="hover:text-amber-300 dark:hover:text-slate-900 cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+
+                  <input
+                    id="wiz-cities-input"
+                    type="text"
+                    value={cityInput}
+                    onChange={(e) => setCityInput(e.target.value)}
+                    onKeyDown={handleCityInputKeyDown}
+                    placeholder={t('wizard.citiesPlaceholder')}
+                    className="flex-1 min-w-[180px] px-2 py-1 text-xs sm:text-sm bg-transparent focus:outline-none text-slate-900 dark:text-white"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => handleAddCityChip()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{t('wizard.addCityBtn')}</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {t('wizard.citiesHint')}
+                </p>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 flex items-center gap-2 text-xs text-amber-900 dark:text-amber-200">
+                <Sparkles className="w-4 h-4 text-[#D97706] shrink-0" />
+                <span>
+                  {t('wizard.aiRouteActiveNote', {
+                    country:
+                      language === 'pt'
+                        ? activeCountryOption?.labelPt || country
+                        : activeCountryOption?.labelEn || country,
+                  })}
+                </span>
+              </div>
+            )}
+
+            {/* Checkbox: "I don't know which cities to visit, let the AI decide the best route within the country." */}
+            <label
+              htmlFor="wiz-ai-decide-cities"
+              className="flex items-start gap-2.5 pt-1 cursor-pointer select-none"
+            >
+              <input
+                id="wiz-ai-decide-cities"
+                type="checkbox"
+                checked={letAiDecideCities}
+                onChange={(e) => setLetAiDecideCities(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-[#D97706] cursor-pointer"
+              />
+              <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
+                {t('wizard.letAiDecideCheckbox')}
+              </span>
+            </label>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label htmlFor="wiz-travelers" className="block text-xs font-medium mb-1">
-                {t('wizard.travelers')}
+                {t('wizard.groupSizeLabel')}
               </label>
               <input
                 id="wiz-travelers"
@@ -216,7 +429,11 @@ export const TripWizardPage: React.FC = () => {
                 min={1}
                 max={12}
                 value={travelersCount}
-                onChange={(e) => setTravelersCount(Number(e.target.value))}
+                onChange={(e) => {
+                  const val = Math.max(1, Number(e.target.value));
+                  setTravelersCount(val);
+                  if (val > 1) setGroupEnabled(true);
+                }}
                 className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 font-mono-tabular"
               />
             </div>
@@ -237,17 +454,43 @@ export const TripWizardPage: React.FC = () => {
             </div>
           </div>
 
-          <label className="flex items-center gap-3 p-3 rounded-lg bg-[#FAF6F0] dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={groupEnabled}
-              onChange={(e) => setGroupEnabled(e.target.checked)}
-              className="w-4 h-4 accent-amber-600"
-            />
-            <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
-              {t('wizard.groupToggle')}
-            </span>
-          </label>
+          <div className="p-4 rounded-xl bg-[#FAF6F0] dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2.5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">
+                  {t('wizard.groupTitle')}
+                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  {t('wizard.groupToggle')}
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={groupEnabled}
+                aria-label={t('wizard.groupTitle')}
+                onClick={() => setGroupEnabled((prev) => !prev)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                  groupEnabled ? 'bg-[#D97706]' : 'bg-slate-300 dark:bg-slate-600'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    groupEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+            {groupEnabled && (
+              <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono-tabular text-teal-800 dark:text-teal-300">
+                <span>✓ {t('wizard.groupFeatInvite')}</span>
+                <span>✓ {t('wizard.groupFeatFairness')}</span>
+                <span>✓ {t('wizard.groupFeatVoting')}</span>
+                <span>✓ {t('wizard.groupFeatSplit')}</span>
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Step 2: Visual Interest Chips & Pace Selector */}
@@ -267,7 +510,7 @@ export const TripWizardPage: React.FC = () => {
                     type="button"
                     onClick={() => toggleInterest(item.id)}
                     aria-pressed={active}
-                    className={`p-3 rounded-xl border text-left transition-colors flex items-center gap-2.5 ${
+                    className={`p-3 rounded-xl border text-left transition-colors flex items-center gap-2.5 cursor-pointer ${
                       active
                         ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-amber-600 dark:border-amber-500'
                         : 'bg-[#FAF6F0] dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-400'
@@ -289,7 +532,7 @@ export const TripWizardPage: React.FC = () => {
             <div className="flex items-center justify-between text-xs font-medium mb-1">
               <label htmlFor="wiz-pace">{t('wizard.paceLabel')}</label>
               <span className="font-mono-tabular">
-                Level {defaultPace}/5 (
+                {t('wizard.level')} {defaultPace}/5 (
                 {defaultPace <= 2
                   ? t('trip.paceRelaxed')
                   : defaultPace === 3
@@ -306,7 +549,7 @@ export const TripWizardPage: React.FC = () => {
               step={1}
               value={defaultPace}
               onChange={(e) => setDefaultPace(Number(e.target.value))}
-              className="w-full accent-amber-600"
+              className="w-full accent-amber-600 cursor-pointer"
             />
           </div>
         </section>
@@ -327,7 +570,7 @@ export const TripWizardPage: React.FC = () => {
               <div key={idx} className="flex items-center gap-2">
                 <input
                   type="text"
-                  aria-label={`Assumption ${idx + 1}`}
+                  aria-label={`${t('wizard.step3')} ${idx + 1}`}
                   value={assump}
                   onChange={(e) => handleUpdateAssumption(idx, e.target.value)}
                   className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
@@ -335,8 +578,8 @@ export const TripWizardPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleRemoveAssumption(idx)}
-                  aria-label={`Remove assumption ${idx + 1}`}
-                  className="px-2.5 py-1.5 text-xs text-rose-700 dark:text-rose-400 hover:bg-rose-50 rounded-md"
+                  aria-label={`${t('dash.delete')} ${idx + 1}`}
+                  className="px-2.5 py-1.5 text-xs text-rose-700 dark:text-rose-400 hover:bg-rose-50 rounded-md cursor-pointer"
                 >
                   ✕
                 </button>
@@ -349,13 +592,13 @@ export const TripWizardPage: React.FC = () => {
               type="text"
               value={newAssumption}
               onChange={(e) => setNewAssumption(e.target.value)}
-              placeholder="e.g. Prefer step-free access or vegetarian lunch spots…"
+              placeholder={t('wizard.assumptionPlaceholder')}
               className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
             />
             <button
               type="button"
               onClick={handleAddAssumption}
-              className="px-3 py-1.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg whitespace-nowrap cursor-pointer"
             >
               + {t('wizard.addAssumption')}
             </button>
@@ -365,7 +608,7 @@ export const TripWizardPage: React.FC = () => {
         <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-end">
           <button
             type="submit"
-            className="px-6 py-3 text-sm font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors shadow-sm"
+            className="px-6 py-3 text-sm font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors shadow-sm cursor-pointer"
           >
             {t('wizard.generateBtn')}
           </button>

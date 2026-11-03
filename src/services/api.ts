@@ -6,14 +6,356 @@ import {
   Traveler,
 } from '../types/models';
 import { DEMO_TRIPS } from '../data/demoTrips';
-import { calculateHaversineTravel, computePaceMetrics } from '../utils/domainLogic';
+import {
+  GooglePlaceDetailsResult,
+  buildFunctionResponsePayload,
+  calculateHaversineTravel,
+  computePaceMetrics,
+  extractPlaceQueryArgs,
+  formatGroundedPlaceReply,
+  isInformationalPlaceQuery,
+  normalizeGooglePlacesApiResponse,
+  resolveVerifiedPlaceDetails,
+} from '../utils/domainLogic';
+
+// Live Gemini API integration enabled via server-side /api/ai/* routes
+const USE_LIVE_GEMINI_API = true;
+
+interface CitySeed {
+  city: string;
+  country: string;
+  lat: number;
+  lng: number;
+  stops: {
+    title: string;
+    category: Activity['category'];
+    description: string;
+    neighborhood: string;
+    latOffset: number;
+    lngOffset: number;
+    isOutdoor: boolean;
+    baseCost: number;
+  }[];
+}
+
+const COUNTRY_DEFAULT_CITIES: Record<string, CitySeed[]> = {
+  italy: [
+    {
+      city: 'Rome',
+      country: 'Italy',
+      lat: 41.8902,
+      lng: 12.4922,
+      stops: [
+        {
+          title: 'Colosseum & Roman Forum Archaeological Walk',
+          category: 'culture',
+          description: 'Walk the ancient Flavian Amphitheatre tiers and Via Sacra ruins.',
+          neighborhood: 'Centro Storico, Rome',
+          latOffset: 0.0,
+          lngOffset: 0.0,
+          isOutdoor: true,
+          baseCost: 18,
+        },
+        {
+          title: 'Trastevere Artisanal Trattoria & Piazzas',
+          category: 'food',
+          description: 'Traditional Roman cacio e pepe and seasonal artichokes in cobblestone lanes.',
+          neighborhood: 'Trastevere, Rome',
+          latOffset: -0.0012,
+          lngOffset: -0.0225,
+          isOutdoor: false,
+          baseCost: 24,
+        },
+        {
+          title: 'Pantheon & Galleria Borghese Sculptures',
+          category: 'culture',
+          description: 'Marvel at the unreinforced concrete dome oculus and Bernini marble masterpieces.',
+          neighborhood: 'Piazza della Rotonda, Rome',
+          latOffset: 0.0084,
+          lngOffset: -0.0153,
+          isOutdoor: false,
+          baseCost: 16,
+        },
+      ],
+    },
+    {
+      city: 'Florence',
+      country: 'Italy',
+      lat: 43.7696,
+      lng: 11.2558,
+      stops: [
+        {
+          title: 'Uffizi Gallery & Piazza della Signoria',
+          category: 'culture',
+          description: 'Renaissance masterpieces by Botticelli and Leonardo overlooking the Arno.',
+          neighborhood: 'Historic Center, Florence',
+          latOffset: -0.0018,
+          lngOffset: -0.0005,
+          isOutdoor: false,
+          baseCost: 25,
+        },
+        {
+          title: 'Oltrarno Craft Workshops & Santo Spirito Wine Bar',
+          category: 'food',
+          description: 'Authentic Florentine leather studios followed by Chianti Classico and crostini.',
+          neighborhood: 'Oltrarno, Florence',
+          latOffset: -0.0052,
+          lngOffset: -0.0074,
+          isOutdoor: false,
+          baseCost: 22,
+        },
+        {
+          title: 'Piazzale Michelangelo Golden Hour Panorama',
+          category: 'nature',
+          description: 'Sweeping sunset terrace view over Brunelleschi’s Duomo and Ponte Vecchio.',
+          neighborhood: 'San Miniato Hill, Florence',
+          latOffset: -0.0067,
+          lngOffset: 0.0092,
+          isOutdoor: true,
+          baseCost: 8,
+        },
+      ],
+    },
+  ],
+  japan: [
+    {
+      city: 'Tokyo',
+      country: 'Japan',
+      lat: 35.6762,
+      lng: 139.6503,
+      stops: [
+        {
+          title: 'Senso-ji Temple & Yanaka Old Tokyo Lanes',
+          category: 'culture',
+          description: 'Historic wooden craft shops, incense courtyards, and quiet Edo-era side streets.',
+          neighborhood: 'Asakusa & Yanaka, Tokyo',
+          latOffset: 0.0385,
+          lngOffset: 0.0463,
+          isOutdoor: true,
+          baseCost: 12,
+        },
+        {
+          title: 'Tsukiji Outer Market &Ginza Izakaya Tasting',
+          category: 'food',
+          description: 'Fresh seasonal sushi counter and charcoal-grilled yakitori in a tucked-away alley.',
+          neighborhood: 'Chuo City, Tokyo',
+          latOffset: -0.0108,
+          lngOffset: 0.0204,
+          isOutdoor: false,
+          baseCost: 28,
+        },
+        {
+          title: 'Meiji Jingu Forest Shrine & Shibuya Sky Deck',
+          category: 'nature',
+          description: 'Towering cedar forest torii gates followed by a 360-degree skyline view.',
+          neighborhood: 'Shibuya, Tokyo',
+          latOffset: 0.0001,
+          lngOffset: 0.049,
+          isOutdoor: true,
+          baseCost: 18,
+        },
+      ],
+    },
+    {
+      city: 'Kyoto',
+      country: 'Japan',
+      lat: 35.0116,
+      lng: 135.7681,
+      stops: [
+        {
+          title: 'Fushimi Inari Taisha Upper Mountain Trail',
+          category: 'culture',
+          description: 'Vermilion torii gates winding through quiet bamboo and cedar shrines.',
+          neighborhood: 'Fushimi Ward, Kyoto',
+          latOffset: -0.0445,
+          lngOffset: 0.0045,
+          isOutdoor: true,
+          baseCost: 10,
+        },
+        {
+          title: 'Nishiki Market & Gion Matcha Tea House',
+          category: 'food',
+          description: 'Kyoto obanzai delicacies, yuba tofu, and ceremonial Uji matcha.',
+          neighborhood: 'Nakagyo & Gion, Kyoto',
+          latOffset: -0.0066,
+          lngOffset: -0.0032,
+          isOutdoor: false,
+          baseCost: 24,
+        },
+        {
+          title: 'Arashiyama Bamboo Grove & Katsura River Walk',
+          category: 'nature',
+          description: 'Morning stroll through towering bamboo stalks and riverside Zen gardens.',
+          neighborhood: 'Arashiyama, Kyoto',
+          latOffset: 0.0054,
+          lngOffset: -0.0968,
+          isOutdoor: true,
+          baseCost: 14,
+        },
+      ],
+    },
+  ],
+  france: [
+    {
+      city: 'Paris',
+      country: 'France',
+      lat: 48.8566,
+      lng: 2.3522,
+      stops: [
+        {
+          title: 'Musée d’Orsay & Left Bank Seine Promenade',
+          category: 'culture',
+          description: 'Impressionist masterpieces housed in a Beaux-Arts railway station.',
+          neighborhood: 'Saint-Germain-des-Prés, Paris',
+          latOffset: 0.0034,
+          lngOffset: -0.0257,
+          isOutdoor: false,
+          baseCost: 16,
+        },
+        {
+          title: 'Le Marais Covered Market & Neighborhood Bistro',
+          category: 'food',
+          description: 'Marché des Enfants Rouges stalls and classic duck confit bistro lunch.',
+          neighborhood: 'Le Marais, Paris',
+          latOffset: 0.0062,
+          lngOffset: 0.01,
+          isOutdoor: false,
+          baseCost: 26,
+        },
+        {
+          title: 'Montmartre Vineyards & Sacré-Cœur Terrace',
+          category: 'culture',
+          description: 'Historic artists’ square, hidden Clos Montmartre vineyard, and panoramic steps.',
+          neighborhood: 'Montmartre, Paris',
+          latOffset: 0.0301,
+          lngOffset: -0.0091,
+          isOutdoor: true,
+          baseCost: 10,
+        },
+      ],
+    },
+  ],
+  spain: [
+    {
+      city: 'Barcelona',
+      country: 'Spain',
+      lat: 41.3874,
+      lng: 2.1686,
+      stops: [
+        {
+          title: 'Sagrada Família & Eixample Modernisme Walk',
+          category: 'culture',
+          description: 'Gaudí’s stained-glass basilica nave and modernist block courtyards.',
+          neighborhood: 'Eixample, Barcelona',
+          latOffset: 0.0162,
+          lngOffset: 0.0058,
+          isOutdoor: false,
+          baseCost: 26,
+        },
+        {
+          title: 'El Born Santa Caterina Market & Pintxos Bar',
+          category: 'food',
+          description: 'Wave-roofed neighborhood food market and Catalan vermut & tapas.',
+          neighborhood: 'El Born, Barcelona',
+          latOffset: -0.0011,
+          lngOffset: 0.0095,
+          isOutdoor: false,
+          baseCost: 20,
+        },
+        {
+          title: 'Bunkers del Carmel & Park Güell Terraces',
+          category: 'nature',
+          description: 'Sweeping Mediterranean and city grid views at golden hour.',
+          neighborhood: 'El Turó de la Rovira, Barcelona',
+          latOffset: 0.0318,
+          lngOffset: -0.0069,
+          isOutdoor: true,
+          baseCost: 14,
+        },
+      ],
+    },
+  ],
+  greece: [
+    {
+      city: 'Athens',
+      country: 'Greece',
+      lat: 37.9838,
+      lng: 23.7275,
+      stops: [
+        {
+          title: 'Acropolis Citadel & Acropolis Museum',
+          category: 'culture',
+          description: 'Parthenon marble friezes and glass-floored archaeological galleries.',
+          neighborhood: 'Makrygianni, Athens',
+          latOffset: -0.0123,
+          lngOffset: -0.0018,
+          isOutdoor: true,
+          baseCost: 20,
+        },
+        {
+          title: 'Plaka & Psyri Courtyard Meze Tavern',
+          category: 'food',
+          description: 'Grilled halloumi, courgette fritters, and Peloponnese wines under lemon trees.',
+          neighborhood: 'Plaka, Athens',
+          latOffset: -0.0095,
+          lngOffset: 0.0031,
+          isOutdoor: false,
+          baseCost: 22,
+        },
+        {
+          title: 'Mount Lycabettus & Philopappos Hill Sunset',
+          category: 'nature',
+          description: 'Pine-shaded footpath overlooking the Aegean Sea and ancient Pnyx.',
+          neighborhood: 'Filopappou, Athens',
+          latOffset: -0.015,
+          lngOffset: -0.006,
+          isOutdoor: true,
+          baseCost: 8,
+        },
+      ],
+    },
+  ],
+};
+
+const CITY_COORDINATES_LOOKUP: Record<string, { lat: number; lng: number }> = {
+  rome: { lat: 41.8902, lng: 12.4922 },
+  florence: { lat: 43.7696, lng: 11.2558 },
+  venice: { lat: 45.4408, lng: 12.3155 },
+  milan: { lat: 45.4642, lng: 9.19 },
+  naples: { lat: 40.8518, lng: 14.2681 },
+  tokyo: { lat: 35.6762, lng: 139.6503 },
+  kyoto: { lat: 35.0116, lng: 135.7681 },
+  osaka: { lat: 34.6937, lng: 135.5023 },
+  paris: { lat: 48.8566, lng: 2.3522 },
+  lyon: { lat: 45.764, lng: 4.8357 },
+  nice: { lat: 43.7102, lng: 7.262 },
+  barcelona: { lat: 41.3874, lng: 2.1686 },
+  madrid: { lat: 40.4168, lng: -3.7038 },
+  seville: { lat: 37.3891, lng: -5.9845 },
+  athens: { lat: 37.9838, lng: 23.7275 },
+  santorini: { lat: 36.3932, lng: 25.4615 },
+  london: { lat: 51.5072, lng: -0.1276 },
+  edinburgh: { lat: 55.9533, lng: -3.1883 },
+  berlin: { lat: 52.52, lng: 13.405 },
+  munich: { lat: 48.1351, lng: 11.582 },
+  amsterdam: { lat: 52.3676, lng: 4.9041 },
+  vienna: { lat: 48.2082, lng: 16.3738 },
+  zurich: { lat: 47.3769, lng: 8.5417 },
+  dubrovnik: { lat: 42.6507, lng: 18.0944 },
+  marrakech: { lat: 31.6295, lng: -7.9811 },
+  lisbon: { lat: 38.7139, lng: -9.1334 },
+  porto: { lat: 41.1496, lng: -8.6109 },
+};
 
 /**
- * Generates an itinerary via server-side Gemini endpoint (/api/ai/generate-itinerary).
- * Falls back gracefully to rich verified Demo Atlas data if offline or quota-limited.
+ * Generates an itinerary using the server-side Gemini API (/api/ai/generate-itinerary).
+ * Only falls back to destination-specific generated data if the API call completely fails.
  */
 export async function generateTripItinerary(params: {
   destination: string;
+  country?: string;
+  cities?: string[];
+  letAiDecideCities?: boolean;
   startDate: string;
   endDate: string;
   totalBudget: number;
@@ -32,178 +374,416 @@ export async function generateTripItinerary(params: {
     Math.min(10, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1)
   );
 
+  const cleanCities = (params.cities || []).map((c) => c.trim()).filter(Boolean);
+  const cleanCountry = (params.country || params.destination || 'Italy').trim();
+  const formattedDestination =
+    !params.letAiDecideCities && cleanCities.length > 0
+      ? `${cleanCities.join(', ')}, ${cleanCountry}`
+      : params.destination.trim() || cleanCountry;
+
   const tripId = `trip-${Date.now().toString(36)}`;
-  const inviteCode = `${params.destination
+  const inviteCode = `${formattedDestination
     .replace(/[^a-zA-Z]/g, '')
     .slice(0, 4)
     .toUpperCase() || 'TRIP'}${Math.floor(10 + Math.random() * 89)}`;
 
-  try {
-    const response = await fetch('/api/ai/generate-itinerary', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        destination: params.destination,
-        daysCount: diffDays,
-        interests: params.interests,
-        pace: params.defaultPace,
-        totalBudget: params.totalBudget,
-        travelersCount: params.travelersCount,
-        assumptions: params.assumptions,
-      }),
-    });
+  if (USE_LIVE_GEMINI_API) {
+    try {
+      const response = await fetch('/api/ai/generate-itinerary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination: formattedDestination,
+          country: cleanCountry,
+          cities: cleanCities,
+          letAiDecideCities: Boolean(params.letAiDecideCities),
+          startDate: params.startDate,
+          endDate: params.endDate,
+          daysCount: diffDays,
+          interests: params.interests,
+          pace: params.defaultPace,
+          totalBudget: params.totalBudget,
+          travelersCount: params.travelersCount,
+          assumptions: params.assumptions,
+        }),
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      if (data?.days && Array.isArray(data.days) && data.days.length > 0) {
-        const builtDays: Day[] = data.days.map((d: any, idx: number) => {
-          const dayDate = new Date(start.getTime() + idx * 86400000)
-            .toISOString()
-            .slice(0, 10);
-          const mapActivity = (raw: any, aIdx: number): Activity => ({
-            id: raw.id || `${tripId}-d${idx + 1}-a${aIdx + 1}`,
-            title: raw.title,
-            category: raw.category || 'culture',
-            description: raw.description,
-            startTime: raw.startTime || `${9 + aIdx * 3}:00`,
-            durationMin: raw.durationMin || 90,
-            openingHoursText: raw.openingHoursText || '09:30 – 18:00',
-            isOutdoor: Boolean(raw.isOutdoor),
-            interestTags: raw.interestTags || params.interests.slice(0, 2),
-            location: raw.location || { name: params.destination, lat: 38.7139, lng: -9.1334 },
-            costOptions: raw.costOptions,
-            selectedTier: 'mid',
-            // AI Architecture Rule #3: Never mark AI-generated prices or hours as 'verified'
-            priceConfidence: {
-              status: 'estimated',
-              notes: 'AI estimated cost (~) — verify on official venue site',
-            },
-            hoursConfidence: {
-              status: 'estimated',
-              notes: 'Estimated typical schedule',
-            },
-            whyThis: raw.whyThis || `Suggested for your interest in ${params.interests[0] || 'local culture'}.`,
-            touristTrapScore: typeof raw.touristTrapScore === 'number' ? raw.touristTrapScore : 38,
-            votes: {},
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.days && Array.isArray(data.days) && data.days.length > 0) {
+          const finalDestinationTitle =
+            typeof data.recommendedDestinationTitle === 'string' &&
+            data.recommendedDestinationTitle.trim().length > 0
+              ? data.recommendedDestinationTitle.trim()
+              : formattedDestination;
+
+          const builtDays: Day[] = data.days.map((d: any, idx: number) => {
+            const dayDate = new Date(start.getTime() + idx * 86400000)
+              .toISOString()
+              .slice(0, 10);
+            const fallbackCityName =
+              cleanCities[idx % Math.max(1, cleanCities.length)] || cleanCountry;
+            const fallbackCoords = CITY_COORDINATES_LOOKUP[fallbackCityName.toLowerCase()] ||
+              CITY_COORDINATES_LOOKUP[cleanCountry.toLowerCase()] || {
+                lat: 41.8902,
+                lng: 12.4922,
+              };
+
+            const mapActivity = (raw: any, aIdx: number): Activity => ({
+              id: raw.id || `${tripId}-d${idx + 1}-a${aIdx + 1}`,
+              title: raw.title,
+              category: raw.category || 'culture',
+              description: raw.description,
+              startTime: raw.startTime || `${9 + aIdx * 3}:00`,
+              durationMin: raw.durationMin || 90,
+              openingHoursText: raw.openingHoursText || '09:30 – 18:00',
+              isOutdoor: Boolean(raw.isOutdoor),
+              interestTags: raw.interestTags || params.interests.slice(0, 2),
+              location: raw.location || {
+                name: fallbackCityName,
+                lat: fallbackCoords.lat + aIdx * 0.004,
+                lng: fallbackCoords.lng + aIdx * 0.004,
+              },
+              costOptions: raw.costOptions,
+              selectedTier: 'mid',
+              // AI Architecture Rule #3: Never mark AI-generated prices or hours as 'verified'
+              priceConfidence: {
+                status: 'estimated',
+                notes: 'AI estimated cost (~) — verify on official venue site',
+              },
+              hoursConfidence: {
+                status: 'estimated',
+                notes: 'Estimated typical schedule',
+              },
+              whyThis:
+                raw.whyThis ||
+                `Suggested for your interest in ${params.interests[0] || 'local culture'}.`,
+              touristTrapScore:
+                typeof raw.touristTrapScore === 'number' ? raw.touristTrapScore : 38,
+              votes: {},
+            });
+
+            const acts = (d.activities || []).map(mapActivity);
+            const withTravel = acts.map((act: Activity, i: number) =>
+              i === 0
+                ? act
+                : {
+                    ...act,
+                    travelFromPrevious: calculateHaversineTravel(
+                      acts[i - 1].location,
+                      act.location,
+                      'WALKING'
+                    ),
+                  }
+            );
+
+            const dayObj: Day = {
+              id: `${tripId}-day-${idx + 1}`,
+              tripId,
+              ownerId: params.ownerId,
+              date: dayDate,
+              dayNumber: idx + 1,
+              theme: d.theme || `Day ${idx + 1} in ${finalDestinationTitle}`,
+              paceLevel: params.defaultPace,
+              paceScore: 55,
+              activePlan: 'A',
+              activities: withTravel,
+              planB: (d.planB || []).map(mapActivity),
+            };
+            dayObj.paceScore = computePaceMetrics(dayObj).paceScore;
+            return dayObj;
           });
 
-          const acts = (d.activities || []).map(mapActivity);
-          const withTravel = acts.map((act: Activity, i: number) =>
-            i === 0
-              ? act
-              : {
-                  ...act,
-                  travelFromPrevious: calculateHaversineTravel(
-                    acts[i - 1].location,
-                    act.location,
-                    'WALKING'
-                  ),
-                }
-          );
-
-          const dayObj: Day = {
-            id: `${tripId}-day-${idx + 1}`,
-            tripId,
-            ownerId: params.ownerId,
-            date: dayDate,
-            dayNumber: idx + 1,
-            theme: d.theme || `Day ${idx + 1} in ${params.destination}`,
-            paceLevel: params.defaultPace,
-            paceScore: 55,
-            activePlan: 'A',
-            activities: withTravel,
-            planB: (d.planB || []).map(mapActivity),
-          };
-          dayObj.paceScore = computePaceMetrics(dayObj).paceScore;
-          return dayObj;
-        });
-
-        const defaultTravelers: Traveler[] = [
-          {
-            id: `trav-${params.ownerId.slice(0, 6)}`,
-            tripId,
-            ownerId: params.ownerId,
-            userId: params.ownerId,
-            displayName: params.ownerName || 'You',
-            interests: params.interests,
-            budgetPerPerson: Math.round(params.totalBudget / Math.max(1, params.travelersCount)),
-            constraints: 'None',
-            preferredPace: params.defaultPace,
-            color: '#D97706',
-            avatar: (params.ownerName || 'Y')[0].toUpperCase(),
-          },
-        ];
-
-        return {
-          usedFallback: false,
-          bundle: {
-            trip: {
-              id: tripId,
+          const defaultTravelers: Traveler[] = [
+            {
+              id: `trav-${params.ownerId.slice(0, 6)}`,
+              tripId,
               ownerId: params.ownerId,
-              destination: params.destination,
-              startDate: params.startDate,
-              endDate: params.endDate,
-              currency: 'EUR',
-              totalBudget: params.totalBudget,
-              travelersCount: params.travelersCount,
+              userId: params.ownerId,
+              displayName: params.ownerName || 'You',
               interests: params.interests,
-              defaultPace: params.defaultPace,
-              status: 'planned',
-              memberIds: [params.ownerId],
-              inviteCode,
-              assumptions: params.assumptions,
-              groupEnabled: params.groupEnabled,
+              budgetPerPerson: Math.round(params.totalBudget / Math.max(1, params.travelersCount)),
+              constraints: 'None',
+              preferredPace: params.defaultPace,
+              color: '#D97706',
+              avatar: (params.ownerName || 'Y')[0].toUpperCase(),
             },
-            days: builtDays,
-            travelers: defaultTravelers,
-            expenses: [],
-          },
-        };
+          ];
+
+          return {
+            usedFallback: false,
+            bundle: {
+              trip: {
+                id: tripId,
+                ownerId: params.ownerId,
+                destination: finalDestinationTitle,
+                startDate: params.startDate,
+                endDate: params.endDate,
+                currency: 'EUR',
+                totalBudget: params.totalBudget,
+                travelersCount: params.travelersCount,
+                interests: params.interests,
+                defaultPace: params.defaultPace,
+                status: 'planned',
+                memberIds: [params.ownerId],
+                inviteCode,
+                assumptions: params.assumptions,
+                groupEnabled: params.groupEnabled,
+              },
+              days: builtDays,
+              travelers: defaultTravelers,
+              expenses: [],
+            },
+          };
+        }
       }
+    } catch {
+      // Only use fallback data in the catch block if the API request completely fails
     }
-  } catch {
-    // Graceful fallback to rich Demo template adapted to user's destination
   }
 
-  // Fallback: clone matching or Lisbon template and customize for destination & dates
-  const lowerDest = params.destination.toLowerCase();
-  const baseKey = lowerDest.includes('porto')
-    ? 'demo-porto-3d'
-    : lowerDest.includes('rom')
-    ? 'demo-rome-5d'
-    : 'demo-lisbon-4d';
+  // Destination-Specific Fallback (only reached if the API request fails):
+  // Dynamically constructs an itinerary for the requested country & cities instead of returning Lisbon
+  const lowerCountry = cleanCountry.toLowerCase();
+  const countrySeeds = COUNTRY_DEFAULT_CITIES[lowerCountry];
+  const targetCitiesList: string[] =
+    !params.letAiDecideCities && cleanCities.length > 0
+      ? cleanCities
+      : countrySeeds
+      ? countrySeeds.map((s) => s.city)
+      : [cleanCountry];
 
-  const template = JSON.parse(JSON.stringify(DEMO_TRIPS[baseKey])) as FullTripBundle;
-  template.trip.id = tripId;
-  template.trip.ownerId = params.ownerId;
-  template.trip.destination = params.destination;
-  template.trip.startDate = params.startDate;
-  template.trip.endDate = params.endDate;
-  template.trip.totalBudget = params.totalBudget;
-  template.trip.travelersCount = params.travelersCount;
-  template.trip.interests = params.interests;
-  template.trip.defaultPace = params.defaultPace;
-  template.trip.assumptions = params.assumptions;
-  template.trip.groupEnabled = params.groupEnabled;
-  template.trip.inviteCode = inviteCode;
-  template.trip.isDemo = false;
+  const fallbackDestinationTitle =
+    targetCitiesList.length > 0 &&
+    targetCitiesList[0].toLowerCase() !== cleanCountry.toLowerCase()
+      ? `${targetCitiesList.join(', ')}, ${cleanCountry}`
+      : formattedDestination;
 
-  template.days = template.days.slice(0, diffDays).map((d, idx) => ({
-    ...d,
-    id: `${tripId}-day-${idx + 1}`,
-    tripId,
-    ownerId: params.ownerId,
-    date: new Date(start.getTime() + idx * 86400000).toISOString().slice(0, 10),
-    dayNumber: idx + 1,
-    paceLevel: params.defaultPace,
-  }));
+  const builtFallbackDays: Day[] = Array.from({ length: diffDays }).map((_, idx) => {
+    const dayDate = new Date(start.getTime() + idx * 86400000).toISOString().slice(0, 10);
+    const activeCity = targetCitiesList[idx % targetCitiesList.length] || cleanCountry;
+    const matchedSeed =
+      countrySeeds?.find((s) => s.city.toLowerCase() === activeCity.toLowerCase()) ||
+      countrySeeds?.[idx % (countrySeeds?.length || 1)];
 
-  return { bundle: template, usedFallback: true };
+    const coords = matchedSeed
+      ? { lat: matchedSeed.lat, lng: matchedSeed.lng }
+      : CITY_COORDINATES_LOOKUP[activeCity.toLowerCase()] ||
+        CITY_COORDINATES_LOOKUP[lowerCountry] || { lat: 41.8902, lng: 12.4922 };
+
+    const stopsSource = matchedSeed?.stops || [
+      {
+        title: `${activeCity} Historic Quarter & Architectural Landmarks`,
+        category: 'culture' as const,
+        description: `Guided walk through the historic heart and iconic monuments of ${activeCity}.`,
+        neighborhood: `Historic Center, ${activeCity}`,
+        latOffset: 0.0,
+        lngOffset: 0.0,
+        isOutdoor: true,
+        baseCost: 16,
+      },
+      {
+        title: `${activeCity} Artisanal Market & Regional Gastronomy`,
+        category: 'food' as const,
+        description: `Tasting regional specialties and seasonal market produce in ${activeCity}.`,
+        neighborhood: `Old Town Market, ${activeCity}`,
+        latOffset: 0.0045,
+        lngOffset: -0.0052,
+        isOutdoor: false,
+        baseCost: 24,
+      },
+      {
+        title: `${activeCity} Panoramic Viewpoint & Cultural Gallery`,
+        category: 'nature' as const,
+        description: `Golden-hour overlook and cultural heritage collection in ${activeCity}.`,
+        neighborhood: `Scenic Overlook, ${activeCity}`,
+        latOffset: -0.005,
+        lngOffset: 0.0065,
+        isOutdoor: true,
+        baseCost: 14,
+      },
+    ];
+
+    const activities: Activity[] = stopsSource.map((s, aIdx) => ({
+      id: `${tripId}-d${idx + 1}-a${aIdx + 1}`,
+      title: s.title,
+      category: s.category,
+      description: s.description,
+      startTime: aIdx === 0 ? '09:30' : aIdx === 1 ? '13:00' : '16:30',
+      durationMin: 95,
+      openingHoursText: '09:30 – 18:30',
+      isOutdoor: s.isOutdoor,
+      interestTags: params.interests.slice(0, 2),
+      location: {
+        name: s.neighborhood,
+        lat: Number((coords.lat + s.latOffset + idx * 0.001).toFixed(4)),
+        lng: Number((coords.lng + s.lngOffset + idx * 0.001).toFixed(4)),
+      },
+      costOptions: {
+        budget: {
+          title: `${s.title} (Self-Guided / Light)`,
+          estimatedCost: Math.max(0, Math.round(s.baseCost * 0.6)),
+          description: 'Budget-friendly entry or local counter option',
+        },
+        mid: {
+          title: `${s.title} (Standard)`,
+          estimatedCost: s.baseCost,
+          description: 'Standard curated experience',
+        },
+        premium: {
+          title: `${s.title} (Private Priority Access)`,
+          estimatedCost: Math.round(s.baseCost * 1.8),
+          description: 'Priority skip-the-line or tasting menu pairing',
+        },
+      },
+      selectedTier: 'mid',
+      priceConfidence: {
+        status: 'estimated',
+        notes: 'AI estimated cost (~) — verify on official venue site',
+      },
+      hoursConfidence: {
+        status: 'estimated',
+        notes: 'Estimated typical schedule',
+      },
+      whyThis: `Tailored to your route in ${activeCity} (${cleanCountry}) and interest in ${
+        params.interests[aIdx % Math.max(1, params.interests.length)] || 'culture'
+      }.`,
+      touristTrapScore: aIdx === 0 ? 52 : 26,
+      votes: {},
+    }));
+
+    const withTravel = activities.map((act, i) =>
+      i === 0
+        ? act
+        : {
+            ...act,
+            travelFromPrevious: calculateHaversineTravel(
+              activities[i - 1].location,
+              act.location,
+              'WALKING'
+            ),
+          }
+    );
+
+    const dayObj: Day = {
+      id: `${tripId}-day-${idx + 1}`,
+      tripId,
+      ownerId: params.ownerId,
+      date: dayDate,
+      dayNumber: idx + 1,
+      theme: `Day ${idx + 1}: Exploring ${activeCity}`,
+      paceLevel: params.defaultPace,
+      paceScore: 55,
+      activePlan: 'A',
+      activities: withTravel,
+      planB: [
+        {
+          ...activities[1],
+          id: `${tripId}-d${idx + 1}-planb-1`,
+          title: `${activeCity} National Museum & Covered Atrium Café (Indoor Plan B)`,
+          isOutdoor: false,
+          whyThis: `Rainy-day indoor cultural backup in ${activeCity}.`,
+        },
+      ],
+    };
+    dayObj.paceScore = computePaceMetrics(dayObj).paceScore;
+    return dayObj;
+  });
+
+  const fallbackTravelers: Traveler[] = [
+    {
+      id: `trav-${params.ownerId.slice(0, 6)}`,
+      tripId,
+      ownerId: params.ownerId,
+      userId: params.ownerId,
+      displayName: params.ownerName || 'You',
+      interests: params.interests,
+      budgetPerPerson: Math.round(params.totalBudget / Math.max(1, params.travelersCount)),
+      constraints: 'None',
+      preferredPace: params.defaultPace,
+      color: '#D97706',
+      avatar: (params.ownerName || 'Y')[0].toUpperCase(),
+    },
+  ];
+
+  return {
+    usedFallback: true,
+    bundle: {
+      trip: {
+        id: tripId,
+        ownerId: params.ownerId,
+        destination: fallbackDestinationTitle,
+        startDate: params.startDate,
+        endDate: params.endDate,
+        currency: 'EUR',
+        totalBudget: params.totalBudget,
+        travelersCount: params.travelersCount,
+        interests: params.interests,
+        defaultPace: params.defaultPace,
+        status: 'planned',
+        memberIds: [params.ownerId],
+        inviteCode,
+        assumptions: params.assumptions,
+        groupEnabled: params.groupEnabled,
+      },
+      days: builtFallbackDays,
+      travelers: fallbackTravelers,
+      expenses: [],
+    },
+  };
+}
+
+/**
+ * Queries the browser's loaded Google Maps JS SDK (`google.maps.places.Place.searchByText`)
+ * when available to obtain live rating, price level, opening hours, and reviews.
+ */
+export async function fetchPlaceDetailsFromMapsSdk(
+  placeName: string,
+  city?: string
+): Promise<GooglePlaceDetailsResult | null> {
+  if (typeof window === 'undefined') return null;
+  const gmaps = (window as any).google?.maps;
+  if (!gmaps || typeof gmaps.importLibrary !== 'function') return null;
+
+  try {
+    const placesLib = await gmaps.importLibrary('places');
+    const PlaceClass = placesLib?.Place;
+    if (!PlaceClass || typeof PlaceClass.searchByText !== 'function') return null;
+
+    const textQuery = city ? `${placeName}, ${city}` : placeName;
+    const { places } = await PlaceClass.searchByText({
+      textQuery,
+      fields: [
+        'displayName',
+        'formattedAddress',
+        'rating',
+        'userRatingCount',
+        'priceLevel',
+        'regularOpeningHours',
+        'editorialSummary',
+        'reviews',
+        'URI',
+      ],
+      maxResultCount: 1,
+    });
+
+    if (Array.isArray(places) && places.length > 0) {
+      return normalizeGooglePlacesApiResponse(
+        places[0],
+        { placeName, city },
+        'maps_js_sdk'
+      );
+    }
+  } catch {
+    // Fall back to server-side Places API / verified catalog
+  }
+  return null;
 }
 
 /**
  * Requests AI proposals (Chat assistant, Vibe Slider pace change, Group compromise, or Local alternative).
- * Always returns non-destructive ProposalChange[] items for the visual diff bar.
+ * Always returns non-destructive ProposalChange[] items for the visual diff bar,
+ * or grounded place details when `fetch_google_place_details` is invoked.
  */
 export async function requestAiProposals(params: {
   taskType: 'chat' | 'pace' | 'compromise';
@@ -211,32 +791,90 @@ export async function requestAiProposals(params: {
   message: string;
   currentDay: Day;
   travelers: Traveler[];
-}): Promise<{ reply: string; proposals: ProposalChange[]; usedFallback: boolean }> {
-  try {
-    const res = await fetch('/api/ai/propose-changes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.proposals && Array.isArray(data.proposals) && data.proposals.length > 0) {
-        return {
-          reply: data.reply,
-          proposals: data.proposals.map((p: any) => ({
-            ...p,
-            dayId: params.currentDay.id,
-            dayNumber: params.currentDay.dayNumber,
-            source: params.taskType,
-            status: 'pending',
-          })),
-          usedFallback: false,
-        };
+  language?: 'en' | 'pt';
+}): Promise<{
+  reply: string;
+  proposals: ProposalChange[];
+  usedFallback: boolean;
+  toolUsed?: string;
+  placeDetails?: GooglePlaceDetailsResult;
+}> {
+  if (USE_LIVE_GEMINI_API) {
+    try {
+      let clientPlaceData: GooglePlaceDetailsResult | null = null;
+      if (params.taskType === 'chat' && isInformationalPlaceQuery(params.message)) {
+        const args = extractPlaceQueryArgs(
+          params.message,
+          params.destination,
+          params.currentDay.activities
+        );
+        if (args) {
+          clientPlaceData = await fetchPlaceDetailsFromMapsSdk(args.placeName, args.city);
+        }
       }
+
+      const res = await fetch('/api/ai/propose-changes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...params,
+          clientPlaceData: clientPlaceData || undefined,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.toolUsed === 'fetch_google_place_details' && data?.reply) {
+          return {
+            reply: data.reply,
+            proposals: [],
+            usedFallback: false,
+            toolUsed: data.toolUsed,
+            placeDetails: data.placeDetails,
+          };
+        }
+        if (data?.proposals && Array.isArray(data.proposals) && data.proposals.length > 0) {
+          return {
+            reply: data.reply,
+            proposals: data.proposals.map((p: any) => ({
+              ...p,
+              dayId: params.currentDay.id,
+              dayNumber: params.currentDay.dayNumber,
+              source: params.taskType,
+              status: 'pending',
+            })),
+            usedFallback: false,
+          };
+        }
+      }
+    } catch {
+      // Fall through to deterministic smart proposal or grounded place fallback
     }
-  } catch {
-    // Fall through to deterministic smart proposal
+  }
+
+  if (params.taskType === 'chat' && isInformationalPlaceQuery(params.message)) {
+    const args = extractPlaceQueryArgs(
+      params.message,
+      params.destination,
+      params.currentDay.activities
+    ) || { placeName: params.destination, city: params.destination };
+
+    const placeDetails =
+      (await fetchPlaceDetailsFromMapsSdk(args.placeName, args.city)) ||
+      resolveVerifiedPlaceDetails(args.placeName, args.city, params.currentDay.activities);
+
+    const functionResponse = buildFunctionResponsePayload(`call-${Date.now()}`, placeDetails);
+    const reply = formatGroundedPlaceReply(
+      functionResponse.parts[0].functionResponse.response.result,
+      params.language || 'en'
+    );
+    return {
+      reply,
+      proposals: [],
+      usedFallback: false,
+      toolUsed: 'fetch_google_place_details',
+      placeDetails,
+    };
   }
 
   const firstAct = params.currentDay.activities[0];
@@ -420,3 +1058,139 @@ export async function requestAiProposals(params: {
     ],
   };
 }
+
+/**
+ * Streams the Atlas Genie Assistant response into the chat UI.
+ * Implements the 5-step Gemini Function Calling flow (`fetch_google_place_details` -> `functionResponse` -> streamed grounded output)
+ * for informational queries while preserving visual diff proposals for itinerary modification requests.
+ */
+export async function streamAtlasGenieChat(params: {
+  destination: string;
+  message: string;
+  currentDay: Day;
+  travelers: Traveler[];
+  language?: 'en' | 'pt';
+  onToolFetching?: (info: { placeName: string; city?: string }) => void;
+  onChunk?: (accumulatedText: string) => void;
+}): Promise<{
+  reply: string;
+  proposals: ProposalChange[];
+  toolUsed?: string;
+  placeDetails?: GooglePlaceDetailsResult;
+}> {
+  const isInfoQuery = isInformationalPlaceQuery(params.message);
+
+  if (isInfoQuery) {
+    const extracted = extractPlaceQueryArgs(
+      params.message,
+      params.destination,
+      params.currentDay.activities
+    );
+    if (extracted) {
+      params.onToolFetching?.(extracted);
+    }
+
+    const clientPlaceData = extracted
+      ? await fetchPlaceDetailsFromMapsSdk(extracted.placeName, extracted.city)
+      : null;
+
+    if (USE_LIVE_GEMINI_API) {
+      try {
+        const res = await fetch('/api/ai/chat-stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            destination: params.destination,
+            message: params.message,
+            currentDay: params.currentDay,
+            language: params.language || 'en',
+            clientPlaceData: clientPlaceData || undefined,
+          }),
+        });
+
+        if (res.ok && res.body) {
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let accumulated = '';
+          let finalToolUsed: string | undefined;
+          let finalPlaceDetails: GooglePlaceDetailsResult | undefined;
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split('\n\n');
+            buffer = events.pop() || '';
+
+            for (const rawEvent of events) {
+              const dataLine = rawEvent
+                .split('\n')
+                .find((line) => line.startsWith('data: '));
+              if (!dataLine) continue;
+              try {
+                const payload = JSON.parse(dataLine.slice(6));
+                if (payload.type === 'tool_fetching') {
+                  params.onToolFetching?.({
+                    placeName: payload.placeName,
+                    city: payload.city,
+                  });
+                } else if (payload.type === 'chunk' && typeof payload.text === 'string') {
+                  accumulated += payload.text;
+                  params.onChunk?.(accumulated);
+                } else if (payload.type === 'done') {
+                  if (typeof payload.reply === 'string' && payload.reply.trim()) {
+                    accumulated = payload.reply;
+                    params.onChunk?.(accumulated);
+                  }
+                  finalToolUsed = payload.toolUsed;
+                  finalPlaceDetails = payload.placeDetails;
+                }
+              } catch {
+                // Ignore malformed SSE lines
+              }
+            }
+          }
+
+          if (accumulated.trim()) {
+            return {
+              reply: accumulated,
+              proposals: [],
+              toolUsed: finalToolUsed || 'fetch_google_place_details',
+              placeDetails: finalPlaceDetails,
+            };
+          }
+        }
+      } catch {
+        // Fall through to grounded local stream
+      }
+    }
+  }
+
+  // Delegate to requestAiProposals (handles both modification diffs and offline place queries)
+  const result = await requestAiProposals({
+    taskType: 'chat',
+    destination: params.destination,
+    message: params.message,
+    currentDay: params.currentDay,
+    travelers: params.travelers,
+    language: params.language,
+  });
+
+  // Stream the reply progressively into the chat UI
+  const tokens = result.reply.match(/.{1,30}(\s|\n|$)/g) || [result.reply];
+  let acc = '';
+  for (const token of tokens) {
+    acc += token;
+    params.onChunk?.(acc);
+    await new Promise((r) => setTimeout(r, 14));
+  }
+
+  return {
+    reply: result.reply,
+    proposals: result.proposals,
+    toolUsed: result.toolUsed,
+    placeDetails: result.placeDetails,
+  };
+}
+
