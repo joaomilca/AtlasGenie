@@ -1,0 +1,344 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    // Validation Blueprint: User
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'language', 'notificationEnabled', 'reminderDaysBefore', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'email', 'language', 'notificationEnabled', 'reminderDaysBefore', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.language is string && data.language.size() == 2 && (data.language == 'pt' || data.language == 'en')
+        && data.notificationEnabled is bool
+        && data.reminderDaysBefore is number && data.reminderDaysBefore >= 1 && data.reminderDaysBefore <= 30
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: Trip
+    function isValidTrip(data) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'destination', 'startDate', 'endDate', 'currency',
+          'totalBudget', 'travelersCount', 'interests', 'defaultPace', 'status',
+          'memberIds', 'inviteCode', 'assumptions', 'groupEnabled', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'destination', 'startDate', 'endDate', 'currency',
+          'totalBudget', 'travelersCount', 'interests', 'defaultPace', 'status',
+          'memberIds', 'inviteCode', 'assumptions', 'groupEnabled', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.ownerId)
+        && data.destination is string && data.destination.size() >= 1 && data.destination.size() <= 120
+        && data.startDate is string && data.startDate.size() >= 8 && data.startDate.size() <= 32
+        && data.endDate is string && data.endDate.size() >= 8 && data.endDate.size() <= 32
+        && data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 10
+        && data.totalBudget is number && data.totalBudget >= 0 && data.totalBudget <= 1000000
+        && data.travelersCount is number && data.travelersCount >= 1 && data.travelersCount <= 50
+        && data.interests is list && data.interests.size() <= 10
+        && (data.interests.size() == 0 || (data.interests[0] is string && data.interests[0].size() <= 50))
+        && data.defaultPace is number && data.defaultPace >= 1 && data.defaultPace <= 5
+        && data.status is string && data.status.size() <= 20
+        && (data.status == 'draft' || data.status == 'planned' || data.status == 'ongoing' || data.status == 'completed')
+        && data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 10
+        && data.memberIds[0] is string && data.memberIds[0].size() <= 128
+        && isValidId(data.inviteCode) && data.inviteCode.size() <= 32
+        && data.assumptions is list && data.assumptions.size() <= 10
+        && (data.assumptions.size() == 0 || (data.assumptions[0] is string && data.assumptions[0].size() <= 200))
+        && data.groupEnabled is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: Traveler
+    function isValidTraveler(data) {
+      return data.keys().hasAll([
+          'id', 'tripId', 'ownerId', 'userId', 'displayName', 'interests',
+          'budgetPerPerson', 'constraints', 'preferredPace', 'color', 'avatar',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'tripId', 'ownerId', 'userId', 'displayName', 'interests',
+          'budgetPerPerson', 'constraints', 'preferredPace', 'color', 'avatar',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.tripId)
+        && isValidId(data.ownerId)
+        && isValidId(data.userId)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.interests is list && data.interests.size() <= 10
+        && (data.interests.size() == 0 || (data.interests[0] is string && data.interests[0].size() <= 50))
+        && data.budgetPerPerson is number && data.budgetPerPerson >= 0 && data.budgetPerPerson <= 1000000
+        && data.constraints is string && data.constraints.size() <= 200
+        && data.preferredPace is number && data.preferredPace >= 1 && data.preferredPace <= 5
+        && data.color is string && data.color.size() >= 1 && data.color.size() <= 24
+        && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 16
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: Day
+    function isValidDay(data) {
+      return data.keys().hasAll([
+          'id', 'tripId', 'ownerId', 'date', 'dayNumber', 'paceLevel',
+          'paceScore', 'activePlan', 'activities', 'planB', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'tripId', 'ownerId', 'date', 'dayNumber', 'paceLevel',
+          'paceScore', 'activePlan', 'activities', 'planB', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.tripId)
+        && isValidId(data.ownerId)
+        && data.date is string && data.date.size() >= 8 && data.date.size() <= 32
+        && data.dayNumber is number && data.dayNumber >= 1 && data.dayNumber <= 30
+        && data.paceLevel is number && data.paceLevel >= 1 && data.paceLevel <= 5
+        && data.paceScore is number && data.paceScore >= 0 && data.paceScore <= 100
+        && data.activePlan is string && data.activePlan.size() == 1 && (data.activePlan == 'A' || data.activePlan == 'B')
+        && data.activities is list && data.activities.size() <= 10
+        && (data.activities.size() == 0 || data.activities[0] is map)
+        && data.planB is list && data.planB.size() <= 10
+        && (data.planB.size() == 0 || data.planB[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: Expense
+    function isValidExpense(data) {
+      return data.keys().hasAll([
+          'id', 'tripId', 'ownerId', 'authorId', 'activityId', 'category',
+          'description', 'amount', 'currency', 'paidBy', 'splitMode',
+          'splits', 'date', 'settled', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'tripId', 'ownerId', 'authorId', 'activityId', 'category',
+          'description', 'amount', 'currency', 'paidBy', 'splitMode',
+          'splits', 'date', 'settled', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.tripId)
+        && isValidId(data.ownerId)
+        && isValidId(data.authorId)
+        && data.activityId is string && data.activityId.size() <= 128
+        && data.category is string && data.category.size() <= 32
+        && (data.category == 'food' || data.category == 'activities' || data.category == 'transport' || data.category == 'accommodation' || data.category == 'other')
+        && data.description is string && data.description.size() >= 1 && data.description.size() <= 160
+        && data.amount is number && data.amount > 0 && data.amount <= 1000000
+        && data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 10
+        && isValidId(data.paidBy)
+        && data.splitMode is string && data.splitMode.size() <= 16
+        && (data.splitMode == 'equal' || data.splitMode == 'custom' || data.splitMode == 'shares')
+        && data.splits is map && data.splits.size() >= 1 && data.splits.size() <= 10
+        && data.date is string && data.date.size() >= 8 && data.date.size() <= 32
+        && data.settled is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Master Gate Helper for Parent Trip
+    function isTripMember(tripId) {
+      let trip = get(/databases/$(database)/documents/trips/$(tripId)).data;
+      return trip.ownerId == request.auth.uid || request.auth.uid in trip.memberIds;
+    }
+    function isTripOwner(tripId) {
+      let trip = get(/databases/$(database)/documents/trips/$(tripId)).data;
+      return trip.ownerId == request.auth.uid && trip.status != 'completed';
+    }
+
+    // 1. Users Collection (PII Isolated to Owner Only)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUser(incoming())
+        && incoming().id == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUser(incoming())
+        && request.auth.uid == userId
+        && incoming().id == existing().id
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'language', 'notificationEnabled', 'reminderDaysBefore', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // 2. Trips Collection
+    match /trips/{tripId} {
+      allow get: if isSignedIn() && isValidId(tripId) && (existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
+      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
+      allow create: if isVerifiedUser()
+        && isValidId(tripId)
+        && isValidTrip(incoming())
+        && incoming().id == tripId
+        && incoming().ownerId == request.auth.uid
+        && request.auth.uid in incoming().memberIds
+        && incoming().status != 'completed'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(tripId)
+        && isValidTrip(incoming())
+        && existing().status != 'completed'
+        && incoming().id == existing().id
+        && incoming().ownerId == existing().ownerId
+        && incoming().inviteCode == existing().inviteCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Owner edits trip parameters or status
+          (existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'destination', 'startDate', 'endDate', 'currency', 'totalBudget',
+            'travelersCount', 'interests', 'defaultPace', 'status', 'memberIds',
+            'assumptions', 'groupEnabled', 'updatedAt'
+          ]))
+          ||
+          // Action 2: Authenticated member joins trip via memberIds
+          (request.auth.uid in incoming().memberIds && incoming().diff(existing()).affectedKeys().hasOnly([
+            'memberIds', 'travelersCount', 'updatedAt'
+          ]))
+        );
+      allow delete: if isVerifiedUser() && isValidId(tripId) && existing().ownerId == request.auth.uid;
+
+      // 3. Travelers Subcollection
+      match /travelers/{travelerId} {
+        allow get: if isSignedIn() && isValidId(tripId) && isValidId(travelerId) && isTripMember(tripId);
+        allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || existing().userId == request.auth.uid);
+        allow create: if isVerifiedUser()
+          && isValidId(tripId)
+          && isValidId(travelerId)
+          && isValidTraveler(incoming())
+          && incoming().id == travelerId
+          && incoming().tripId == tripId
+          && (incoming().userId == request.auth.uid || incoming().ownerId == request.auth.uid)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/trips/$(tripId))
+          && isTripMember(tripId);
+        allow update: if isVerifiedUser()
+          && isValidId(tripId)
+          && isValidId(travelerId)
+          && isValidTraveler(incoming())
+          && incoming().id == existing().id
+          && incoming().tripId == existing().tripId
+          && incoming().ownerId == existing().ownerId
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (existing().userId == request.auth.uid || existing().ownerId == request.auth.uid)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'interests', 'budgetPerPerson', 'constraints', 'preferredPace', 'color', 'avatar', 'updatedAt'
+          ])
+          && isTripMember(tripId);
+        allow delete: if isVerifiedUser() && isValidId(tripId) && isValidId(travelerId) && isTripOwner(tripId);
+      }
+
+      // 4. Days Subcollection
+      match /days/{dayId} {
+        allow get: if isSignedIn() && isValidId(tripId) && isValidId(dayId) && isTripMember(tripId);
+        allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+        allow create: if isVerifiedUser()
+          && isValidId(tripId)
+          && isValidId(dayId)
+          && isValidDay(incoming())
+          && incoming().id == dayId
+          && incoming().tripId == tripId
+          && incoming().ownerId == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/trips/$(tripId))
+          && isTripOwner(tripId);
+        allow update: if isVerifiedUser()
+          && isValidId(tripId)
+          && isValidId(dayId)
+          && isValidDay(incoming())
+          && incoming().id == existing().id
+          && incoming().tripId == existing().tripId
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action 1: Owner updates schedule, pace, or Plan B
+            (existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+              'date', 'dayNumber', 'paceLevel', 'paceScore', 'activePlan', 'activities', 'planB', 'updatedAt'
+            ]) && isTripOwner(tripId))
+            ||
+            // Action 2: Group member votes on activities
+            (incoming().diff(existing()).affectedKeys().hasOnly(['activities', 'updatedAt']) && isTripMember(tripId))
+          );
+        allow delete: if isVerifiedUser() && isValidId(tripId) && isValidId(dayId) && isTripOwner(tripId);
+      }
+
+      // 5. Expenses Subcollection
+      match /expenses/{expenseId} {
+        allow get: if isSignedIn() && isValidId(tripId) && isValidId(expenseId) && isTripMember(tripId);
+        allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || existing().authorId == request.auth.uid);
+        allow create: if isVerifiedUser()
+          && isValidId(tripId)
+          && isValidId(expenseId)
+          && isValidExpense(incoming())
+          && incoming().id == expenseId
+          && incoming().tripId == tripId
+          && incoming().authorId == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/trips/$(tripId))
+          && isTripMember(tripId);
+        allow update: if isVerifiedUser()
+          && isValidId(tripId)
+          && isValidId(expenseId)
+          && isValidExpense(incoming())
+          && incoming().id == existing().id
+          && incoming().tripId == existing().tripId
+          && incoming().ownerId == existing().ownerId
+          && incoming().authorId == existing().authorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action 1: Owner or expense author updates expense details
+            ((existing().ownerId == request.auth.uid || existing().authorId == request.auth.uid)
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'activityId', 'category', 'description', 'amount', 'currency', 'paidBy', 'splitMode', 'splits', 'date', 'settled', 'updatedAt'
+              ]))
+            ||
+            // Action 2: Any trip member marks expense as settled
+            (incoming().diff(existing()).affectedKeys().hasOnly(['settled', 'updatedAt']))
+          )
+          && isTripMember(tripId);
+        allow delete: if isVerifiedUser()
+          && isValidId(tripId)
+          && isValidId(expenseId)
+          && (existing().ownerId == request.auth.uid || existing().authorId == request.auth.uid)
+          && isTripMember(tripId);
+      }
+    }
+  }
+}

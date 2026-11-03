@@ -1,0 +1,194 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated user profile and preferences.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "language": { "type": "string", "enum": ["pt", "en"], "maxLength": 5 },
+        "notificationEnabled": { "type": "boolean" },
+        "reminderDaysBefore": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "language", "notificationEnabled", "reminderDaysBefore", "createdAt", "updatedAt"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "Core travel itinerary container owned by a user and shared with group members.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "destination": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "startDate": { "type": "string", "maxLength": 32 },
+        "endDate": { "type": "string", "maxLength": 32 },
+        "currency": { "type": "string", "maxLength": 10 },
+        "totalBudget": { "type": "number" },
+        "travelersCount": { "type": "number" },
+        "interests": { "type": "array", "maxLength": 10 },
+        "defaultPace": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "planned", "ongoing", "completed"], "maxLength": 20 },
+        "memberIds": { "type": "array", "maxLength": 10 },
+        "inviteCode": { "type": "string", "maxLength": 32, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "assumptions": { "type": "array", "maxLength": 10 },
+        "groupEnabled": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "destination",
+        "startDate",
+        "endDate",
+        "currency",
+        "totalBudget",
+        "travelersCount",
+        "interests",
+        "defaultPace",
+        "status",
+        "memberIds",
+        "inviteCode",
+        "assumptions",
+        "groupEnabled",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Traveler": {
+      "title": "Traveler",
+      "description": "Group member profile participating in a trip.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tripId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "interests": { "type": "array", "maxLength": 10 },
+        "budgetPerPerson": { "type": "number" },
+        "constraints": { "type": "string", "maxLength": 200 },
+        "preferredPace": { "type": "number" },
+        "color": { "type": "string", "maxLength": 24 },
+        "avatar": { "type": "string", "maxLength": 16 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "tripId",
+        "ownerId",
+        "userId",
+        "displayName",
+        "interests",
+        "budgetPerPerson",
+        "constraints",
+        "preferredPace",
+        "color",
+        "avatar",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Day": {
+      "title": "Day",
+      "description": "Single day schedule inside a trip.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tripId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 32 },
+        "dayNumber": { "type": "number" },
+        "paceLevel": { "type": "number" },
+        "paceScore": { "type": "number" },
+        "activePlan": { "type": "string", "enum": ["A", "B"], "maxLength": 2 },
+        "activities": { "type": "array", "maxLength": 10 },
+        "planB": { "type": "array", "maxLength": 10 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "tripId",
+        "ownerId",
+        "date",
+        "dayNumber",
+        "paceLevel",
+        "paceScore",
+        "activePlan",
+        "activities",
+        "planB",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Shared or personal expense recorded for a trip.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tripId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authorId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "activityId": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string", "enum": ["food", "activities", "transport", "accommodation", "other"], "maxLength": 32 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "amount": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 10 },
+        "paidBy": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "splitMode": { "type": "string", "enum": ["equal", "custom", "shares"], "maxLength": 16 },
+        "splits": { "type": "object" },
+        "date": { "type": "string", "maxLength": 32 },
+        "settled": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "tripId",
+        "ownerId",
+        "authorId",
+        "activityId",
+        "category",
+        "description",
+        "amount",
+        "currency",
+        "paidBy",
+        "splitMode",
+        "splits",
+        "date",
+        "settled",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Private user profile and notification preferences."
+    },
+    "/trips/{tripId}": {
+      "schema": { "$ref": "#/entities/Trip" },
+      "description": "Top-level trip documents owned by a user and accessible to group members."
+    },
+    "/trips/{tripId}/travelers/{travelerId}": {
+      "schema": { "$ref": "#/entities/Traveler" },
+      "description": "Group members participating in a trip."
+    },
+    "/trips/{tripId}/days/{dayId}": {
+      "schema": { "$ref": "#/entities/Day" },
+      "description": "Daily itinerary plans and activities for a trip."
+    },
+    "/trips/{tripId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Shared and personal expenses recorded inside a trip."
+    }
+  }
+}

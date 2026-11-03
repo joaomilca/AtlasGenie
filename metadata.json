@@ -1,0 +1,6 @@
+{
+  "name": "AtlasGenie — Verified AI Travel & Group Planner",
+  "description": "The only travel planner where you know what's verified, what it costs, and you stay in control — alone or with your group.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
