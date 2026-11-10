@@ -156,6 +156,7 @@ describe('Core Budget Calculation Logic', () => {
           toTier: 'premium',
           costDelta: 50, // (35 - 10) * 2
           newOptionTitle: 'Tile Workshop VIP',
+          selected: true,
         },
       ]);
     });

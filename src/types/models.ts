@@ -14,7 +14,97 @@ export type BudgetTier = 'budget' | 'mid' | 'premium';
 export interface CostOption {
   title: string;
   estimatedCost: number;
+  isPriceVerified?: boolean;
   description: string;
+  venueName?: string;
+  coordinates?: {
+    lat: number;
+    lng: number;
+  };
+}
+
+export interface DayAccommodation {
+  name: string;
+  type: 'hotel' | 'hostel' | 'apartment' | string;
+  price: number;
+  isPriceVerified?: boolean;
+  coordinates: {
+    lat: number;
+    lng: number;
+  };
+  selectedTier?: BudgetTier;
+  description?: string;
+  whyThis?: string;
+  customPriceLocked?: boolean;
+  tierOptions?: {
+    budget?: {
+      name: string;
+      type: string;
+      price: number;
+      isPriceVerified?: boolean;
+      coordinates: { lat: number; lng: number };
+    };
+    mid?: {
+      name: string;
+      type: string;
+      price: number;
+      isPriceVerified?: boolean;
+      coordinates: { lat: number; lng: number };
+    };
+    premium?: {
+      name: string;
+      type: string;
+      price: number;
+      isPriceVerified?: boolean;
+      coordinates: { lat: number; lng: number };
+    };
+  };
+}
+
+export interface IntercityTransit {
+  method: string;
+  duration: string;
+  price: number;
+  isPriceVerified?: boolean;
+  fromCity?: string;
+  toCity?: string;
+}
+
+export interface MealRecommendation {
+  name: string;
+  cuisine?: string;
+  estimatedPrice: number;
+  isPriceVerified?: boolean;
+  coordinates: {
+    lat: number;
+    lng: number;
+  };
+  tierVenues?: {
+    budget?: {
+      name: string;
+      estimatedPrice: number;
+      isPriceVerified?: boolean;
+      coordinates: { lat: number; lng: number };
+    };
+    mid?: {
+      name: string;
+      estimatedPrice: number;
+      isPriceVerified?: boolean;
+      coordinates: { lat: number; lng: number };
+    };
+    premium?: {
+      name: string;
+      estimatedPrice: number;
+      isPriceVerified?: boolean;
+      coordinates: { lat: number; lng: number };
+    };
+  };
+}
+
+export interface DayMeals {
+  breakfast: MealRecommendation;
+  lunch: MealRecommendation;
+  dinner: MealRecommendation;
 }
 
 export type ActivityCategory = 'food' | 'culture' | 'nature' | 'nightlife' | 'shopping' | 'relax' | 'transport' | 'other';
@@ -41,6 +131,7 @@ export interface LocalAlternative {
     placeId?: string;
   };
   estimatedCost: number;
+  isPriceVerified?: boolean;
   travelMinutesAway: number;
   travelSource: 'maps_api' | 'estimated';
   priceConfidence: ConfidenceInfo;
@@ -71,6 +162,7 @@ export interface Activity {
     premium: CostOption;
   };
   selectedTier: BudgetTier;
+  isPriceVerified?: boolean;
   priceConfidence: ConfidenceInfo;
   hoursConfidence: ConfidenceInfo;
   whyThis: string;
@@ -86,10 +178,14 @@ export interface Day {
   ownerId: string;
   date: string; // YYYY-MM-DD
   dayNumber: number;
+  city?: string;
   theme?: string;
   paceLevel: number; // 1 (Relaxed) to 5 (Intense)
   paceScore: number; // 0-100 calculated
   activePlan: 'A' | 'B';
+  accommodation?: DayAccommodation;
+  intercity_transit?: IntercityTransit;
+  meals?: DayMeals;
   activities: Activity[];
   planB: Activity[];
   planBDescription?: string;
@@ -163,7 +259,7 @@ export interface UserProfile {
   };
 }
 
-export type ProposalChangeType = 'add' | 'remove' | 'replace' | 'move';
+export type ProposalChangeType = 'add' | 'remove' | 'replace' | 'move' | 'replace_accommodation';
 
 export interface ProposalChange {
   id: string;
@@ -172,10 +268,12 @@ export interface ProposalChange {
   type: ProposalChangeType;
   targetActivityId?: string;
   targetActivityTitle?: string;
+  targetAccommodationName?: string;
   payload?: Activity;
+  accommodationPayload?: DayAccommodation;
   newStartTime?: string;
   reason: string;
-  source: 'chat' | 'pace' | 'local_alt' | 'budget' | 'compromise';
+  source: 'chat' | 'pace' | 'local_alt' | 'budget' | 'compromise' | 'accommodation';
   status: 'pending' | 'accepted' | 'rejected';
 }
 

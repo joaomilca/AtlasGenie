@@ -1,6 +1,4 @@
-import { initializeApp } from 'firebase/app';
 import {
-  getAuth,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithEmailAndPassword,
@@ -10,7 +8,6 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import {
-  getFirestore,
   doc,
   getDocFromServer,
   setDoc,
@@ -22,11 +19,9 @@ import {
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { app, db, auth, analytics, firebaseConfig, saveTrip, getUserTrips } from '../firebase';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+export { app, db, auth, analytics, firebaseConfig, saveTrip, getUserTrips };
 
 // Validate connection to Firestore on boot (Mandatory per Firebase Integration Skill)
 async function testConnection() {
@@ -38,7 +33,9 @@ async function testConnection() {
     }
   }
 }
-testConnection();
+if (typeof window !== 'undefined') {
+  testConnection();
+}
 
 export enum OperationType {
   CREATE = 'create',

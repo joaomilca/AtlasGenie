@@ -104,10 +104,13 @@ export default defineConfig(() => {
       }),
     ],
     resolve: {
-      dedupe: ['react', 'react-dom'],
+      dedupe: ['react', 'react-dom', 'firebase', '@firebase/app', '@firebase/firestore', '@firebase/auth'],
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+    },
+    optimizeDeps: {
+      include: ['firebase/app', 'firebase/firestore', 'firebase/auth', 'firebase/analytics'],
     },
     server: {
       // HMR and WebSockets are disabled in AI Studio to prevent WebSocket errors and flickering.

@@ -36,16 +36,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenSupport }) => {
   };
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-8 py-10 sm:py-16 space-y-20">
+    <main className="max-w-7xl mx-auto px-0 md:px-8 py-6 sm:py-16 space-y-14 sm:space-y-20">
       {/* Hero Section */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-stretch">
         <div className="lg:col-span-7 flex flex-col justify-center space-y-6">
           <p className="text-xs font-mono-tabular uppercase tracking-wider text-amber-700 dark:text-amber-400">
             {t('hero.kicker')} · PT-PT &amp; EN
           </p>
           <h1
             style={{ textWrap: 'balance' }}
-            className="font-serif-atlas text-4xl sm:text-5xl font-bold tracking-tight text-slate-900 dark:text-white leading-[1.12]"
+            className="font-serif-atlas text-2xl sm:text-4xl md:text-5xl font-bold tracking-tight text-slate-900 dark:text-white leading-[1.12]"
           >
             {t('hero.title')}
           </h1>
@@ -198,7 +198,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenSupport }) => {
               value={miniCity}
               onChange={(e) => setMiniCity(e.target.value)}
               placeholder={t('hero.miniGenPlaceholder')}
-              className="px-4 py-2.5 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white min-w-[260px] focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className="w-full sm:w-auto sm:min-w-[260px] px-4 py-2.5 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
             <button
               type="submit"

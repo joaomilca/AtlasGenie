@@ -1,28 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Globe, MapPin, Plus, Sparkles, X } from 'lucide-react';
+import { Check, ChevronDown, Globe, Loader2, MapPin, Plus, Sparkles, X } from 'lucide-react';
 import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
-import { generateTripItinerary } from '../services/api';
+import {
+  SPECIAL_PREFERENCE_CHIPS,
+  SpecialPreferenceChipOption,
+  buildSpecialPreferencesConstraintList,
+  generateTripItinerary,
+  validateLocationWithGeocoder,
+} from '../services/api';
 import { SkeletonItinerary } from '../components/SkeletonItinerary';
 
-const COUNTRY_OPTIONS = [
-  { value: 'Italy', labelEn: 'Italy', labelPt: 'Itália', suggestedCities: ['Rome', 'Florence', 'Venice', 'Milan'] },
-  { value: 'Japan', labelEn: 'Japan', labelPt: 'Japão', suggestedCities: ['Tokyo', 'Kyoto', 'Osaka', 'Hakone'] },
-  { value: 'Portugal', labelEn: 'Portugal', labelPt: 'Portugal', suggestedCities: ['Lisbon', 'Porto', 'Sintra', 'Coimbra'] },
-  { value: 'Spain', labelEn: 'Spain', labelPt: 'Espanha', suggestedCities: ['Barcelona', 'Madrid', 'Seville', 'Granada'] },
-  { value: 'France', labelEn: 'France', labelPt: 'França', suggestedCities: ['Paris', 'Lyon', 'Nice', 'Bordeaux'] },
-  { value: 'Greece', labelEn: 'Greece', labelPt: 'Grécia', suggestedCities: ['Athens', 'Santorini', 'Naxos', 'Chania'] },
-  { value: 'United Kingdom', labelEn: 'United Kingdom', labelPt: 'Reino Unido', suggestedCities: ['London', 'Edinburgh', 'Bath', 'Oxford'] },
-  { value: 'Germany', labelEn: 'Germany', labelPt: 'Alemanha', suggestedCities: ['Berlin', 'Munich', 'Hamburg', 'Heidelberg'] },
-  { value: 'Switzerland', labelEn: 'Switzerland', labelPt: 'Suíça', suggestedCities: ['Zurich', 'Lucerne', 'Interlaken', 'Zermatt'] },
-  { value: 'Netherlands', labelEn: 'Netherlands', labelPt: 'Países Baixos', suggestedCities: ['Amsterdam', 'Utrecht', 'Haarlem', 'Rotterdam'] },
-  { value: 'Austria', labelEn: 'Austria', labelPt: 'Áustria', suggestedCities: ['Vienna', 'Salzburg', 'Innsbruck', 'Hallstatt'] },
-  { value: 'Croatia', labelEn: 'Croatia', labelPt: 'Croácia', suggestedCities: ['Dubrovnik', 'Split', 'Zadar', 'Zagreb'] },
-  { value: 'Morocco', labelEn: 'Morocco', labelPt: 'Marrocos', suggestedCities: ['Marrakech', 'Fes', 'Chefchaouen', 'Essaouira'] },
-  { value: 'United States', labelEn: 'United States', labelPt: 'Estados Unidos', suggestedCities: ['New York', 'San Francisco', 'Boston', 'Chicago'] },
-];
+import {
+  TRIP_DRAFT_STORAGE_KEY,
+  TripWizardDraftState,
+  createDefaultTripWizardDraft,
+  parseTripWizardDraft,
+  serializeTripWizardDraft,
+} from '../utils/domainLogic';
+import {
+  WorldCountryOption,
+  filterWorldCountries,
+  findWorldCountry,
+  getSortedWorldCountries,
+  resolveCountryFromQueryParam,
+  sanitizeAndCheckLocationInput,
+} from '../utils/worldDestinations';
 
 const INTEREST_OPTIONS = [
   { id: 'food', labelEn: 'Food & Markets', labelPt: 'Gastronomia e Mercados', icon: '🍲' },
@@ -35,25 +40,59 @@ const INTEREST_OPTIONS = [
   { id: 'nature', labelEn: 'Parks & Coastal Walks', labelPt: 'Parques e Costa', icon: '🌿' },
 ];
 
-function inferCountryFromCity(cityParam: string | null): { country: string; initialCities: string[] } {
-  if (!cityParam || !cityParam.trim()) {
-    return { country: 'Italy', initialCities: ['Rome', 'Florence'] };
-  }
-  const clean = cityParam.trim();
-  const match = COUNTRY_OPTIONS.find(
-    (c) =>
-      c.value.toLowerCase() === clean.toLowerCase() ||
-      c.suggestedCities.some((sc) => sc.toLowerCase() === clean.toLowerCase())
-  );
-  if (match) {
-    const isCountryName = match.value.toLowerCase() === clean.toLowerCase();
-    return {
-      country: match.value,
-      initialCities: isCountryName ? [] : [clean],
-    };
-  }
-  return { country: 'Italy', initialCities: [clean] };
+interface CountrySelectOptionsProps {
+  countries: WorldCountryOption[];
+  selectedCountry: string;
+  isPt: boolean;
+  emptyMessage: string;
+  onSelect: (countryValue: string) => void;
 }
+
+/**
+ * Memoized compact 197-country option list for the searchable Combobox.
+ */
+const CountrySelectOptions = React.memo<CountrySelectOptionsProps>(
+  ({ countries, selectedCountry, isPt, emptyMessage, onSelect }) => {
+    if (countries.length === 0) {
+      return (
+        <li className="text-sm py-1.5 px-3 text-slate-500 dark:text-slate-400 italic">
+          {emptyMessage}
+        </li>
+      );
+    }
+    return (
+      <>
+        {countries.map((c) => {
+          const isSelected = c.value === selectedCountry;
+          const label = isPt ? c.labelPt : c.labelEn;
+          return (
+            <li
+              key={c.value}
+              role="option"
+              aria-selected={isSelected}
+              data-testid={`country-option-${c.value}`}
+              onMouseDown={(e) => {
+                // Prevent input blur before selection completes
+                e.preventDefault();
+              }}
+              onClick={() => onSelect(c.value)}
+              className={`text-sm py-1.5 px-3 flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                isSelected
+                  ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-200 font-semibold'
+                  : 'text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <span className="truncate">{label}</span>
+              {isSelected && <Check className="w-3.5 h-3.5 text-[#D97706] shrink-0" />}
+            </li>
+          );
+        })}
+      </>
+    );
+  }
+);
+
+CountrySelectOptions.displayName = 'CountrySelectOptions';
 
 export const TripWizardPage: React.FC = () => {
   const { t } = useTranslation();
@@ -62,102 +101,324 @@ export const TripWizardPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const inferred = inferCountryFromCity(searchParams.get('city'));
-  const [country, setCountry] = useState<string>(inferred.country);
-  const [cities, setCities] = useState<string[]>(inferred.initialCities);
-  const [cityInput, setCityInput] = useState<string>('');
-  const [letAiDecideCities, setLetAiDecideCities] = useState<boolean>(false);
+  const isPt = language === 'pt';
+  const sortedCountries = useMemo(
+    () => getSortedWorldCountries(isPt ? 'pt' : 'en'),
+    [isPt]
+  );
 
-  const [startDate, setStartDate] = useState('2026-11-18');
-  const [endDate, setEndDate] = useState('2026-11-21');
-  const [travelersCount, setTravelersCount] = useState(2);
-  const [totalBudget, setTotalBudget] = useState(900);
-  const [selectedInterests, setSelectedInterests] = useState<string[]>([
-    'food',
-    'history',
-    'viewpoints',
-  ]);
-  const [defaultPace, setDefaultPace] = useState(3);
-  const [groupEnabled, setGroupEnabled] = useState(true);
+  const cityParam = searchParams.get('city');
+  const hasExplicitCityParam = Boolean(cityParam && cityParam.trim());
+  const inferred = useMemo(
+    () => (hasExplicitCityParam ? resolveCountryFromQueryParam(cityParam) : null),
+    [cityParam, hasExplicitCityParam]
+  );
 
-  const [assumptions, setAssumptions] = useState<string[]>(() => [
-    t('wizard.defaultAssump1'),
-    t('wizard.defaultAssump2'),
-    t('wizard.defaultAssump3'),
-    t('wizard.defaultAssump4'),
-  ]);
-  const [newAssumption, setNewAssumption] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setAssumptions([
-      t('wizard.defaultAssump1'),
-      t('wizard.defaultAssump2'),
-      t('wizard.defaultAssump3'),
-      t('wizard.defaultAssump4'),
-    ]);
-  }, [language, t]);
-
-  const handleAddCityChip = (rawValue?: string) => {
-    const candidate = (rawValue ?? cityInput).trim();
-    if (!candidate) return;
-    const parts = candidate
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    setCities((prev) => {
-      const next = [...prev];
-      for (const part of parts) {
-        if (!next.some((existing) => existing.toLowerCase() === part.toLowerCase())) {
-          next.push(part);
+  const initialDraft = useMemo<TripWizardDraftState>(() => {
+    const fallbackDraft = createDefaultTripWizardDraft(inferred);
+    if (typeof window === 'undefined') {
+      return fallbackDraft;
+    }
+    try {
+      const savedRaw = window.localStorage.getItem(TRIP_DRAFT_STORAGE_KEY);
+      if (savedRaw) {
+        const parsed = parseTripWizardDraft(savedRaw, fallbackDraft);
+        if (parsed) {
+          if (hasExplicitCityParam && inferred) {
+            return {
+              ...parsed,
+              country: inferred.country,
+              cities: [...inferred.initialCities],
+            };
+          }
+          return parsed;
         }
       }
-      return next;
-    });
-    if (rawValue === undefined) {
+    } catch {
+      // ignore localStorage read errors
+    }
+    return fallbackDraft;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [country, setCountry] = useState<string>(() => initialDraft.country);
+  const [countrySearch, setCountrySearch] = useState<string>(() => {
+    if (!initialDraft.country) return '';
+    const opt = findWorldCountry(initialDraft.country);
+    return isPt ? opt?.labelPt || initialDraft.country : opt?.labelEn || initialDraft.country;
+  });
+  const [isFilteringCountries, setIsFilteringCountries] = useState<boolean>(false);
+  const [countryDropdownOpen, setCountryDropdownOpen] = useState<boolean>(false);
+  const countryDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [cities, setCities] = useState<string[]>(() => [...initialDraft.cities]);
+  const [cityInput, setCityInput] = useState<string>(() => initialDraft.cityInput);
+  const [letAiDecideCities, setLetAiDecideCities] = useState<boolean>(
+    () => initialDraft.letAiDecideCities
+  );
+
+  const [startDate, setStartDate] = useState<string>(() => initialDraft.startDate);
+  const [endDate, setEndDate] = useState<string>(() => initialDraft.endDate);
+  const [travelersCount, setTravelersCount] = useState<number>(() => initialDraft.travelersCount);
+  const [totalBudget, setTotalBudget] = useState<number>(() => initialDraft.totalBudget);
+  const [selectedInterests, setSelectedInterests] = useState<string[]>(() => [
+    ...initialDraft.selectedInterests,
+  ]);
+  const [defaultPace, setDefaultPace] = useState<number>(() => initialDraft.defaultPace);
+  const [groupEnabled, setGroupEnabled] = useState<boolean>(() => initialDraft.groupEnabled);
+
+  const [specialPreferences, setSpecialPreferences] = useState<string[]>(() => [
+    ...initialDraft.specialPreferences,
+  ]);
+  const [customRequest, setCustomRequest] = useState<string>(() => initialDraft.customRequest);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isVerifyingCity, setIsVerifyingCity] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const skipNextDraftSaveRef = useRef<boolean>(false);
+
+  // Sprint 17: Auto-save draft to localStorage whenever any form field changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (skipNextDraftSaveRef.current) {
+      skipNextDraftSaveRef.current = false;
+      return;
+    }
+    try {
+      const draftPayload: TripWizardDraftState = {
+        country,
+        cities,
+        cityInput,
+        letAiDecideCities,
+        startDate,
+        endDate,
+        travelersCount,
+        totalBudget,
+        selectedInterests,
+        defaultPace,
+        groupEnabled,
+        specialPreferences,
+        customRequest,
+      };
+      window.localStorage.setItem(
+        TRIP_DRAFT_STORAGE_KEY,
+        serializeTripWizardDraft(draftPayload)
+      );
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [
+    country,
+    cities,
+    cityInput,
+    letAiDecideCities,
+    startDate,
+    endDate,
+    travelersCount,
+    totalBudget,
+    selectedInterests,
+    defaultPace,
+    groupEnabled,
+    specialPreferences,
+    customRequest,
+  ]);
+
+  const handleClearForm = useCallback(() => {
+    const clean = createDefaultTripWizardDraft(null);
+    skipNextDraftSaveRef.current = true;
+    try {
+      window.localStorage.removeItem(TRIP_DRAFT_STORAGE_KEY);
+    } catch {
+      // ignore localStorage errors
+    }
+    setCountry(clean.country);
+    setCountrySearch('');
+    setIsFilteringCountries(false);
+    setCountryDropdownOpen(false);
+    setCities([...clean.cities]);
+    setCityInput(clean.cityInput);
+    setLetAiDecideCities(clean.letAiDecideCities);
+    setStartDate(clean.startDate);
+    setEndDate(clean.endDate);
+    setTravelersCount(clean.travelersCount);
+    setTotalBudget(clean.totalBudget);
+    setSelectedInterests([...clean.selectedInterests]);
+    setDefaultPace(clean.defaultPace);
+    setGroupEnabled(clean.groupEnabled);
+    setSpecialPreferences([...clean.specialPreferences]);
+    setCustomRequest(clean.customRequest);
+    setFormError(null);
+  }, []);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (
+        countryDropdownRef.current &&
+        !countryDropdownRef.current.contains(e.target as Node)
+      ) {
+        setCountryDropdownOpen(false);
+        setIsFilteringCountries(false);
+      }
+    };
+    if (countryDropdownOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [countryDropdownOpen]);
+
+  const activeCountryOption = useMemo(() => findWorldCountry(country), [country]);
+
+  // Keep input display text synced with language switch when a country is selected and user is not mid-typing
+  useEffect(() => {
+    if (country && activeCountryOption && !isFilteringCountries) {
+      setCountrySearch(isPt ? activeCountryOption.labelPt : activeCountryOption.labelEn);
+    }
+  }, [isPt, country, activeCountryOption, isFilteringCountries]);
+
+  const filteredCountries = useMemo(() => {
+    if (!isFilteringCountries || !countrySearch.trim()) {
+      return sortedCountries;
+    }
+    return filterWorldCountries(countrySearch, isPt ? 'pt' : 'en');
+  }, [countrySearch, isFilteringCountries, isPt, sortedCountries]);
+
+  const handleSelectCountry = useCallback(
+    (nextCountry: string) => {
+      const opt = findWorldCountry(nextCountry);
+      const label = opt ? (isPt ? opt.labelPt : opt.labelEn) : nextCountry;
+      setCountry(nextCountry);
+      setCountrySearch(label);
+      setIsFilteringCountries(false);
+      setCountryDropdownOpen(false);
+      setCities([]);
       setCityInput('');
-    }
-  };
+      setFormError(null);
+    },
+    [isPt]
+  );
 
-  const handleCityInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault();
-      handleAddCityChip();
-    } else if (e.key === 'Backspace' && !cityInput && cities.length > 0) {
-      setCities((prev) => prev.slice(0, -1));
-    }
-  };
+  const handleCountryInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      setCountrySearch(val);
+      setIsFilteringCountries(true);
+      setCountryDropdownOpen(true);
+      setFormError(null);
 
-  const handleRemoveCityChip = (cityToRemove: string) => {
+      const trimmed = val.trim();
+      if (!trimmed) {
+        setCountry('');
+        return;
+      }
+      const exactMatch = findWorldCountry(trimmed);
+      if (exactMatch) {
+        setCountry(exactMatch.value);
+      } else {
+        setCountry('');
+      }
+    },
+    []
+  );
+
+  const handleAddCityChip = useCallback(
+    async (rawValue?: string) => {
+      const candidate = (rawValue ?? cityInput).trim();
+      if (!candidate || isVerifyingCity) return;
+      const parts = candidate
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      // Step 1: Fast frontend regex sanitization & profanity/gibberish check before querying any API
+      const sanitizedParts: string[] = [];
+      for (const part of parts) {
+        const sanitized = sanitizeAndCheckLocationInput(part);
+        if (!sanitized.valid) {
+          const errorMsg = t('wizard.errLocationNotFound');
+          setFormError(errorMsg);
+          showToast(errorMsg, 'alert');
+          return;
+        }
+        sanitizedParts.push(sanitized.sanitized);
+      }
+
+      // Step 2: Geocoding validation against the selected country
+      setIsVerifyingCity(true);
+      try {
+        const resolvedParts: string[] = [];
+        for (const cleanPart of sanitizedParts) {
+          const geoResult = await validateLocationWithGeocoder(cleanPart, country);
+          if (!geoResult.valid) {
+            const errorMsg = t('wizard.errLocationNotFound');
+            setFormError(errorMsg);
+            showToast(errorMsg, 'alert');
+            return;
+          }
+          resolvedParts.push(geoResult.canonicalName || cleanPart);
+        }
+
+        setFormError(null);
+        setCities((prev) => {
+          const next = [...prev];
+          for (const part of resolvedParts) {
+            if (!next.some((existing) => existing.toLowerCase() === part.toLowerCase())) {
+              next.push(part);
+            }
+          }
+          return next;
+        });
+        if (rawValue === undefined) {
+          setCityInput('');
+        }
+      } finally {
+        setIsVerifyingCity(false);
+      }
+    },
+    [cityInput, country, isVerifyingCity, showToast, t]
+  );
+
+  const handleCityInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        void handleAddCityChip();
+      } else if (e.key === 'Backspace' && !cityInput && cities.length > 0) {
+        setCities((prev) => prev.slice(0, -1));
+      }
+    },
+    [handleAddCityChip, cityInput, cities.length]
+  );
+
+  const handleRemoveCityChip = useCallback((cityToRemove: string) => {
     setCities((prev) => prev.filter((c) => c !== cityToRemove));
-  };
+    setFormError(null);
+  }, []);
 
-  const toggleInterest = (id: string) => {
+  const toggleInterest = useCallback((id: string) => {
     setSelectedInterests((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
     );
-  };
+  }, []);
 
-  const handleAddAssumption = () => {
-    if (!newAssumption.trim()) return;
-    setAssumptions((prev) => [...prev, newAssumption.trim()]);
-    setNewAssumption('');
-  };
-
-  const handleUpdateAssumption = (idx: number, val: string) => {
-    setAssumptions((prev) => prev.map((item, i) => (i === idx ? val : item)));
-  };
-
-  const handleRemoveAssumption = (idx: number) => {
-    setAssumptions((prev) => prev.filter((_, i) => i !== idx));
-  };
+  const toggleSpecialPreference = useCallback((chip: SpecialPreferenceChipOption) => {
+    setSpecialPreferences((prev) => {
+      const exists = prev.includes(chip.labelPt) || prev.includes(chip.labelEn);
+      if (exists) {
+        return prev.filter((item) => item !== chip.labelPt && item !== chip.labelEn);
+      }
+      return [...prev, chip.labelPt];
+    });
+  }, []);
 
   // Compute display destination string for headers & skeleton loader
-  const pendingTypedCity = !letAiDecideCities && cityInput.trim() ? [cityInput.trim()] : [];
+  const pendingTypedCities =
+    !letAiDecideCities && cityInput.trim()
+      ? cityInput
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
   const effectiveCities = letAiDecideCities
     ? []
-    : Array.from(new Set([...cities, ...pendingTypedCity]));
+    : Array.from(new Set([...cities, ...pendingTypedCities]));
   const computedDestination =
     effectiveCities.length > 0 ? `${effectiveCities.join(', ')}, ${country}` : country;
 
@@ -167,28 +428,72 @@ export const TripWizardPage: React.FC = () => {
 
     if (!country.trim()) {
       setFormError(t('wizard.errCountry'));
-      return;
-    }
-    if (selectedInterests.length === 0) {
-      setFormError(t('wizard.errInterests'));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
+    if (selectedInterests.length === 0) {
+      setFormError(t('wizard.errInterests'));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    // Validate any pending unadded city text in the input field before generating
+    const verifiedPendingCities: string[] = [];
+    if (!letAiDecideCities && pendingTypedCities.length > 0) {
+      setIsVerifyingCity(true);
+      try {
+        for (const pendingCity of pendingTypedCities) {
+          const sanitized = sanitizeAndCheckLocationInput(pendingCity);
+          if (!sanitized.valid) {
+            const errorMsg = t('wizard.errLocationNotFound');
+            setFormError(errorMsg);
+            showToast(errorMsg, 'alert');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+          }
+          const geoResult = await validateLocationWithGeocoder(sanitized.sanitized, country);
+          if (!geoResult.valid) {
+            const errorMsg = t('wizard.errLocationNotFound');
+            setFormError(errorMsg);
+            showToast(errorMsg, 'alert');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+          }
+          verifiedPendingCities.push(geoResult.canonicalName || sanitized.sanitized);
+        }
+      } finally {
+        setIsVerifyingCity(false);
+      }
+    }
+
+    const finalCities = letAiDecideCities
+      ? []
+      : Array.from(new Set([...cities, ...verifiedPendingCities]));
+    const finalDestination =
+      finalCities.length > 0 ? `${finalCities.join(', ')}, ${country}` : country;
+
     setIsGenerating(true);
     try {
+      const combinedConstraints = buildSpecialPreferencesConstraintList(
+        specialPreferences,
+        customRequest
+      );
       const [{ bundle }] = await Promise.all([
         generateTripItinerary({
-          destination: computedDestination,
+          destination: finalDestination,
           country: country.trim(),
-          cities: effectiveCities,
-          letAiDecideCities: letAiDecideCities || effectiveCities.length === 0,
+          cities: finalCities,
+          letAiDecideCities: letAiDecideCities || finalCities.length === 0,
           startDate,
           endDate,
           totalBudget,
           travelersCount,
           interests: selectedInterests,
           defaultPace,
-          assumptions,
+          assumptions: combinedConstraints,
+          specialPreferences,
+          customRequest,
           groupEnabled,
           ownerId: currentUser?.uid || 'demo-user',
           ownerName: currentUser?.displayName || 'Ana',
@@ -197,14 +502,18 @@ export const TripWizardPage: React.FC = () => {
       ]);
 
       await saveTripBundle(bundle);
+      try {
+        skipNextDraftSaveRef.current = true;
+        window.localStorage.removeItem(TRIP_DRAFT_STORAGE_KEY);
+      } catch {
+        // ignore localStorage errors
+      }
       showToast(t('toast.magicComplete'));
       navigate(`/trips/${bundle.trip.id}`);
     } finally {
       setIsGenerating(false);
     }
   };
-
-  const activeCountryOption = COUNTRY_OPTIONS.find((c) => c.value === country);
 
   if (isGenerating) {
     return (
@@ -219,18 +528,28 @@ export const TripWizardPage: React.FC = () => {
   }
 
   return (
-    <main className="max-w-4xl mx-auto px-4 sm:px-8 py-10">
+    <main className="max-w-4xl mx-auto px-0 md:px-8 py-6 md:py-10">
       <form
         onSubmit={handleGenerate}
-        className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 sm:p-8 space-y-8"
+        className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 md:p-8 space-y-6 md:space-y-8"
       >
-        <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
-          <h1 className="font-serif-atlas text-3xl font-bold text-slate-900 dark:text-white">
-            {t('wizard.title')}
-          </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            {t('wizard.step1')} · {t('wizard.step2')} · {t('wizard.step3')}
-          </p>
+        <div className="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="font-serif-atlas text-xl md:text-3xl font-bold text-slate-900 dark:text-white break-words">
+              {t('wizard.title')}
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              {t('wizard.step1')} · {t('wizard.step2')} · {t('wizard.step3')}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="wiz-clear-form-top-btn"
+            onClick={handleClearForm}
+            className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 underline underline-offset-4 transition-colors cursor-pointer"
+          >
+            {t('wizard.clearFormBtn')}
+          </button>
         </div>
 
         {formError && (
@@ -252,30 +571,90 @@ export const TripWizardPage: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="sm:col-span-1">
               <label
+                id="wiz-country-label"
                 htmlFor="wiz-country"
                 className="flex items-center gap-1.5 text-xs font-medium mb-1"
               >
                 <Globe className="w-3.5 h-3.5 text-[#D97706]" />
                 <span>{t('wizard.countryLabel')}</span>
               </label>
-              <select
-                id="wiz-country"
-                required
-                value={country}
-                onChange={(e) => {
-                  const nextCountry = e.target.value;
-                  setCountry(nextCountry);
-                  setCities([]);
-                  setCityInput('');
-                }}
-                className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer"
+              <div
+                ref={countryDropdownRef}
+                data-testid="wiz-country-wrapper"
+                className="relative w-full"
               >
-                {COUNTRY_OPTIONS.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {language === 'pt' ? c.labelPt : c.labelEn}
-                  </option>
-                ))}
-              </select>
+                <input type="hidden" name="country" value={country} />
+                <div className="relative flex items-center">
+                  <input
+                    id="wiz-country"
+                    type="text"
+                    role="combobox"
+                    autoComplete="off"
+                    aria-labelledby="wiz-country-label"
+                    aria-autocomplete="list"
+                    aria-haspopup="listbox"
+                    aria-expanded={countryDropdownOpen}
+                    aria-controls="wiz-country-listbox"
+                    value={countrySearch}
+                    placeholder={t('wizard.countryPlaceholder')}
+                    onFocus={() => {
+                      setIsFilteringCountries(false);
+                      setCountryDropdownOpen(true);
+                    }}
+                    onClick={() => {
+                      setCountryDropdownOpen(true);
+                    }}
+                    onChange={handleCountryInputChange}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setCountryDropdownOpen(false);
+                      } else if (e.key === 'Enter' && countryDropdownOpen) {
+                        e.preventDefault();
+                        if (filteredCountries.length > 0) {
+                          handleSelectCountry(filteredCountries[0].value);
+                        }
+                      }
+                    }}
+                    className="w-full pl-3.5 pr-9 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={t('wizard.countryLabel')}
+                    onClick={() => {
+                      setIsFilteringCountries(false);
+                      setCountryDropdownOpen((prev) => !prev);
+                    }}
+                    className="absolute right-2.5 inline-flex items-center justify-center text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
+                  >
+                    <ChevronDown
+                      className={`w-4 h-4 shrink-0 transition-transform ${
+                        countryDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
+
+                <ul
+                  id="wiz-country-listbox"
+                  role="listbox"
+                  aria-labelledby="wiz-country-label"
+                  data-testid="wiz-country-dropdown"
+                  hidden={!countryDropdownOpen}
+                  className={`absolute top-full left-0 w-full max-h-60 overflow-y-auto z-[100] bg-white shadow-xl dark:bg-slate-900 mt-1 rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800/60 ${
+                    countryDropdownOpen ? 'block' : 'hidden'
+                  }`}
+                >
+                  <CountrySelectOptions
+                    countries={filteredCountries}
+                    selectedCountry={country}
+                    isPt={isPt}
+                    emptyMessage={t('wizard.noCountryResults')}
+                    onSelect={handleSelectCountry}
+                  />
+                </ul>
+              </div>
             </div>
 
             <div>
@@ -367,19 +746,32 @@ export const TripWizardPage: React.FC = () => {
                     id="wiz-cities-input"
                     type="text"
                     value={cityInput}
-                    onChange={(e) => setCityInput(e.target.value)}
+                    onChange={(e) => {
+                      setCityInput(e.target.value);
+                      if (formError) setFormError(null);
+                    }}
                     onKeyDown={handleCityInputKeyDown}
                     placeholder={t('wizard.citiesPlaceholder')}
-                    className="flex-1 min-w-[180px] px-2 py-1 text-xs sm:text-sm bg-transparent focus:outline-none text-slate-900 dark:text-white"
+                    className="flex-1 min-w-[140px] sm:min-w-[180px] px-2 py-1 text-xs sm:text-sm bg-transparent focus:outline-none text-slate-900 dark:text-white"
                   />
 
                   <button
                     type="button"
-                    onClick={() => handleAddCityChip()}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
+                    disabled={isVerifyingCity}
+                    onClick={() => void handleAddCityChip()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 disabled:opacity-60 rounded-md transition-colors cursor-pointer"
                   >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>{t('wizard.addCityBtn')}</span>
+                    {isVerifyingCity ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                        <span>{t('wizard.verifyingCity')}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>{t('wizard.addCityBtn')}</span>
+                      </>
+                    )}
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -528,10 +920,19 @@ export const TripWizardPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="pt-2">
-            <div className="flex items-center justify-between text-xs font-medium mb-1">
-              <label htmlFor="wiz-pace">{t('wizard.paceLabel')}</label>
-              <span className="font-mono-tabular">
+          <div className="pt-2 overflow-hidden">
+            <div
+              data-testid="wizard-vibe-slider-container"
+              className="flex flex-wrap items-center justify-between gap-1 text-xs font-medium mb-1 overflow-hidden"
+            >
+              <label
+                htmlFor="wiz-pace"
+                data-testid="wizard-vibe-slider-label"
+                className="w-full md:w-auto max-w-full whitespace-normal break-words text-xs md:text-sm"
+              >
+                {t('wizard.paceLabel')}
+              </label>
+              <span className="font-mono-tabular text-xs">
                 {t('wizard.level')} {defaultPace}/5 (
                 {defaultPace <= 2
                   ? t('trip.paceRelaxed')
@@ -554,61 +955,82 @@ export const TripWizardPage: React.FC = () => {
           </div>
         </section>
 
-        {/* Step 3: Editable AI Assumptions Panel */}
+        {/* Step 3: Restrictions & Special Requests (Optional) */}
         <section className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
           <div>
             <h2 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
               {t('wizard.step3')}
             </h2>
             <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-              {t('wizard.assumptionsTitle')}
+              {t('wizard.step3Subtitle')}
             </p>
           </div>
 
-          <div className="space-y-2">
-            {assumptions.map((assump, idx) => (
-              <div key={idx} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  aria-label={`${t('wizard.step3')} ${idx + 1}`}
-                  value={assump}
-                  onChange={(e) => handleUpdateAssumption(idx, e.target.value)}
-                  className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"
-                />
+          <div
+            data-testid="wiz-special-preferences-chips"
+            className="flex flex-wrap gap-2.5"
+          >
+            {SPECIAL_PREFERENCE_CHIPS.map((chip) => {
+              const isSelected =
+                specialPreferences.includes(chip.labelPt) ||
+                specialPreferences.includes(chip.labelEn);
+              const displayLabel = t(
+                `wizard.prefChip.${chip.id}`,
+                isPt ? chip.labelPt : chip.labelEn
+              );
+              return (
                 <button
+                  key={chip.id}
                   type="button"
-                  onClick={() => handleRemoveAssumption(idx)}
-                  aria-label={`${t('dash.delete')} ${idx + 1}`}
-                  className="px-2.5 py-1.5 text-xs text-rose-700 dark:text-rose-400 hover:bg-rose-50 rounded-md cursor-pointer"
+                  data-testid={`pref-chip-${chip.id}`}
+                  aria-pressed={isSelected}
+                  onClick={() => toggleSpecialPreference(chip)}
+                  className={`px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-medium transition-colors inline-flex items-center gap-2 cursor-pointer ${
+                    isSelected
+                      ? 'bg-[#0F172A] text-white border-[#0F172A] dark:bg-amber-600 dark:border-amber-500 shadow-sm'
+                      : 'bg-[#FAF6F0] dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-amber-500'
+                  }`}
                 >
-                  ✕
+                  <span aria-hidden="true">{chip.icon}</span>
+                  <span>{displayLabel}</span>
+                  {isSelected && <Check className="w-3.5 h-3.5 text-amber-400 dark:text-white shrink-0" />}
                 </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={newAssumption}
-              onChange={(e) => setNewAssumption(e.target.value)}
-              placeholder={t('wizard.assumptionPlaceholder')}
-              className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
-            />
-            <button
-              type="button"
-              onClick={handleAddAssumption}
-              className="px-3 py-1.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg whitespace-nowrap cursor-pointer"
+          <div className="pt-1">
+            <label
+              htmlFor="wiz-custom-requests"
+              className="block text-xs font-semibold text-slate-900 dark:text-white mb-1.5"
             >
-              + {t('wizard.addAssumption')}
-            </button>
+              {t('wizard.otherRequestsLabel')}
+            </label>
+            <textarea
+              id="wiz-custom-requests"
+              data-testid="wiz-custom-requests"
+              rows={3}
+              value={customRequest}
+              onChange={(e) => setCustomRequest(e.target.value)}
+              placeholder={t('wizard.otherRequestsPlaceholder')}
+              className="w-full px-3.5 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
           </div>
         </section>
 
-        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            data-testid="wiz-clear-form-btn"
+            onClick={handleClearForm}
+            className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 underline underline-offset-4 transition-colors cursor-pointer"
+          >
+            {t('wizard.clearFormBtn')}
+          </button>
           <button
             type="submit"
-            className="px-6 py-3 text-sm font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors shadow-sm cursor-pointer"
+            data-testid="wiz-generate-btn"
+            className="w-full sm:w-auto px-6 py-3 text-sm font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors shadow-sm cursor-pointer"
           >
             {t('wizard.generateBtn')}
           </button>

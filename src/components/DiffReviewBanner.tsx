@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { Info } from 'lucide-react';
 import { ProposalChange } from '../types/models';
 
 interface DiffReviewBannerProps {
@@ -8,6 +9,7 @@ interface DiffReviewBannerProps {
   onReject: (id: string) => void;
   onAcceptAll: () => void;
   onRejectAll: () => void;
+  onOpenDetails?: (proposal: ProposalChange) => void;
 }
 
 export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
@@ -16,6 +18,7 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
   onReject,
   onAcceptAll,
   onRejectAll,
+  onOpenDetails,
 }) => {
   const { t } = useTranslation();
 
@@ -55,6 +58,7 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
         {proposals.map((prop) => {
           const isAdd = prop.type === 'add';
           const isRemove = prop.type === 'remove';
+          const isReplaceAccommodation = prop.type === 'replace_accommodation';
           const toneClasses = isAdd
             ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-950 dark:text-emerald-200'
             : isRemove
@@ -65,11 +69,30 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
             ? t('diff.addBadge')
             : isRemove
             ? t('diff.removeBadge')
+            : isReplaceAccommodation
+            ? t('logistics.swapStayBadge')
             : t('diff.replaceBadge');
+
+          const displayTitle =
+            isReplaceAccommodation && prop.accommodationPayload
+              ? t('logistics.swapStayText', {
+                  from: prop.targetAccommodationName || 'Current Stay',
+                  to: prop.accommodationPayload.name,
+                  price: prop.accommodationPayload.price,
+                })
+              : prop.type === 'replace' && prop.targetActivityTitle && prop.payload
+              ? t('diff.swapText', {
+                  from: prop.targetActivityTitle,
+                  to: prop.payload.title,
+                })
+              : prop.type === 'remove'
+              ? t('diff.removeText', { title: prop.targetActivityTitle })
+              : prop.payload?.title || prop.targetActivityTitle || prop.accommodationPayload?.name || '';
 
           return (
             <div
               key={prop.id}
+              data-testid={`proposal-row-${prop.id}`}
               className={`rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${toneClasses}`}
             >
               <div className="space-y-1">
@@ -80,22 +103,32 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
                     {t('trip.dayWord')} {prop.dayNumber}
                   </span>
                 </div>
-                <h3 className="text-sm font-semibold">
-                  {prop.type === 'replace' && prop.targetActivityTitle && prop.payload
-                    ? t('diff.swapText', {
-                        from: prop.targetActivityTitle,
-                        to: prop.payload.title,
-                      })
-                    : prop.type === 'remove'
-                    ? t('diff.removeText', { title: prop.targetActivityTitle })
-                    : prop.payload?.title || prop.targetActivityTitle}
-                </h3>
+                <h3 className="text-sm font-semibold">{displayTitle}</h3>
                 <p className="text-xs opacity-90">{prop.reason}</p>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {onOpenDetails && (
+                  <button
+                    type="button"
+                    data-testid={`read-more-prop-${prop.id}`}
+                    aria-label={t('diff.readMoreAria', {
+                      title:
+                        prop.payload?.title ||
+                        prop.accommodationPayload?.name ||
+                        prop.targetActivityTitle ||
+                        '',
+                    })}
+                    onClick={() => onOpenDetails(prop)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white/90 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:border-amber-500 rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    <Info className="w-3.5 h-3.5 text-[#D97706]" aria-hidden="true" />
+                    <span>{t('diff.readMoreBtn')}</span>
+                  </button>
+                )}
                 <button
                   type="button"
+                  data-testid={`accept-prop-${prop.id}`}
                   onClick={() => onAccept(prop.id)}
                   className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-600 rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
                 >
@@ -103,6 +136,7 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
                 </button>
                 <button
                   type="button"
+                  data-testid={`reject-prop-${prop.id}`}
                   onClick={() => onReject(prop.id)}
                   className="px-3 py-1.5 text-xs font-medium text-rose-800 dark:text-rose-200 bg-white/80 dark:bg-slate-800 border border-rose-300 dark:border-rose-700 hover:bg-rose-100 rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
                 >
@@ -116,3 +150,5 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
     </section>
   );
 };
+
+export default React.memo(DiffReviewBanner);

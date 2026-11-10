@@ -8,12 +8,10 @@ function detectInitialLanguage(): Language {
   try {
     const saved = localStorage.getItem('atlasgenie_lang');
     if (saved === 'pt' || saved === 'en') return saved;
-    const nav = navigator.language?.toLowerCase() || '';
-    if (nav.startsWith('pt')) return 'pt';
   } catch {
     // ignore storage errors
   }
-  return 'en';
+  return 'pt';
 }
 
 function detectInitialTheme(): 'light' | 'dark' {
@@ -35,7 +33,7 @@ if (!i18n.isInitialized) {
       'pt-PT': { translation: translations.pt },
     },
     lng: detectInitialLanguage(),
-    fallbackLng: 'en',
+    fallbackLng: 'pt',
     keySeparator: false,
     interpolation: {
       escapeValue: false,

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   APIProvider,
   Map as GoogleMap,
@@ -8,29 +8,74 @@ import {
   useMap,
   useMapsLibrary,
 } from '@vis.gl/react-google-maps';
-import { Activity } from '../types/models';
+import { Activity, DayAccommodation } from '../types/models';
+import { computeActivityBounds, getActiveActivityLocation } from '../utils/worldDestinations';
 
 interface AtlasMapProps {
   activities: Activity[];
+  accommodation?: DayAccommodation;
   selectedActivityId?: string | null;
   onSelectActivity?: (activityId: string) => void;
 }
 
-const RoutePolylineLayer: React.FC<{ activities: Activity[] }> = ({ activities }) => {
+/**
+ * Automatically calculates the bounding box (fitBounds) of all active tier coordinates
+ * and focuses the Google Map tightly on those locations whenever activities or budget variations change.
+ */
+const MapBoundsController: React.FC<{
+  activities: Activity[];
+  selectedTiersKey: string;
+}> = ({ activities, selectedTiersKey }) => {
+  const map = useMap();
+  const markersRegistryRef = useRef<google.maps.Marker[]>([]);
+
+  useEffect(() => {
+    // Clear any existing imperative markers from the map instance before plotting new tier locations
+    markersRegistryRef.current.forEach((m) => m.setMap(null));
+    markersRegistryRef.current = [];
+
+    if (!map || activities.length === 0) return;
+
+    const bounds = computeActivityBounds(activities);
+    map.fitBounds(
+      {
+        north: bounds.north,
+        south: bounds.south,
+        east: bounds.east,
+        west: bounds.west,
+      },
+      { top: 44, right: 44, bottom: 44, left: 44 }
+    );
+
+    return () => {
+      markersRegistryRef.current.forEach((m) => m.setMap(null));
+      markersRegistryRef.current = [];
+    };
+  }, [map, activities, selectedTiersKey]);
+
+  return null;
+};
+
+const RoutePolylineLayer: React.FC<{
+  activities: Activity[];
+  selectedTiersKey: string;
+}> = ({ activities, selectedTiersKey }) => {
   const map = useMap();
   const routesLib = useMapsLibrary('routes');
   const polylinesRef = useRef<google.maps.Polyline[]>([]);
 
   useEffect(() => {
+    // Completely clear existing polylines when activities or active budget tiers change
     polylinesRef.current.forEach((p) => p.setMap(null));
     polylinesRef.current = [];
 
     if (!map || !routesLib || activities.length < 2) return;
 
-    const origin = activities[0].location;
-    const destination = activities[activities.length - 1].location;
-    const intermediates = activities.slice(1, -1).map((a) => ({
-      location: { lat: a.location.lat, lng: a.location.lng },
+    const activeLocations = activities.map((a) => getActiveActivityLocation(a));
+    const origin = activeLocations[0];
+    const destination = activeLocations[activeLocations.length - 1];
+    const intermediates = activeLocations.slice(1, -1).map((loc) => ({
+      location: { lat: loc.lat, lng: loc.lng },
     }));
 
     const RouteClass = (routesLib as any).Route;
@@ -56,13 +101,25 @@ const RoutePolylineLayer: React.FC<{ activities: Activity[] }> = ({ activities }
             });
             polylinesRef.current = lines;
           }
-          if (primaryRoute.viewport) {
-            map.fitBounds(primaryRoute.viewport);
-          }
+          // Re-apply tight city activity bounding box for the active tier coordinates
+          const tightBounds = computeActivityBounds(activities);
+          map.fitBounds(
+            {
+              north: tightBounds.north,
+              south: tightBounds.south,
+              east: tightBounds.east,
+              west: tightBounds.west,
+            },
+            { top: 44, right: 44, bottom: 44, left: 44 }
+          );
         })
         .catch((err: any) => {
           const msg = String(err?.message || err);
-          if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('OVER_QUERY_LIMIT')) {
+          if (
+            msg.includes('429') ||
+            msg.includes('RESOURCE_EXHAUSTED') ||
+            msg.includes('OVER_QUERY_LIMIT')
+          ) {
             window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
           }
         });
@@ -72,49 +129,104 @@ const RoutePolylineLayer: React.FC<{ activities: Activity[] }> = ({ activities }
       polylinesRef.current.forEach((p) => p.setMap(null));
       polylinesRef.current = [];
     };
-  }, [map, routesLib, activities]);
+  }, [map, routesLib, activities, selectedTiersKey]);
 
   return null;
 };
 
 export const AtlasMap: React.FC<AtlasMapProps> = ({
   activities,
+  accommodation,
   selectedActivityId,
   onSelectActivity,
 }) => {
   const [activeInfoId, setActiveInfoId] = useState<string | null>(selectedActivityId || null);
-  const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || '';
+  const rawApiKey = String((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+  const hasValidLiveMapsKey =
+    Boolean(rawApiKey) &&
+    !rawApiKey.startsWith('YOUR_') &&
+    rawApiKey !== 'DEMO_KEY' &&
+    typeof window !== 'undefined' &&
+    !(navigator.userAgent || '').includes('HeadlessChrome');
+
+  // Reactive signature of active budget/variation state across all activities
+  const selectedTiersKey = useMemo(
+    () =>
+      activities
+        .map((a) => {
+          const loc = getActiveActivityLocation(a);
+          return `${a.id}:${a.selectedTier}:${loc.lat},${loc.lng}`;
+        })
+        .join('|'),
+    [activities]
+  );
 
   useEffect(() => {
     if (selectedActivityId) {
       setActiveInfoId(selectedActivityId);
+    } else if (activities.length > 0 && !activities.some((a) => a.id === activeInfoId)) {
+      setActiveInfoId(activities[0].id);
     }
-  }, [selectedActivityId]);
+  }, [selectedActivityId, activities, activeInfoId]);
 
-  const center =
-    activities.length > 0
-      ? { lat: activities[0].location.lat, lng: activities[0].location.lng }
-      : { lat: 38.7139, lng: -9.1334 };
+  const bounds = useMemo(
+    () => computeActivityBounds(activities),
+    [activities, selectedTiersKey]
+  );
+  const center = { lat: bounds.centerLat, lng: bounds.centerLng };
 
-  const activeActivity = activities.find((a) => a.id === activeInfoId);
+  const activeActivity = activities.find((a) => a.id === activeInfoId) || activities[0];
+  const activeActivityLocation = activeActivity
+    ? getActiveActivityLocation(activeActivity)
+    : undefined;
+
+  // Project active tier coordinates into the SVG viewport [0..500, 0..280] using the tight bounding box
+  const projectedStops = useMemo(() => {
+    if (activities.length === 0) return [];
+    if (activities.length === 1) {
+      const loc = getActiveActivityLocation(activities[0]);
+      return [{ act: activities[0], loc, x: 250, y: 140, idx: 0 }];
+    }
+    const spanLng = Math.max(bounds.east - bounds.west, 0.004);
+    const spanLat = Math.max(bounds.north - bounds.south, 0.004);
+
+    return activities.map((act, idx) => {
+      const loc = getActiveActivityLocation(act);
+      const normX = (loc.lng - bounds.west) / spanLng;
+      const normY = (bounds.north - loc.lat) / spanLat;
+      const clampedX = Math.max(0.12, Math.min(0.88, Number.isFinite(normX) ? normX : 0.5));
+      const clampedY = Math.max(0.16, Math.min(0.8, Number.isFinite(normY) ? normY : 0.5));
+      return {
+        act,
+        loc,
+        idx,
+        x: Math.round(55 + clampedX * 390),
+        y: Math.round(35 + clampedY * 185),
+      };
+    });
+  }, [activities, bounds, selectedTiersKey]);
 
   // Interactive Cartographic SVG Atlas Fallback when Maps JS key is absent or in headless/offline mode
-  if (!apiKey) {
+  if (!hasValidLiveMapsKey) {
     return (
       <div
         data-testid="atlas-map-surface"
+        data-bounds-center={`${bounds.centerLat},${bounds.centerLng}`}
+        data-bounds-box={`${bounds.south},${bounds.west},${bounds.north},${bounds.east}`}
+        data-bounds-zoom={bounds.recommendedZoom}
+        data-active-tiers={selectedTiersKey}
         className="relative w-full h-full min-h-[360px] rounded-xl overflow-hidden bg-[#0F172A] text-slate-100 border border-slate-200 dark:border-slate-800 flex flex-col justify-between p-5"
       >
-        <div className="flex items-center justify-between z-10">
+        <div className="flex items-center justify-between z-10 gap-2">
           <div>
             <span className="text-xs font-mono-tabular text-amber-400">
-              Interactive Cartographic Route View
+              City Bounding Box Focus · {bounds.centerLat.toFixed(4)}°, {bounds.centerLng.toFixed(4)}° (Zoom {bounds.recommendedZoom}x)
             </span>
             <h3 className="font-serif-atlas text-base font-semibold text-white">
-              {activities[0]?.location.name || 'European Route Overview'}
+              {activeActivityLocation?.name || activities[0]?.location.name || 'City Route Overview'}
             </h3>
           </div>
-          <span className="text-xs text-slate-300 font-mono-tabular">
+          <span className="text-xs text-slate-300 font-mono-tabular shrink-0">
             {activities.length} numbered stops
           </span>
         </div>
@@ -139,34 +251,26 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
           <rect width="500" height="280" fill="url(#atlasGrid)" rx="12" />
 
           {/* Connecting route line */}
-          {activities.length > 1 && (
+          {projectedStops.length > 1 && (
             <polyline
               fill="none"
               stroke="#D97706"
               strokeWidth="3"
               strokeDasharray="6 4"
-              points={activities
-                .map((_, idx) => {
-                  const x = 70 + (idx * 360) / Math.max(1, activities.length - 1);
-                  const y = idx % 2 === 0 ? 95 : 185;
-                  return `${x},${y}`;
-                })
-                .join(' ')}
+              points={projectedStops.map((p) => `${p.x},${p.y}`).join(' ')}
             />
           )}
 
           {/* Numbered Pins */}
-          {activities.map((act, idx) => {
-            const x =
-              activities.length === 1
-                ? 250
-                : 70 + (idx * 360) / Math.max(1, activities.length - 1);
-            const y = idx % 2 === 0 ? 95 : 185;
-            const isSelected = act.id === activeInfoId;
+          {projectedStops.map(({ act, loc, x, y, idx }) => {
+            const isSelected = act.id === activeActivity?.id;
 
             return (
               <g
-                key={act.id}
+                key={`${act.id}-${act.selectedTier}-${loc.lat}-${loc.lng}`}
+                data-testid={`map-pin-${act.id}`}
+                data-pin-tier={act.selectedTier}
+                data-pin-coords={`${loc.lat},${loc.lng}`}
                 onClick={() => {
                   setActiveInfoId(act.id);
                   onSelectActivity?.(act.id);
@@ -205,13 +309,19 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
           })}
         </svg>
 
-        {activeActivity && (
+        {activeActivity && activeActivityLocation && (
           <div className="z-10 bg-slate-900/90 border border-slate-700 rounded-lg p-3 flex items-center justify-between gap-4">
             <div>
               <p className="text-xs font-mono-tabular text-amber-400">
-                {activeActivity.startTime} · {activeActivity.location.name}
+                {activeActivity.startTime} · {activeActivityLocation.name} (
+                {activeActivityLocation.lat.toFixed(4)}°, {activeActivityLocation.lng.toFixed(4)}°)
               </p>
               <p className="text-sm font-semibold text-white">{activeActivity.title}</p>
+              {accommodation && (
+                <p className="text-[11px] font-mono-tabular text-teal-300 mt-0.5">
+                  🛏 {accommodation.name}
+                </p>
+              )}
             </div>
             <span className="text-xs font-mono-tabular text-slate-300 shrink-0">
               {activeActivity.priceConfidence.status === 'verified' ? '' : '~'}
@@ -226,46 +336,62 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
   return (
     <div
       data-testid="atlas-map-surface"
+      data-bounds-center={`${bounds.centerLat},${bounds.centerLng}`}
+      data-bounds-box={`${bounds.south},${bounds.west},${bounds.north},${bounds.east}`}
+      data-bounds-zoom={bounds.recommendedZoom}
+      data-active-tiers={selectedTiersKey}
       className="relative w-full h-full min-h-[380px] rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800"
     >
-      <APIProvider apiKey={apiKey} libraries={['marker', 'routes']}>
+      <APIProvider apiKey={rawApiKey} libraries={['marker', 'routes']}>
         <GoogleMap
           style={{ width: '100%', height: '100%', minHeight: '380px' }}
           defaultCenter={center}
-          defaultZoom={13}
+          defaultZoom={bounds.recommendedZoom}
+          minZoom={10}
+          maxZoom={17}
           mapId="DEMO_MAP_ID"
           gestureHandling="greedy"
           disableDefaultUI={false}
           internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
         >
-          <RoutePolylineLayer activities={activities} />
+          <MapBoundsController
+            activities={activities}
+            selectedTiersKey={selectedTiersKey}
+          />
+          <RoutePolylineLayer
+            activities={activities}
+            selectedTiersKey={selectedTiersKey}
+          />
 
-          {activities.map((act, idx) => (
-            <AdvancedMarker
-              key={act.id}
-              position={{ lat: act.location.lat, lng: act.location.lng }}
-              title={`${idx + 1}. ${act.title}`}
-              onClick={() => {
-                setActiveInfoId(act.id);
-                onSelectActivity?.(act.id);
-              }}
-            >
-              <Pin
-                background={activeInfoId === act.id ? '#0D9488' : '#D97706'}
-                borderColor="#0F172A"
-                glyphColor="#FFFFFF"
-                scale={1.15}
+          {activities.map((act, idx) => {
+            const loc = getActiveActivityLocation(act);
+            return (
+              <AdvancedMarker
+                key={`${act.id}-${act.selectedTier}-${loc.lat}-${loc.lng}`}
+                position={{ lat: loc.lat, lng: loc.lng }}
+                title={`${idx + 1}. ${act.title} (${loc.name})`}
+                onClick={() => {
+                  setActiveInfoId(act.id);
+                  onSelectActivity?.(act.id);
+                }}
               >
-                {String(idx + 1)}
-              </Pin>
-            </AdvancedMarker>
-          ))}
+                <Pin
+                  background={activeInfoId === act.id ? '#0D9488' : '#D97706'}
+                  borderColor="#0F172A"
+                  glyphColor="#FFFFFF"
+                  scale={1.15}
+                >
+                  {String(idx + 1)}
+                </Pin>
+              </AdvancedMarker>
+            );
+          })}
 
-          {activeActivity && (
+          {activeActivity && activeActivityLocation && (
             <InfoWindow
               position={{
-                lat: activeActivity.location.lat,
-                lng: activeActivity.location.lng,
+                lat: activeActivityLocation.lat,
+                lng: activeActivityLocation.lng,
               }}
               onCloseClick={() => setActiveInfoId(null)}
             >
@@ -274,7 +400,7 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
                   {activeActivity.startTime} · {activeActivity.durationMin} min
                 </p>
                 <p className="text-sm font-semibold mt-0.5">{activeActivity.title}</p>
-                <p className="text-xs text-slate-600 mt-1">{activeActivity.location.name}</p>
+                <p className="text-xs text-slate-600 mt-1">{activeActivityLocation.name}</p>
               </div>
             </InfoWindow>
           )}
@@ -283,3 +409,6 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
     </div>
   );
 };
+
+export default React.memo(AtlasMap);
+

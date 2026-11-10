@@ -1,19 +1,52 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Sparkles, Plus, Copy, Trash2, Users, Calendar, Compass, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAtlas } from '../context/AtlasContext';
+import { getUserTrips } from '../firebase';
 import { computeReliabilitySummary } from '../utils/domainLogic';
 import { FullTripBundle } from '../types/models';
 
 export const DashboardPage: React.FC = () => {
-  const { trips, deleteTrip, duplicateTrip, currentUser, isDemoMode, enableDemoMode } = useAtlas();
+  const {
+    deleteTrip,
+    duplicateTrip,
+    registerFetchedTrips,
+    currentUser,
+    authReady,
+    isDemoMode,
+    enableDemoMode,
+  } = useAtlas();
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [joinCodeInput, setJoinCodeInput] = useState('');
-  const [viewMode, setViewMode] = useState<'all' | 'empty-preview'>('all');
 
-  const allBundles = Object.values(trips) as FullTripBundle[];
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+  const [userTrips, setUserTrips] = useState<FullTripBundle[]>([]);
+  const [loadingTrips, setLoadingTrips] = useState<boolean>(true);
+
+  const loadTripsFromFirestore = useCallback(async () => {
+    if (!authReady) return;
+    setLoadingTrips(true);
+    try {
+      if (currentUser?.uid) {
+        const fetched = await getUserTrips(currentUser.uid);
+        setUserTrips(fetched);
+        registerFetchedTrips(fetched);
+      } else {
+        const fetchedGuest = await getUserTrips('');
+        setUserTrips(fetchedGuest);
+      }
+    } catch (err) {
+      console.error('Failed to fetch user trips:', err);
+      setUserTrips([]);
+    } finally {
+      setLoadingTrips(false);
+    }
+  }, [authReady, currentUser?.uid]);
+
+  useEffect(() => {
+    loadTripsFromFirestore();
+  }, [loadTripsFromFirestore]);
 
   const getCountdownText = (startDate: string) => {
     const now = new Date();
@@ -29,8 +62,26 @@ export const DashboardPage: React.FC = () => {
     navigate(`/join/${encodeURIComponent(joinCodeInput.trim().toUpperCase())}`);
   };
 
+  const handleDeleteSavedTrip = async (tripId: string) => {
+    await deleteTrip(tripId);
+    setUserTrips((prev) => prev.filter((b) => b.trip.id !== tripId));
+    if (currentUser?.uid) {
+      try {
+        const remaining = userTrips.filter((b) => b.trip.id !== tripId);
+        localStorage.setItem(`atlasgenie_user_trips_${currentUser.uid}`, JSON.stringify(remaining));
+      } catch {
+        // ignore storage errors
+      }
+    }
+  };
+
+  const handleDuplicateSavedTrip = async (tripId: string) => {
+    const newId = await duplicateTrip(tripId);
+    navigate(`/trips/${newId}`);
+  };
+
   // Protected Route Guard if neither signed in nor in Demo Mode
-  if (!currentUser && !isDemoMode) {
+  if (authReady && !currentUser && !isDemoMode) {
     return (
       <main className="max-w-xl mx-auto px-4 py-20 text-center space-y-6">
         <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 space-y-4 shadow-sm">
@@ -44,14 +95,14 @@ export const DashboardPage: React.FC = () => {
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <Link
               to="/login"
-              className="px-5 py-2.5 text-xs font-semibold text-white bg-[#0F172A] rounded-lg hover:bg-slate-800"
+              className="px-5 py-2.5 text-xs font-semibold text-white bg-[#0F172A] rounded-lg hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               {t('nav.login')}
             </Link>
             <button
               type="button"
               onClick={enableDemoMode}
-              className="px-5 py-2.5 text-xs font-semibold text-white bg-[#D97706] rounded-lg hover:bg-amber-600 cursor-pointer"
+              className="px-5 py-2.5 text-xs font-semibold text-white bg-[#D97706] rounded-lg hover:bg-amber-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               {t('dash.unlockDemoBtn')}
             </button>
@@ -61,59 +112,27 @@ export const DashboardPage: React.FC = () => {
     );
   }
 
-  const displayedTrips = viewMode === 'empty-preview' ? [] : allBundles;
-
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-8 py-10 space-y-10">
-      {/* Protected Dashboard Header & Controls */}
+    <main className="max-w-7xl mx-auto px-0 md:px-8 py-6 md:py-10 space-y-8 md:space-y-10">
+      {/* Dashboard Header & Controls */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-slate-200 dark:border-slate-800">
         <div className="space-y-1.5">
-          <div className="inline-flex items-center gap-2 text-xs font-mono-tabular uppercase tracking-wider text-amber-700 dark:text-amber-400">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>
+          <div className="inline-flex flex-wrap items-center gap-2 text-xs font-mono-tabular uppercase tracking-wider text-amber-700 dark:text-amber-400">
+            <ShieldCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span className="break-all sm:break-normal">
               {currentUser
                 ? `${t('dash.privateBadge')} · ${currentUser.email || currentUser.displayName}`
                 : t('dash.protectedDemoBadge')}
             </span>
           </div>
-          <h1 className="font-serif-atlas text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white">
+          <h1 className="font-serif-atlas text-xl sm:text-3xl md:text-4xl font-bold text-slate-900 dark:text-white">
             {t('dash.title')}
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-400">{t('dash.subtitle')}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Toggle to let the user inspect both the Trip Grid and the "Make your first wish" Empty State */}
-          <div
-            role="group"
-            aria-label={t('dash.title')}
-            className="inline-flex items-center p-1 rounded-lg bg-slate-200/70 dark:bg-slate-800 text-xs font-medium"
-          >
-            <button
-              type="button"
-              onClick={() => setViewMode('all')}
-              className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
-                viewMode === 'all'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-              }`}
-            >
-              {t('dash.tripCardsTab', { count: allBundles.length })}
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('empty-preview')}
-              className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
-                viewMode === 'empty-preview'
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-              }`}
-            >
-              {t('dash.emptyStateTab')}
-            </button>
-          </div>
-
-          <form onSubmit={handleJoinSubmit} className="flex items-center gap-2">
+          <form onSubmit={handleJoinSubmit} className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <label htmlFor="join-code-input" className="sr-only">
               {t('group.inviteCode')}
             </label>
@@ -123,11 +142,11 @@ export const DashboardPage: React.FC = () => {
               value={joinCodeInput}
               onChange={(e) => setJoinCodeInput(e.target.value)}
               placeholder={t('dash.invitePlaceholder')}
-              className="px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono-tabular"
+              className="flex-1 sm:flex-initial px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
             <button
               type="submit"
-              className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+              className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               {t('dash.joinGroupBtn')}
             </button>
@@ -135,22 +154,57 @@ export const DashboardPage: React.FC = () => {
 
           <Link
             to="/trips/new"
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors whitespace-nowrap shadow-sm"
+            className="inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-4 py-2.5 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors whitespace-nowrap shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4" aria-hidden="true" />
             <span>{t('dash.createBtn')}</span>
           </Link>
         </div>
       </div>
 
-      {/* Empty State ("Make your first wish") OR Grid of Trip Cards */}
-      {displayedTrips.length === 0 ? (
+      {/* 1. Loading Skeleton while fetching from Firestore */}
+      {(!authReady || loadingTrips) ? (
+        <section
+          aria-busy="true"
+          aria-label={t('dash.loadingTrips')}
+          data-testid="dashboard-loading-skeleton"
+          className="space-y-4"
+        >
+          <p className="text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
+            {t('dash.loadingTrips')}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map((n) => (
+              <div
+                key={n}
+                className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-5 animate-pulse shadow-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="h-5 w-28 rounded-md bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-5 w-24 rounded-md bg-emerald-100/70 dark:bg-slate-800" />
+                </div>
+                <div className="space-y-2">
+                  <div className="h-7 w-3/5 rounded-lg bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-4 w-4/5 rounded bg-slate-100 dark:bg-slate-800" />
+                </div>
+                <div className="grid grid-cols-2 gap-2 p-3 rounded-xl bg-[#FAF6F0]/60 dark:bg-slate-800/50">
+                  <div className="h-8 rounded bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-8 rounded bg-slate-200 dark:bg-slate-700" />
+                </div>
+                <div className="h-9 w-full rounded-lg bg-slate-200 dark:bg-slate-800 pt-4" />
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : userTrips.length === 0 ? (
+        /* 2. Premium Empty State when the user has no saved trips */
         <section
           aria-labelledby="empty-wish-heading"
+          data-testid="dashboard-empty-state"
           className="rounded-2xl bg-white dark:bg-slate-900 border-2 border-dashed border-amber-300/80 dark:border-slate-700 p-10 sm:p-14 text-center space-y-6 max-w-3xl mx-auto my-6"
         >
           <div className="w-16 h-16 rounded-2xl bg-amber-50 dark:bg-slate-800 border border-amber-200 dark:border-slate-700 flex items-center justify-center mx-auto text-[#D97706]">
-            <Sparkles className="w-8 h-8" />
+            <Sparkles className="w-8 h-8" aria-hidden="true" />
           </div>
 
           <svg viewBox="0 0 240 60" className="w-52 h-14 mx-auto" aria-hidden="true">
@@ -175,36 +229,38 @@ export const DashboardPage: React.FC = () => {
               id="empty-wish-heading"
               className="font-serif-atlas text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white"
             >
-              {t('dash.emptyTitle')}
+              {t('dash.noSavedTripsTitle')}
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-              {t('dash.emptyDesc')}
+              {t('dash.noSavedTripsSub')}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <Link
               to="/trips/new"
-              className="inline-flex items-center gap-2 px-6 py-3 text-xs sm:text-sm font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors shadow-sm"
+              className="inline-flex items-center gap-2 px-6 py-3 text-xs sm:text-sm font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
-              <Compass className="w-4 h-4" />
-              <span>{t('dash.makeFirstWishBtn')}</span>
+              <Compass className="w-4 h-4" aria-hidden="true" />
+              <span>{t('dash.startPlanningBtn')}</span>
             </Link>
-            {viewMode === 'empty-preview' && (
-              <button
-                type="button"
-                onClick={() => setViewMode('all')}
-                className="px-5 py-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-              >
-                {t('dash.showExistingBtn', { count: allBundles.length })}
-              </button>
-            )}
+            <Link
+              to="/demo"
+              className="px-5 py-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              {t('hero.viewAllDemos')}
+            </Link>
           </div>
         </section>
       ) : (
-        <section aria-label={t('dash.title')} className="space-y-5">
+        /* 3. Clean Grid of Saved Trip Cards */
+        <section
+          aria-label={t('dash.title')}
+          data-testid="dashboard-trips-grid"
+          className="space-y-5"
+        >
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {displayedTrips.map((bundle) => {
+            {userTrips.map((bundle) => {
               const rel = computeReliabilitySummary(bundle.days);
               const totalStops = bundle.days.reduce((acc, d) => acc + d.activities.length, 0);
 
@@ -226,17 +282,19 @@ export const DashboardPage: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* Destination & Country */}
+                    {/* Destination & Dates */}
                     <div>
                       <h2 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white">
                         {bundle.trip.destination}
                         {bundle.trip.country ? `, ${bundle.trip.country}` : ''}
                       </h2>
                       <p className="text-xs font-mono-tabular text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-amber-600" />
+                        <Calendar className="w-3.5 h-3.5 text-amber-600" aria-hidden="true" />
                         <span>
-                          {bundle.trip.startDate} → {bundle.trip.endDate} ({bundle.days.length}{' '}
-                          {t('hero.days')} · {totalStops} {t('dash.stops')})
+                          {bundle.trip.startDate} → {bundle.trip.endDate}
+                          {bundle.days.length > 0
+                            ? ` (${bundle.days.length} ${t('hero.days')} · ${totalStops} ${t('dash.stops')})`
+                            : ''}
                         </span>
                       </p>
                     </div>
@@ -256,7 +314,7 @@ export const DashboardPage: React.FC = () => {
                           {t('dash.groupSizeLabel')}
                         </p>
                         <p className="font-semibold text-slate-900 dark:text-white flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5 text-teal-600" />
+                          <Users className="w-3.5 h-3.5 text-teal-600" aria-hidden="true" />
                           <span>
                             {bundle.trip.travelersCount}{' '}
                             {bundle.trip.groupEnabled
@@ -285,33 +343,28 @@ export const DashboardPage: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => navigate(`/trips/${bundle.trip.id}`)}
-                      className="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg hover:bg-slate-800 dark:hover:bg-amber-500 transition-colors cursor-pointer"
+                      className="flex-1 py-2.5 px-3 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg hover:bg-slate-800 dark:hover:bg-amber-500 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
                     >
-                      {t('dash.openTrip')} →
+                      {t('dash.viewFullItineraryBtn')} →
                     </button>
                     <button
                       type="button"
-                      onClick={async () => {
-                        const newId = await duplicateTrip(bundle.trip.id);
-                        navigate(`/trips/${newId}`);
-                      }}
+                      onClick={() => handleDuplicateSavedTrip(bundle.trip.id)}
                       title={t('dash.duplicate')}
                       aria-label={`${t('dash.duplicate')} ${bundle.trip.destination}`}
-                      className="p-2.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
+                      className="p-2.5 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
                     >
-                      <Copy className="w-4 h-4" />
+                      <Copy className="w-4 h-4" aria-hidden="true" />
                     </button>
-                    {!bundle.trip.isDemo && (
-                      <button
-                        type="button"
-                        onClick={() => deleteTrip(bundle.trip.id)}
-                        title={t('dash.delete')}
-                        aria-label={`${t('dash.delete')} ${bundle.trip.destination}`}
-                        className="p-2.5 text-xs font-medium text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 rounded-lg hover:bg-rose-100 transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSavedTrip(bundle.trip.id)}
+                      title={t('dash.delete')}
+                      aria-label={`${t('dash.delete')} ${bundle.trip.destination}`}
+                      className="p-2.5 text-xs font-medium text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 rounded-lg hover:bg-rose-100 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    </button>
                   </div>
                 </article>
               );

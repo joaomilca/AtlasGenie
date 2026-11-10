@@ -36,7 +36,7 @@ export const Footer: React.FC<FooterProps> = ({ onOpenSupport }) => {
 
   return (
     <footer className="print:hidden bg-[#0F172A] text-slate-300 border-t border-slate-800 mt-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12 sm:py-14">
+      <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-12 pb-24 md:py-14">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start lg:items-center justify-between pb-10 border-b border-slate-800/90">
           {/* Brand Wordmark & Short Tagline */}
           <div className="lg:col-span-5 space-y-2.5">

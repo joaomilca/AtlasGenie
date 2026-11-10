@@ -181,6 +181,7 @@ export const GuidedTourOverlay: React.FC<GuidedTourOverlayProps> = ({
         <div className="flex items-center justify-between pt-2 border-t border-slate-800">
           <button
             type="button"
+            data-testid="guided-tour-skip"
             onClick={onClose}
             className="text-xs font-medium text-slate-400 hover:text-white cursor-pointer"
           >
@@ -219,3 +220,6 @@ export const GuidedTourOverlay: React.FC<GuidedTourOverlayProps> = ({
     </div>
   );
 };
+
+export default GuidedTourOverlay;
+

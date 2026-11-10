@@ -1,11 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Trash2 } from 'lucide-react';
 import {
   ExpenseCategory,
   ExpenseSplitMode,
   FullTripBundle,
 } from '../types/models';
-import { computeExpenseBalancesAndSettlement } from '../utils/domainLogic';
+import {
+  computeExpenseBalancesAndSettlement,
+  groupExpensesByPayer,
+} from '../utils/domainLogic';
 import { useAtlas } from '../context/AtlasContext';
 
 interface ExpensesTabViewProps {
@@ -18,7 +22,8 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
   preselectedActivityId = '',
 }) => {
   const { t } = useTranslation();
-  const { addExpense, toggleExpenseSettled, showToast } = useAtlas();
+  const { addExpense, deleteExpense: deleteExpenseFromContext, toggleExpenseSettled, showToast } =
+    useAtlas();
 
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState<number>(30);
@@ -38,6 +43,16 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
     () => computeExpenseBalancesAndSettlement(bundle.expenses, bundle.travelers),
     [bundle.expenses, bundle.travelers]
   );
+
+  // Sprint 12.2: Transform flat expenses array into a grouped object by paidBy using .reduce()
+  const groupedExpensesByPerson = useMemo(
+    () => groupExpensesByPayer(bundle.expenses, bundle.travelers),
+    [bundle.expenses, bundle.travelers]
+  );
+
+  const deleteExpense = (id: string) => {
+    void deleteExpenseFromContext(bundle.trip.id, id);
+  };
 
   const allActivities = useMemo(
     () => bundle.days.flatMap((d) => d.activities),
@@ -131,17 +146,17 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
   return (
     <div className="space-y-8">
       {/* Header & Export Actions */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white">
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="font-serif-atlas text-xl md:text-2xl font-bold text-slate-900 dark:text-white break-words">
             {t('expenses.title')}
           </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
             {t('expenses.noPaymentNote')}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={handleCopySummary}
@@ -161,17 +176,17 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
 
       {/* Net Balances & Minimised Settle-Up Plan */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-          <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
+        <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4">
+          <h3 className="font-serif-atlas text-base md:text-lg font-semibold text-slate-900 dark:text-white">
             {t('expenses.balancesTitle')}
           </h3>
           <div className="space-y-2 text-xs">
             {summary.balances.map((b) => (
               <div
                 key={b.travelerId}
-                className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800"
+                className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-slate-100 dark:border-slate-800"
               >
-                <div>
+                <div className="min-w-0">
                   <span className="font-semibold text-sm">{b.displayName}</span>
                   <span className="text-slate-500 ml-2 font-mono-tabular">
                     ({t('expenses.paid')} €{b.paidTotal.toFixed(2)} · {t('expenses.share')} €
@@ -194,8 +209,8 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
           </div>
         </section>
 
-        <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-          <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
+        <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4">
+          <h3 className="font-serif-atlas text-base md:text-lg font-semibold text-slate-900 dark:text-white">
             {t('expenses.settleTitle')}
           </h3>
           {summary.settlements.length === 0 ? (
@@ -205,7 +220,7 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
               {summary.settlements.map((s, idx) => (
                 <li
                   key={idx}
-                  className="p-3 rounded-lg bg-[#FAF6F0] dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
+                  className="p-3 rounded-lg bg-[#FAF6F0] dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2"
                 >
                   <span>
                     <strong>{s.fromName}</strong> {t('expenses.pays')}{' '}
@@ -222,8 +237,8 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
       </div>
 
       {/* Add Expense Form */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-        <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4">
+        <h3 className="font-serif-atlas text-base md:text-lg font-semibold text-slate-900 dark:text-white">
           {t('expenses.addBtn')}
         </h3>
         <form onSubmit={handleAddExpense} className="space-y-4">
@@ -371,51 +386,91 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
         </form>
       </section>
 
-      {/* Recorded Expenses List */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-        <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
+      {/* Recorded Expenses List Grouped by Person */}
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4">
+        <h3 className="font-serif-atlas text-base md:text-lg font-semibold text-slate-900 dark:text-white">
           {t('expenses.recordedTitle', { count: bundle.expenses.length })}
         </h3>
-        <div className="space-y-2.5">
-          {bundle.expenses.map((exp) => {
-            const payerName =
-              bundle.travelers.find((tr) => tr.id === exp.paidBy)?.displayName || exp.paidBy;
-            return (
-              <div
-                key={exp.id}
-                className="p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                    {exp.description}
-                  </p>
-                  <p className="text-xs text-slate-500 font-mono-tabular">
-                    {t('expenses.paidByPrefix')} {payerName} ·{' '}
-                    {t(`interest.${exp.category}`, { defaultValue: exp.category })} ·{' '}
-                    {t('expenses.splitPrefix')} {exp.splitMode}
-                  </p>
-                </div>
+        {Object.keys(groupedExpensesByPerson).length === 0 ? (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {t('expenses.allSettled')}
+          </p>
+        ) : (
+          <div data-testid="expenses-grouped-by-person" className="space-y-4">
+            {Object.entries(groupedExpensesByPerson).map(([personName, personExpenses]) => {
+              const personSubtotal = personExpenses.reduce((sum, item) => sum + item.amount, 0);
+              return (
+                <div
+                  key={personName}
+                  data-testid={`expense-person-group-${personName}`}
+                  className="rounded-xl border border-slate-200 dark:border-slate-800 bg-[#FAF6F0]/60 dark:bg-slate-950/50 p-4 space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/80 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-serif-atlas text-sm md:text-base font-bold text-slate-900 dark:text-white">
+                        {personName}
+                      </h4>
+                      <span className="text-[11px] font-mono-tabular px-2 py-0.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                        {personExpenses.length}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono-tabular font-semibold text-slate-700 dark:text-slate-300">
+                      {t('expenses.paid')} €{personSubtotal.toFixed(2)}
+                    </span>
+                  </div>
 
-                <div className="flex items-center gap-3">
-                  <span className="font-mono-tabular text-sm font-bold">
-                    €{exp.amount.toFixed(2)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => toggleExpenseSettled(bundle.trip.id, exp.id)}
-                    className={`px-3 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
-                      exp.settled
-                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
-                    }`}
-                  >
-                    {exp.settled ? `✓ ${t('expenses.settled')}` : t('expenses.markSettled')}
-                  </button>
+                  <div className="space-y-2.5">
+                    {personExpenses.map((exp) => (
+                      <div
+                        key={exp.id}
+                        data-testid={`expense-row-${exp.id}`}
+                        className="p-3.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white break-words">
+                            {exp.description}
+                          </p>
+                          <p className="text-xs text-slate-500 font-mono-tabular break-words">
+                            {exp.date} · {t('expenses.paidByPrefix')} {personName} ·{' '}
+                            {t(`interest.${exp.category}`, { defaultValue: exp.category })} ·{' '}
+                            {t('expenses.splitPrefix')} {exp.splitMode}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                          <span className="font-mono-tabular text-sm font-bold">
+                            €{exp.amount.toFixed(2)}
+                          </span>
+                          <button
+                            type="button"
+                            data-testid={`toggle-settled-${exp.id}`}
+                            onClick={() => toggleExpenseSettled(bundle.trip.id, exp.id)}
+                            className={`px-3 py-1 text-xs font-medium rounded-md border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                              exp.settled
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                            }`}
+                          >
+                            {exp.settled ? `✓ ${t('expenses.settled')}` : t('expenses.markSettled')}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`delete-expense-${exp.id}`}
+                            aria-label={`Delete expense ${exp.description}`}
+                            onClick={() => deleteExpense(exp.id)}
+                            className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 hover:text-rose-600 hover:border-rose-300 dark:hover:text-rose-400 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-rose-500"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </div>
   );

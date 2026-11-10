@@ -18,6 +18,7 @@ import {
   Activity,
   BudgetTier,
   Day,
+  DayAccommodation,
   Expense,
   FullTripBundle,
   ProposalChange,
@@ -26,9 +27,16 @@ import {
 } from '../types/models';
 import { DEMO_TRIPS } from '../data/demoTrips';
 import {
+  BudgetOptimizationChange,
+  applySelectedBudgetProposalsToDays,
   applySingleProposalChange,
+  computeCurrentItineraryTotal,
   computePaceMetrics,
+  computeTripTotalCost,
+  deduplicateAndMergeProposals,
+  getProposalTargetKey,
   recalculateDayTravelTimes,
+  removeExpenseById,
 } from '../utils/domainLogic';
 import { i18n } from '../i18n/I18nContext';
 
@@ -57,6 +65,7 @@ interface AtlasContextValue {
   activeTravelerIdByTrip: Record<string, string>;
   setActiveTravelerId: (tripId: string, travelerId: string) => void;
   saveTripBundle: (bundle: FullTripBundle) => Promise<void>;
+  registerFetchedTrips: (bundles: FullTripBundle[]) => void;
   deleteTrip: (tripId: string) => Promise<void>;
   duplicateTrip: (tripId: string) => Promise<string>;
   addProposals: (tripId: string, newProposals: ProposalChange[]) => void;
@@ -67,10 +76,14 @@ interface AtlasContextValue {
   undoLastChange: (tripId: string) => Promise<void>;
   togglePlanB: (tripId: string, dayId: string) => Promise<void>;
   updateDayActivities: (tripId: string, dayId: string, activities: Activity[], paceLevel?: number) => Promise<void>;
+  updateDayAccommodation: (tripId: string, dayId: string, accommodation: DayAccommodation) => Promise<void>;
+  setGlobalTripTier: (tripId: string, tier: BudgetTier) => Promise<void>;
   applyBudgetSelections: (tripId: string, newTotalBudget: number, selections: Record<string, BudgetTier>) => Promise<void>;
+  applySelectedBudgetProposals: (tripId: string, proposals: BudgetOptimizationChange[]) => Promise<void>;
   castVote: (tripId: string, dayId: string, activityId: string, travelerId: string, vote: VoteValue) => Promise<void>;
   addTraveler: (tripId: string, traveler: Omit<Traveler, 'id' | 'tripId' | 'ownerId'>) => Promise<Traveler>;
   addExpense: (tripId: string, expense: Omit<Expense, 'id' | 'tripId' | 'ownerId' | 'authorId'>) => Promise<void>;
+  deleteExpense: (tripId: string, expenseId: string) => Promise<void>;
   toggleExpenseSettled: (tripId: string, expenseId: string) => Promise<void>;
   findTripByInviteCode: (inviteCode: string) => FullTripBundle | undefined;
   toastMessage: string | null;
@@ -164,29 +177,38 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           } else {
             setTrips((prev) => {
               const existing = prev[tripId];
+              const nestedTrip = tripData.trip && typeof tripData.trip === 'object' ? tripData.trip : {};
               return {
                 ...prev,
                 [tripId]: {
                   trip: {
-                    id: tripData.id,
-                    ownerId: tripData.ownerId,
-                    destination: tripData.destination,
-                    startDate: tripData.startDate,
-                    endDate: tripData.endDate,
-                    currency: tripData.currency,
-                    totalBudget: tripData.totalBudget,
-                    travelersCount: tripData.travelersCount,
-                    interests: tripData.interests || [],
-                    defaultPace: tripData.defaultPace || 3,
-                    status: tripData.status || 'planned',
-                    memberIds: tripData.memberIds || [currentUser.uid],
-                    inviteCode: tripData.inviteCode || 'ATLAS1',
-                    assumptions: tripData.assumptions || [],
-                    groupEnabled: Boolean(tripData.groupEnabled),
+                    id: tripId,
+                    ownerId: tripData.userId || tripData.ownerId || nestedTrip.ownerId || currentUser.uid,
+                    destination: tripData.destination || nestedTrip.destination || 'Lisbon',
+                    country: tripData.country || nestedTrip.country,
+                    startDate: tripData.startDate || nestedTrip.startDate || '2026-05-14',
+                    endDate: tripData.endDate || nestedTrip.endDate || '2026-05-17',
+                    currency: tripData.currency || nestedTrip.currency || 'EUR',
+                    totalBudget: Number(tripData.totalBudget ?? nestedTrip.totalBudget ?? 800),
+                    travelersCount: Number(tripData.travelersCount ?? nestedTrip.travelersCount ?? 2),
+                    interests: tripData.interests || nestedTrip.interests || [],
+                    defaultPace: tripData.defaultPace || nestedTrip.defaultPace || 3,
+                    status: tripData.status || nestedTrip.status || 'planned',
+                    memberIds: tripData.memberIds || nestedTrip.memberIds || [currentUser.uid],
+                    inviteCode: tripData.inviteCode || nestedTrip.inviteCode || 'ATLAS1',
+                    assumptions: tripData.assumptions || nestedTrip.assumptions || [],
+                    groupEnabled: Boolean(tripData.groupEnabled ?? nestedTrip.groupEnabled),
+                    isDemo: false,
                   },
-                  days: existing?.days || [],
-                  travelers: existing?.travelers || [],
-                  expenses: existing?.expenses || [],
+                  days: Array.isArray(tripData.days) && tripData.days.length > 0 ? tripData.days : existing?.days || [],
+                  travelers:
+                    Array.isArray(tripData.travelers) && tripData.travelers.length > 0
+                      ? tripData.travelers
+                      : existing?.travelers || [],
+                  expenses:
+                    Array.isArray(tripData.expenses) && tripData.expenses.length > 0
+                      ? tripData.expenses
+                      : existing?.expenses || [],
                 },
               };
             });
@@ -194,7 +216,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, tripsPath);
+        console.warn('Firestore snapshot listener notice:', error);
       }
     );
 
@@ -210,6 +232,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         doc(db, 'trips', tripId),
         {
           id: bundle.trip.id,
+          userId: bundle.trip.ownerId,
           ownerId: bundle.trip.ownerId,
           destination: bundle.trip.destination.slice(0, 120),
           startDate: bundle.trip.startDate.slice(0, 32),
@@ -268,6 +291,19 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await syncBundleToFirestore(bundle);
   };
 
+  const registerFetchedTrips = (bundles: FullTripBundle[]) => {
+    if (!bundles || bundles.length === 0) return;
+    setTrips((prev) => {
+      const next = { ...prev };
+      for (const b of bundles) {
+        if (b && b.trip && b.trip.id) {
+          next[b.trip.id] = b;
+        }
+      }
+      return next;
+    });
+  };
+
   const deleteTrip = async (tripId: string) => {
     const target = trips[tripId];
     setTrips((prev) => {
@@ -305,18 +341,29 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addProposals = (tripId: string, newProposals: ProposalChange[]) => {
     setProposalsByTrip((prev) => ({
       ...prev,
-      [tripId]: [...(prev[tripId] || []), ...newProposals],
+      [tripId]: deduplicateAndMergeProposals(
+        prev[tripId] || [],
+        newProposals,
+        trips[tripId]?.days
+      ),
     }));
   };
 
   const acceptProposal = async (tripId: string, proposalId: string) => {
-    const bundle = trips[tripId];
     const list = proposalsByTrip[tripId] || [];
     const proposal = list.find((p) => p.id === proposalId);
-    if (!bundle || !proposal) return;
+    const currentBundle = trips[tripId];
+    if (!currentBundle || !proposal) return;
 
-    const snapshotDays = JSON.parse(JSON.stringify(bundle.days)) as Day[];
-    const updatedDays = applySingleProposalChange(bundle.days, proposal);
+    const acceptedKey = getProposalTargetKey(proposal);
+    const snapshotDays = JSON.parse(JSON.stringify(currentBundle.days)) as Day[];
+
+    setProposalsByTrip((prev) => ({
+      ...prev,
+      [tripId]: (prev[tripId] || []).filter(
+        (p) => p.id !== proposalId && getProposalTargetKey(p) !== acceptedKey
+      ),
+    }));
 
     setUndoHistoryByTrip((prev) => ({
       ...prev,
@@ -330,16 +377,27 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ],
     }));
 
-    const nextBundle: FullTripBundle = {
-      ...bundle,
-      days: updatedDays,
-    };
-    setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
-    setProposalsByTrip((prev) => ({
-      ...prev,
-      [tripId]: (prev[tripId] || []).filter((p) => p.id !== proposalId),
-    }));
-    await syncBundleToFirestore(nextBundle);
+    let syncedBundle: FullTripBundle | null = null;
+    setTrips((prev) => {
+      const targetBundle = prev[tripId];
+      if (!targetBundle) return prev;
+      const updatedDays = applySingleProposalChange(targetBundle.days, proposal);
+      const recomputedTotal = computeTripTotalCost(updatedDays).total;
+      const nextBundle: FullTripBundle = {
+        ...targetBundle,
+        trip: {
+          ...targetBundle.trip,
+          totalBudget: recomputedTotal > 0 ? recomputedTotal : targetBundle.trip.totalBudget,
+        },
+        days: updatedDays,
+      };
+      syncedBundle = nextBundle;
+      return { ...prev, [tripId]: nextBundle };
+    });
+
+    if (syncedBundle) {
+      await syncBundleToFirestore(syncedBundle);
+    }
     showToast('Change accepted and applied to your itinerary.');
   };
 
@@ -352,33 +410,52 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const acceptAllProposals = async (tripId: string) => {
-    const bundle = trips[tripId];
-    const list = proposalsByTrip[tripId] || [];
-    if (!bundle || list.length === 0) return;
+    const currentBundle = trips[tripId];
+    const rawList = proposalsByTrip[tripId] || [];
+    if (!currentBundle || rawList.length === 0) return;
 
-    const snapshotDays = JSON.parse(JSON.stringify(bundle.days)) as Day[];
-    let workingDays = [...bundle.days];
-    for (const prop of list) {
-      workingDays = applySingleProposalChange(workingDays, prop);
-    }
+    const dedupedList = deduplicateAndMergeProposals([], rawList, currentBundle.days);
+    const snapshotDays = JSON.parse(JSON.stringify(currentBundle.days)) as Day[];
+
+    setProposalsByTrip((prev) => ({ ...prev, [tripId]: [] }));
 
     setUndoHistoryByTrip((prev) => ({
       ...prev,
       [tripId]: [
         {
           tripId,
-          description: `Accepted ${list.length} proposed changes`,
+          description: `Accepted ${dedupedList.length} proposed changes`,
           previousDays: snapshotDays,
         },
         ...(prev[tripId] || []).slice(0, 9),
       ],
     }));
 
-    const nextBundle: FullTripBundle = { ...bundle, days: workingDays };
-    setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
-    setProposalsByTrip((prev) => ({ ...prev, [tripId]: [] }));
-    await syncBundleToFirestore(nextBundle);
-    showToast(`Applied all ${list.length} changes.`);
+    let syncedBundle: FullTripBundle | null = null;
+    setTrips((prev) => {
+      const targetBundle = prev[tripId];
+      if (!targetBundle) return prev;
+      let workingDays = [...targetBundle.days];
+      for (const prop of dedupedList) {
+        workingDays = applySingleProposalChange(workingDays, prop);
+      }
+      const recomputedTotal = computeTripTotalCost(workingDays).total;
+      const nextBundle: FullTripBundle = {
+        ...targetBundle,
+        trip: {
+          ...targetBundle.trip,
+          totalBudget: recomputedTotal > 0 ? recomputedTotal : targetBundle.trip.totalBudget,
+        },
+        days: workingDays,
+      };
+      syncedBundle = nextBundle;
+      return { ...prev, [tripId]: nextBundle };
+    });
+
+    if (syncedBundle) {
+      await syncBundleToFirestore(syncedBundle);
+    }
+    showToast(`Applied all ${dedupedList.length} changes.`);
   };
 
   const rejectAllProposals = (tripId: string) => {
@@ -392,8 +469,13 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!bundle || history.length === 0) return;
 
     const [latest, ...rest] = history;
+    const recomputedTotal = computeTripTotalCost(latest.previousDays).total;
     const nextBundle: FullTripBundle = {
       ...bundle,
+      trip: {
+        ...bundle.trip,
+        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
+      },
       days: latest.previousDays,
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
@@ -459,7 +541,94 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return updated;
     });
 
-    const nextBundle = { ...bundle, days: nextDays };
+    const recomputedTotal = computeTripTotalCost(nextDays).total;
+    const nextBundle = {
+      ...bundle,
+      trip: {
+        ...bundle.trip,
+        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
+      },
+      days: nextDays,
+    };
+    setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    await syncBundleToFirestore(nextBundle);
+  };
+
+  const updateDayAccommodation = async (
+    tripId: string,
+    dayId: string,
+    accommodation: DayAccommodation
+  ) => {
+    const bundle = trips[tripId];
+    if (!bundle) return;
+
+    const nextDays = bundle.days.map((d) =>
+      d.id === dayId ? { ...d, accommodation } : d
+    );
+    const recomputedTotal = computeTripTotalCost(nextDays).total;
+    const nextBundle: FullTripBundle = {
+      ...bundle,
+      trip: {
+        ...bundle.trip,
+        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
+      },
+      days: nextDays,
+    };
+    setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    await syncBundleToFirestore(nextBundle);
+  };
+
+  const setGlobalTripTier = async (tripId: string, tier: BudgetTier) => {
+    const bundle = trips[tripId];
+    if (!bundle) return;
+
+    const snapshotDays = JSON.parse(JSON.stringify(bundle.days)) as Day[];
+    const nextDays = bundle.days.map((d) => {
+      const tierOpt = d.accommodation?.tierOptions?.[tier];
+      return {
+        ...d,
+        accommodation: d.accommodation
+          ? {
+              ...d.accommodation,
+              ...(tierOpt
+                ? {
+                    name: tierOpt.name,
+                    type: tierOpt.type || d.accommodation.type,
+                    price: tierOpt.price,
+                    coordinates: tierOpt.coordinates || d.accommodation.coordinates,
+                  }
+                : {}),
+              selectedTier: tier,
+              customPriceLocked: false,
+            }
+          : d.accommodation,
+        activities: d.activities.map((a) => ({ ...a, selectedTier: tier })),
+        planB: d.planB.map((a) => ({ ...a, selectedTier: tier })),
+      };
+    });
+
+    const recomputedTotal = computeTripTotalCost(nextDays).total;
+
+    setUndoHistoryByTrip((prev) => ({
+      ...prev,
+      [tripId]: [
+        {
+          tripId,
+          description: `Switched global tier to ${tier} (~€${recomputedTotal})`,
+          previousDays: snapshotDays,
+        },
+        ...(prev[tripId] || []).slice(0, 9),
+      ],
+    }));
+
+    const nextBundle: FullTripBundle = {
+      ...bundle,
+      trip: {
+        ...bundle.trip,
+        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
+      },
+      days: nextDays,
+    };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
     await syncBundleToFirestore(nextBundle);
   };
@@ -503,6 +672,45 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
     await syncBundleToFirestore(nextBundle);
     showToast(`Applied new budget tiers (€${newTotalBudget}).`);
+  };
+
+  const applySelectedBudgetProposals = async (
+    tripId: string,
+    proposals: BudgetOptimizationChange[]
+  ) => {
+    const bundle = trips[tripId];
+    if (!bundle) return;
+
+    const selectedOnly = proposals.filter((p) => p.selected === true);
+    if (selectedOnly.length === 0) return;
+
+    const snapshotDays = JSON.parse(JSON.stringify(bundle.days)) as Day[];
+    const nextDays = applySelectedBudgetProposalsToDays(bundle.days, proposals);
+    const nextItineraryTotal = computeCurrentItineraryTotal(
+      nextDays,
+      Math.max(1, bundle.trip.travelersCount)
+    );
+
+    setUndoHistoryByTrip((prev) => ({
+      ...prev,
+      [tripId]: [
+        {
+          tripId,
+          description: `Applied ${selectedOnly.length} selected tier adjustment(s) (€${nextItineraryTotal})`,
+          previousDays: snapshotDays,
+        },
+        ...(prev[tripId] || []).slice(0, 9),
+      ],
+    }));
+
+    const nextBundle: FullTripBundle = {
+      ...bundle,
+      trip: { ...bundle.trip, totalBudget: nextItineraryTotal },
+      days: nextDays,
+    };
+    setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    await syncBundleToFirestore(nextBundle);
+    showToast(`Applied ${selectedOnly.length} budget tier change(s) (€${nextItineraryTotal}).`);
   };
 
   const castVote = async (
@@ -602,6 +810,31 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast(String(i18n.t('toast.expenseRecorded')));
   };
 
+  const deleteExpense = async (tripId: string, expenseId: string) => {
+    const currentBundle = trips[tripId];
+    setTrips((prev) => {
+      const bundle = prev[tripId];
+      if (!bundle) return prev;
+      const nextExpenses = removeExpenseById(bundle.expenses, expenseId);
+      return {
+        ...prev,
+        [tripId]: {
+          ...bundle,
+          expenses: nextExpenses,
+        },
+      };
+    });
+
+    if (currentUser && currentUser.emailVerified && currentBundle && !currentBundle.trip.isDemo) {
+      try {
+        await deleteDoc(doc(db, 'trips', tripId, 'expenses', expenseId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `trips/${tripId}/expenses/${expenseId}`);
+      }
+    }
+    showToast(String(i18n.t('expenses.deletedToast', { defaultValue: 'Expense deleted.' })));
+  };
+
   const toggleExpenseSettled = async (tripId: string, expenseId: string) => {
     const bundle = trips[tripId];
     if (!bundle) return;
@@ -634,6 +867,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         activeTravelerIdByTrip,
         setActiveTravelerId,
         saveTripBundle,
+        registerFetchedTrips,
         deleteTrip,
         duplicateTrip,
         addProposals,
@@ -644,10 +878,14 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         undoLastChange,
         togglePlanB,
         updateDayActivities,
+        updateDayAccommodation,
+        setGlobalTripTier,
         applyBudgetSelections,
+        applySelectedBudgetProposals,
         castVote,
         addTraveler,
         addExpense,
+        deleteExpense,
         toggleExpenseSettled,
         findTripByInviteCode,
         toastMessage,

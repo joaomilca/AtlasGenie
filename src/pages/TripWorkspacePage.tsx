@@ -1,24 +1,8 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { DragEndEvent } from '@dnd-kit/core';
 import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  useSortable,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import {
-  GripVertical,
   Download,
   Printer,
   Calendar as CalendarIcon,
@@ -29,306 +13,53 @@ import {
   Footprints,
   Coffee,
   X,
+  Bookmark,
+  Wallet,
 } from 'lucide-react';
 import { useAtlas } from '../context/AtlasContext';
 import { useI18n } from '../i18n/I18nContext';
+import { saveTrip, auth } from '../firebase';
 import {
+  computeDaySubtotal,
   computePaceMetrics,
   computeReliabilitySummary,
+  computeTripTotalCost,
   reorderActivitiesList,
   generateIcsCalendar,
   downloadIcsFile,
 } from '../utils/domainLogic';
 import { Activity, BudgetTier, ProposalChange, VoteValue } from '../types/models';
-import { TrustBadge } from '../components/TrustBadge';
-import { DiffReviewBanner } from '../components/DiffReviewBanner';
-import { AtlasMap } from '../components/AtlasMap';
-import { BudgetTabView } from '../components/BudgetTabView';
-import { GroupTabView } from '../components/GroupTabView';
-import { ExpensesTabView } from '../components/ExpensesTabView';
 import { SkeletonItinerary } from '../components/SkeletonItinerary';
-import { GuidedTourOverlay } from '../components/GuidedTourOverlay';
-import { requestAiProposals, streamAtlasGenieChat } from '../services/api';
+import { DayTimeline } from '../components/DayTimeline';
+import {
+  DiffBannerSuspenseFallback,
+  MapSuspenseFallback,
+  ModalSuspenseFallback,
+  TabViewSuspenseFallback,
+} from '../components/SuspenseFallback';
+import {
+  requestAccommodationAlternative,
+  requestAiProposals,
+  streamAtlasGenieChat,
+} from '../services/api';
 
-interface SortableActivityCardProps {
-  act: Activity;
-  idx: number;
-  totalCount: number;
-  selectedActivityId: string | null;
-  activeTravelerId: string;
-  onSelect: (id: string) => void;
-  onMove: (index: number, direction: -1 | 1) => void;
-  onRemove: (id: string) => void;
-  onTierSelect: (id: string, tier: BudgetTier) => void;
-  onEscapeCrowds: (act: Activity) => void;
-  onVote: (actId: string, vote: VoteValue) => void;
-  onQuickExpense: () => void;
-  getTierLabel: (tier: BudgetTier) => string;
-}
-
-const SortableActivityCard: React.FC<SortableActivityCardProps> = ({
-  act,
-  idx,
-  totalCount,
-  selectedActivityId,
-  activeTravelerId,
-  onSelect,
-  onMove,
-  onRemove,
-  onTierSelect,
-  onEscapeCrowds,
-  onVote,
-  onQuickExpense,
-  getTierLabel,
-}) => {
-  const { t } = useTranslation();
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: act.id });
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 30 : undefined,
-  };
-
-  const selectedCost = act.costOptions[act.selectedTier];
-  const pricePrefix = act.priceConfidence.status === 'verified' ? '' : '~';
-  const isTrap = act.touristTrapScore >= 70;
-  const downVotes = Object.values(act.votes || {}).filter((v) => v === 'down').length;
-
-  return (
-    <li
-      ref={setNodeRef}
-      style={style}
-      className={`list-none ${isDragging ? 'opacity-90 scale-[1.01]' : ''}`}
-    >
-      {/* Travel Connector from previous activity (Feature B6) */}
-      {idx > 0 && act.travelFromPrevious && (
-        <div className="pl-7 pb-4 flex items-center gap-2 text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
-          <span aria-hidden="true">↓</span>
-          <span>
-            {act.travelFromPrevious.mode === 'WALKING'
-              ? `🚶 ${t('trip.walk')}`
-              : act.travelFromPrevious.mode === 'TRANSIT'
-              ? `🚋 ${t('trip.transit')}`
-              : `🚕 ${t('trip.drive')}`}{' '}
-            · {act.travelFromPrevious.minutes} min ({act.travelFromPrevious.distanceKm} km)
-          </span>
-          <span aria-hidden="true">·</span>
-          <span>
-            {t('hero.sourceLabel')}{' '}
-            {act.travelFromPrevious.source === 'maps_api'
-              ? t('trip.mapsApiSource')
-              : t('trip.estimatedSource')}
-          </span>
-        </div>
-      )}
-
-      {/* Activity Card with generous breathing room */}
-      <article
-        onClick={() => onSelect(act.id)}
-        className={`rounded-2xl bg-white dark:bg-slate-900 border p-6 sm:p-7 space-y-4 shadow-xs transition-all print:border-slate-300 print:shadow-none print:break-inside-avoid ${
-          isDragging
-            ? 'border-amber-500 shadow-xl ring-2 ring-amber-500/30'
-            : selectedActivityId === act.id
-            ? 'border-amber-500 dark:border-amber-500 ring-1 ring-amber-500/20'
-            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
-        }`}
-      >
-        {/* Top row: Drag Handle, Pin number, Time, Title & Reorder/Delete controls */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-2.5">
-            {/* Drag Handle */}
-            <button
-              type="button"
-              {...attributes}
-              {...listeners}
-              onClick={(e) => e.stopPropagation()}
-              aria-label={t('dnd.dragHandleAria', { title: act.title })}
-              title={t('dnd.dragHint')}
-              className="print:hidden mt-0.5 p-1.5 rounded-lg text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing transition-colors shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              <GripVertical className="w-4 h-4" aria-hidden="true" />
-            </button>
-
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
-                <span className="font-bold text-amber-700 dark:text-amber-400">
-                  #{idx + 1} · {act.startTime} ({act.durationMin} min)
-                </span>
-                <span aria-hidden="true">·</span>
-                <span>{act.location.name}</span>
-                {downVotes > 0 && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="text-rose-700 dark:text-rose-400 font-semibold">
-                      ⚠️ {t('trip.needsDiscussion')}
-                    </span>
-                  </>
-                )}
-              </div>
-              <h3 className="font-serif-atlas text-lg font-bold text-slate-900 dark:text-white">
-                {act.title}
-              </h3>
-            </div>
-          </div>
-
-          <div className="print:hidden flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMove(idx, -1);
-              }}
-              disabled={idx === 0}
-              aria-label={`Move ${act.title} up`}
-              className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              <span aria-hidden="true">↑</span>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMove(idx, 1);
-              }}
-              disabled={idx === totalCount - 1}
-              aria-label={`Move ${act.title} down`}
-              className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              <span aria-hidden="true">↓</span>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(act.id);
-              }}
-              aria-label={`${t('dash.delete')} ${act.title}`}
-              className="px-2 py-1 text-xs text-rose-600 rounded border border-slate-200 dark:border-slate-700 hover:bg-rose-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              <span aria-hidden="true">✕</span>
-            </button>
-          </div>
-        </div>
-
-        <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-          {act.description}
-        </p>
-
-        {/* "Why this activity?" (Feature B7) */}
-        <p className="text-xs text-teal-800 dark:text-teal-300 font-medium">
-          <span aria-hidden="true">✨ </span>
-          {t('trip.whyThis')} {act.whyThis}
-        </p>
-
-        {/* Trust Layer Badges (Feature B1: Price & Opening Hours) */}
-        <div
-          data-tour={idx === 0 ? 'trust-badges-card' : undefined}
-          className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1"
-        >
-          <TrustBadge
-            type="price"
-            confidence={act.priceConfidence}
-            valueText={`${pricePrefix}${selectedCost.estimatedCost}€ (${selectedCost.title})`}
-          />
-          <TrustBadge
-            type="hours"
-            confidence={act.hoursConfidence}
-            valueText={act.openingHoursText || '09:30 – 18:00'}
-          />
-        </div>
-
-        {/* Cost Tier Selector + Anti-Tourist-Trap + Voting & Expense Quick Action */}
-        <div className="print:hidden pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-          {/* Budget / Mid / Premium switcher */}
-          <div
-            role="group"
-            aria-label={`${act.title} ${t('hero.budget')}`}
-            className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg"
-          >
-            {(['budget', 'mid', 'premium'] as BudgetTier[]).map((tier) => (
-              <button
-                key={tier}
-                type="button"
-                aria-pressed={act.selectedTier === tier}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onTierSelect(act.id, tier);
-                }}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
-                  act.selectedTier === tier
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                {getTierLabel(tier)}: €{act.costOptions[tier].estimatedCost}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Anti-Tourist-Trap Filter (Feature B4: score >= 70) */}
-            {isTrap && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEscapeCrowds(act);
-                }}
-                className="px-3 py-1.5 text-xs font-semibold text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 hover:bg-amber-200 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-              >
-                <span aria-hidden="true">🧭 </span>
-                {t('trip.escapeCrowds')} ({act.touristTrapScore}/100)
-              </button>
-            )}
-
-            {/* Quick Vote */}
-            <div className="flex items-center gap-1">
-              {(['up', 'down'] as VoteValue[]).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onVote(act.id, v);
-                  }}
-                  aria-label={`Vote ${v} ${act.title}`}
-                  aria-pressed={act.votes?.[activeTravelerId] === v}
-                  className={`px-2 py-1 text-xs rounded border cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
-                    act.votes?.[activeTravelerId] === v
-                      ? 'bg-slate-900 text-white dark:bg-amber-600'
-                      : 'border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  <span aria-hidden="true">{v === 'up' ? '👍' : '👎'}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* Quick Add Expense Link */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onQuickExpense();
-              }}
-              className="px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:underline whitespace-nowrap cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              {t('trip.addExpenseQuick')}
-            </button>
-          </div>
-        </div>
-      </article>
-    </li>
-  );
-};
+// Code-split heavy components that aren't needed synchronously on the initial render
+const LazyAtlasMap = lazy(() => import('../components/AtlasMap'));
+const LazyDiffReviewBanner = lazy(() => import('../components/DiffReviewBanner'));
+const LazyLoginModal = lazy(() => import('../components/LoginModal'));
+const LazyActivityDetailsModal = lazy(() => import('../components/ActivityDetailsModal'));
+const LazyBudgetTabView = lazy(() =>
+  import('../components/BudgetTabView').then((m) => ({ default: m.BudgetTabView }))
+);
+const LazyGroupTabView = lazy(() =>
+  import('../components/GroupTabView').then((m) => ({ default: m.GroupTabView }))
+);
+const LazyExpensesTabView = lazy(() =>
+  import('../components/ExpensesTabView').then((m) => ({ default: m.ExpensesTabView }))
+);
+const LazyGuidedTourOverlay = lazy(() =>
+  import('../components/GuidedTourOverlay').then((m) => ({ default: m.GuidedTourOverlay }))
+);
 
 export const TripWorkspacePage: React.FC = () => {
   const { id = 'demo-lisbon-4d' } = useParams<{ id: string }>();
@@ -338,10 +69,12 @@ export const TripWorkspacePage: React.FC = () => {
   const { t } = useTranslation();
   const { language } = useI18n();
   const {
+    currentUser,
     trips,
     proposalsByTrip,
     undoHistoryByTrip,
     activeTravelerIdByTrip,
+    registerFetchedTrips,
     addProposals,
     acceptProposal,
     rejectProposal,
@@ -350,6 +83,8 @@ export const TripWorkspacePage: React.FC = () => {
     undoLastChange,
     togglePlanB,
     updateDayActivities,
+    updateDayAccommodation,
+    setGlobalTripTier,
     castVote,
     showToast,
   } = useAtlas();
@@ -379,9 +114,17 @@ export const TripWorkspacePage: React.FC = () => {
   const [chatLoading, setChatLoading] = useState(false);
   const [fetchingPlaceName, setFetchingPlaceName] = useState<string | null>(null);
   const [vibeRecalculating, setVibeRecalculating] = useState(false);
+  const [askingAccommodationAlt, setAskingAccommodationAlt] = useState(false);
+  const [pricePulseActive, setPricePulseActive] = useState(false);
 
-  // Export Dropdown State
+  // Export Dropdown & Save Trip State
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const [isSavingTrip, setIsSavingTrip] = useState(false);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [detailsModalState, setDetailsModalState] = useState<{
+    activity?: Activity | null;
+    proposal?: ProposalChange | null;
+  } | null>(null);
   const exportRef = useRef<HTMLDivElement | null>(null);
 
   // Collapsible Trust Badges Legend State (Closed by default for decluttered UI)
@@ -439,31 +182,35 @@ export const TripWorkspacePage: React.FC = () => {
 
   const reliability = useMemo(() => computeReliabilitySummary(bundle.days), [bundle.days]);
   const paceMetrics = useMemo(() => computePaceMetrics(currentDay), [currentDay]);
+  const daySubtotal = useMemo(() => computeDaySubtotal(currentDay), [currentDay]);
+  const tripTotalInfo = useMemo(() => computeTripTotalCost(bundle.days), [bundle.days]);
 
-  // DnD Sensors (Pointer with 5px activation distance so card clicks work seamlessly + Keyboard)
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+  // Trigger a subtle visual pulse whenever the live Trip Total changes
+  const prevTripTotalRef = useRef<number>(tripTotalInfo.total);
+  useEffect(() => {
+    if (prevTripTotalRef.current !== tripTotalInfo.total) {
+      prevTripTotalRef.current = tripTotalInfo.total;
+      setPricePulseActive(true);
+      const timer = setTimeout(() => setPricePulseActive(false), 450);
+      return () => clearTimeout(timer);
+    }
+  }, [tripTotalInfo.total]);
+
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const oldIndex = activeActivities.findIndex((a) => a.id === active.id);
+      const newIndex = activeActivities.findIndex((a) => a.id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return;
+
+      const reordered = reorderActivitiesList(activeActivities, oldIndex, newIndex);
+      await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
+      showToast(t('toast.itineraryUpdated'));
+    },
+    [activeActivities, bundle.trip.id, currentDay.id, showToast, t, updateDayActivities]
   );
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = activeActivities.findIndex((a) => a.id === active.id);
-    const newIndex = activeActivities.findIndex((a) => a.id === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
-
-    const reordered = reorderActivitiesList(activeActivities, oldIndex, newIndex);
-    await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
-    showToast(t('toast.itineraryUpdated'));
-  };
 
   const localizedPaceLabel =
     paceMetrics.label === 'Packed'
@@ -472,154 +219,394 @@ export const TripWorkspacePage: React.FC = () => {
       ? t('trip.paceRelaxed')
       : t('trip.paceBalanced');
 
-  const getTierLabel = (tier: BudgetTier) => {
-    if (tier === 'budget') return t('trip.tierBudget');
-    if (tier === 'mid') return t('trip.tierMid');
-    return t('trip.tierPremium');
-  };
+  const getTierLabel = useCallback(
+    (tier: BudgetTier) => {
+      if (tier === 'budget') return t('trip.tierBudget');
+      if (tier === 'mid') return t('trip.tierMid');
+      return t('trip.tierPremium');
+    },
+    [t]
+  );
 
-  const handleVibeSliderChange = async (nextPace: number) => {
-    setVibeRecalculating(true);
-    try {
-      await updateDayActivities(bundle.trip.id, currentDay.id, activeActivities, nextPace);
-      const [res] = await Promise.all([
-        requestAiProposals({
-          taskType: 'pace',
-          destination: bundle.trip.destination,
-          message: `Adjust day pace to level ${nextPace}/5`,
-          currentDay: { ...currentDay, paceLevel: nextPace },
-          travelers: bundle.travelers,
-        }),
-        new Promise((resolve) => setTimeout(resolve, 900)),
-      ]);
-      addProposals(bundle.trip.id, res.proposals);
-    } finally {
-      setVibeRecalculating(false);
+  const handleVibeSliderChange = useCallback(
+    async (nextPace: number) => {
+      setVibeRecalculating(true);
+      try {
+        await updateDayActivities(bundle.trip.id, currentDay.id, activeActivities, nextPace);
+        const [res] = await Promise.all([
+          requestAiProposals({
+            taskType: 'pace',
+            destination: bundle.trip.destination,
+            message: `Adjust day pace to level ${nextPace}/5`,
+            currentDay: { ...currentDay, paceLevel: nextPace },
+            travelers: bundle.travelers,
+          }),
+          new Promise((resolve) => setTimeout(resolve, 900)),
+        ]);
+        addProposals(bundle.trip.id, res.proposals);
+      } finally {
+        setVibeRecalculating(false);
+      }
+    },
+    [
+      activeActivities,
+      addProposals,
+      bundle.travelers,
+      bundle.trip.destination,
+      bundle.trip.id,
+      currentDay,
+      updateDayActivities,
+    ]
+  );
+
+  const handleSaveTrip = useCallback(async () => {
+    setExportDropdownOpen(false);
+    const activeUser = currentUser || auth.currentUser;
+    if (!activeUser) {
+      showToast(t('toast.loginToSave'), 'alert');
+      setLoginModalOpen(true);
+      return;
     }
-  };
+    setIsSavingTrip(true);
+    try {
+      const savedBundle = await saveTrip(activeUser.uid, bundle);
+      registerFetchedTrips([savedBundle]);
+      showToast(t('toast.tripSaved'));
+    } finally {
+      setIsSavingTrip(false);
+    }
+  }, [bundle, currentUser, registerFetchedTrips, showToast, t]);
 
-  const handleExportPdf = () => {
+  const handleExportPdf = useCallback(() => {
     setExportDropdownOpen(false);
     showToast(t('export.printToast'));
     setTimeout(() => {
       window.print();
     }, 120);
-  };
+  }, [showToast, t]);
 
-  const handleExportIcsDay = () => {
+  const handleExportIcsDay = useCallback(() => {
     setExportDropdownOpen(false);
     const ics = generateIcsCalendar(bundle, currentDay);
     const slug = bundle.trip.destination.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const filename = `atlasgenie-${slug}-day-${currentDay.dayNumber}.ics`;
     downloadIcsFile(ics, filename);
     showToast(t('export.icsToast', { filename }));
-  };
+  }, [bundle, currentDay, showToast, t]);
 
-  const handleExportIcsFull = () => {
+  const handleExportIcsFull = useCallback(() => {
     setExportDropdownOpen(false);
     const ics = generateIcsCalendar(bundle);
     const slug = bundle.trip.destination.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const filename = `atlasgenie-${slug}-full-trip.ics`;
     downloadIcsFile(ics, filename);
     showToast(t('export.icsToast', { filename }));
-  };
+  }, [bundle, showToast, t]);
 
-  const handleEscapeCrowds = (act: Activity) => {
-    const alt = act.localAlternative;
-    const replacementPayload: Activity = alt
-      ? {
-          id: alt.id,
-          title: alt.title,
-          category: alt.category,
-          description: alt.description,
-          startTime: act.startTime,
-          durationMin: act.durationMin,
-          openingHoursText: act.openingHoursText,
-          isOutdoor: act.isOutdoor,
-          interestTags: act.interestTags,
-          location: alt.location,
-          costOptions: {
-            budget: {
-              title: `${alt.title} (${t('trip.tierBudget')})`,
-              estimatedCost: Math.max(0, Math.round(alt.estimatedCost * 0.6)),
-              description: alt.description,
+  const handleEscapeCrowds = useCallback(
+    (act: Activity) => {
+      const alt = act.localAlternative;
+      const replacementPayload: Activity = alt
+        ? {
+            id: alt.id,
+            title: alt.title,
+            category: alt.category,
+            description: alt.description,
+            startTime: act.startTime,
+            durationMin: act.durationMin,
+            openingHoursText: act.openingHoursText,
+            isOutdoor: act.isOutdoor,
+            interestTags: act.interestTags,
+            location: alt.location,
+            costOptions: {
+              budget: {
+                title: `${alt.title} (${t('trip.tierBudget')})`,
+                estimatedCost: Math.max(0, Math.round(alt.estimatedCost * 0.6)),
+                description: alt.description,
+              },
+              mid: {
+                title: `${alt.title} (${t('trip.tierMid')})`,
+                estimatedCost: alt.estimatedCost,
+                description: alt.description,
+              },
+              premium: {
+                title: `${alt.title} (${t('trip.tierPremium')})`,
+                estimatedCost: Math.round(alt.estimatedCost * 1.8),
+                description: alt.description,
+              },
             },
-            mid: {
-              title: `${alt.title} (${t('trip.tierMid')})`,
-              estimatedCost: alt.estimatedCost,
-              description: alt.description,
-            },
-            premium: {
-              title: `${alt.title} (${t('trip.tierPremium')})`,
-              estimatedCost: Math.round(alt.estimatedCost * 1.8),
-              description: alt.description,
-            },
-          },
-          selectedTier: 'mid',
-          priceConfidence: alt.priceConfidence,
-          hoursConfidence: alt.hoursConfidence,
-          whyThis: alt.reason,
-          touristTrapScore: 18,
-          votes: {},
-        }
-      : {
-          ...act,
-          id: `${act.id}-local`,
-          title: `Local Gem · ${act.location.name}`,
-          description: act.description,
-          touristTrapScore: 20,
-          priceConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
-          hoursConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
-          whyThis: act.whyThis,
-        };
+            selectedTier: 'mid',
+            priceConfidence: alt.priceConfidence,
+            hoursConfidence: alt.hoursConfidence,
+            whyThis: alt.reason,
+            touristTrapScore: 18,
+            votes: {},
+          }
+        : {
+            ...act,
+            id: `${act.id}-local`,
+            title: `Local Gem · ${act.location.name}`,
+            description: act.description,
+            touristTrapScore: 20,
+            priceConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
+            hoursConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
+            whyThis: act.whyThis,
+          };
 
-    const prop: ProposalChange = {
-      id: `prop-local-${Date.now()}`,
-      dayId: currentDay.id,
-      dayNumber: currentDay.dayNumber,
-      type: 'replace',
-      targetActivityId: act.id,
-      targetActivityTitle: act.title,
-      payload: replacementPayload,
-      reason: alt
-        ? `${alt.reason} (${alt.travelMinutesAway} min · ${alt.travelSource === 'maps_api' ? 'Maps API' : '~'})`
-        : replacementPayload.whyThis,
-      source: 'local_alt',
-      status: 'pending',
-    };
+      const prop: ProposalChange = {
+        id: `prop-local-${currentDay.id}-${act.id}`,
+        dayId: currentDay.id,
+        dayNumber: currentDay.dayNumber,
+        type: 'replace',
+        targetActivityId: act.id,
+        targetActivityTitle: act.title,
+        payload: replacementPayload,
+        reason: alt
+          ? `${alt.reason} (${alt.travelMinutesAway} min · ${alt.travelSource === 'maps_api' ? 'Maps API' : '~'})`
+          : replacementPayload.whyThis,
+        source: 'local_alt',
+        status: 'pending',
+      };
 
-    addProposals(bundle.trip.id, [prop]);
-    showToast(
-      language === 'pt'
-        ? 'Alternativa local proposta na barra de revisão acima!'
-        : 'Local alternative proposed in the Diff Bar above!'
-    );
-  };
+      addProposals(bundle.trip.id, [prop]);
+      showToast(
+        language === 'pt'
+          ? 'Alternativa local proposta na barra de revisão acima!'
+          : 'Local alternative proposed in the Diff Bar above!'
+      );
+    },
+    [addProposals, bundle.trip.id, currentDay.dayNumber, currentDay.id, language, showToast, t]
+  );
 
-  const handleMoveActivity = async (index: number, direction: -1 | 1) => {
-    const targetIdx = index + direction;
-    if (targetIdx < 0 || targetIdx >= activeActivities.length) return;
-    const reordered = reorderActivitiesList(activeActivities, index, targetIdx);
-    await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
-    showToast(t('toast.itineraryUpdated'));
-  };
+  const handleMoveActivity = useCallback(
+    async (index: number, direction: -1 | 1) => {
+      const targetIdx = index + direction;
+      if (targetIdx < 0 || targetIdx >= activeActivities.length) return;
+      const reordered = reorderActivitiesList(activeActivities, index, targetIdx);
+      await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
+      showToast(t('toast.itineraryUpdated'));
+    },
+    [activeActivities, bundle.trip.id, currentDay.id, showToast, t, updateDayActivities]
+  );
 
-  const handleRemoveActivityDirect = async (activityId: string) => {
-    const next = activeActivities.filter((a) => a.id !== activityId);
-    await updateDayActivities(bundle.trip.id, currentDay.id, next);
-    showToast(
-      language === 'pt'
-        ? 'Atividade removida e tempos de deslocação atualizados.'
-        : 'Removed activity and updated travel times.'
-    );
-  };
+  const handleRemoveActivityDirect = useCallback(
+    async (activityId: string) => {
+      const next = activeActivities.filter((a) => a.id !== activityId);
+      await updateDayActivities(bundle.trip.id, currentDay.id, next);
+      showToast(
+        language === 'pt'
+          ? 'Atividade removida e tempos de deslocação atualizados.'
+          : 'Removed activity and updated travel times.'
+      );
+    },
+    [activeActivities, bundle.trip.id, currentDay.id, language, showToast, updateDayActivities]
+  );
 
-  const handleTierSelect = async (activityId: string, tier: BudgetTier) => {
-    const next = activeActivities.map((a) =>
-      a.id === activityId ? { ...a, selectedTier: tier } : a
-    );
-    await updateDayActivities(bundle.trip.id, currentDay.id, next);
-  };
+  const handleTierSelect = useCallback(
+    async (activityId: string, tier: BudgetTier) => {
+      const next = activeActivities.map((a) =>
+        a.id === activityId ? { ...a, selectedTier: tier } : a
+      );
+      await updateDayActivities(bundle.trip.id, currentDay.id, next);
+    },
+    [activeActivities, bundle.trip.id, currentDay.id, updateDayActivities]
+  );
+
+  const handleRenameActivity = useCallback(
+    async (activityId: string, newTitle: string) => {
+      const cleanTitle = newTitle.trim();
+      if (!cleanTitle) return;
+      const next = activeActivities.map((a) =>
+        a.id === activityId ? { ...a, title: cleanTitle } : a
+      );
+      await updateDayActivities(bundle.trip.id, currentDay.id, next);
+      showToast(t('toast.itineraryUpdated'));
+    },
+    [activeActivities, bundle.trip.id, currentDay.id, showToast, t, updateDayActivities]
+  );
+
+  const handleRenameAccommodation = useCallback(
+    async (newName: string) => {
+      const cleanName = newName.trim();
+      if (!cleanName || !currentDay.accommodation) return;
+      const currentAcc = currentDay.accommodation;
+      const activeTier = daySubtotal.dominantTier;
+      const updatedAcc = {
+        ...currentAcc,
+        name: cleanName,
+        tierOptions: currentAcc.tierOptions
+          ? {
+              ...currentAcc.tierOptions,
+              [activeTier]: {
+                ...currentAcc.tierOptions[activeTier],
+                name: cleanName,
+              },
+            }
+          : undefined,
+      };
+      await updateDayAccommodation(bundle.trip.id, currentDay.id, updatedAcc);
+      showToast(t('toast.itineraryUpdated'));
+    },
+    [
+      bundle.trip.id,
+      currentDay.accommodation,
+      currentDay.id,
+      daySubtotal.dominantTier,
+      showToast,
+      t,
+      updateDayAccommodation,
+    ]
+  );
+
+  const handleAccommodationTierSelect = useCallback(
+    async (tier: BudgetTier) => {
+      if (!currentDay.accommodation) return;
+      const tierOpt = currentDay.accommodation.tierOptions?.[tier];
+      const updatedAcc = {
+        ...currentDay.accommodation,
+        selectedTier: tier,
+        customPriceLocked: false,
+        ...(tierOpt
+          ? {
+              name: tierOpt.name,
+              type: tierOpt.type || currentDay.accommodation.type,
+              price: tierOpt.price,
+              coordinates: tierOpt.coordinates || currentDay.accommodation.coordinates,
+            }
+          : {}),
+      };
+      await updateDayAccommodation(bundle.trip.id, currentDay.id, updatedAcc);
+    },
+    [bundle.trip.id, currentDay.accommodation, currentDay.id, updateDayAccommodation]
+  );
+
+  const handleAskAccommodationAlternative = useCallback(
+    async (tier: BudgetTier) => {
+      setAskingAccommodationAlt(true);
+      try {
+        const res = await requestAccommodationAlternative({
+          city: currentDay.city || bundle.trip.destination,
+          country: bundle.trip.country || bundle.trip.destination,
+          day: currentDay,
+          tier,
+          language,
+        });
+        addProposals(bundle.trip.id, [res.proposal]);
+        showToast(
+          language === 'pt'
+            ? 'Nova opção de alojamento proposta acima — clique em Aceitar ou Rejeitar!'
+            : 'Alternative accommodation proposed above — click Accept or Reject!'
+        );
+      } finally {
+        setAskingAccommodationAlt(false);
+      }
+    },
+    [
+      addProposals,
+      bundle.trip.country,
+      bundle.trip.destination,
+      bundle.trip.id,
+      currentDay,
+      language,
+      showToast,
+    ]
+  );
+
+  const handleGlobalTierSwitch = useCallback(
+    async (tier: BudgetTier) => {
+      await setGlobalTripTier(bundle.trip.id, tier);
+      showToast(
+        language === 'pt'
+          ? `Escalão global alterado para ${getTierLabel(tier)}.`
+          : `Switched global trip tier to ${getTierLabel(tier)}.`
+      );
+    },
+    [bundle.trip.id, getTierLabel, language, setGlobalTripTier, showToast]
+  );
+
+  const handleSelectActivity = useCallback((actId: string) => {
+    setSelectedActivityId(actId);
+  }, []);
+
+  const handleVoteActivity = useCallback(
+    (actId: string, v: VoteValue) => {
+      castVote(bundle.trip.id, currentDay.id, actId, activeTravelerId, v);
+    },
+    [activeTravelerId, bundle.trip.id, castVote, currentDay.id]
+  );
+
+  const handleQuickExpense = useCallback(() => {
+    navigate(`/trips/${bundle.trip.id}/expenses`);
+  }, [bundle.trip.id, navigate]);
+
+  const handleAcceptProposal = useCallback(
+    (pId: string) => acceptProposal(bundle.trip.id, pId),
+    [acceptProposal, bundle.trip.id]
+  );
+
+  const handleRejectProposal = useCallback(
+    (pId: string) => rejectProposal(bundle.trip.id, pId),
+    [bundle.trip.id, rejectProposal]
+  );
+
+  const handleAcceptAllProposals = useCallback(
+    () => acceptAllProposals(bundle.trip.id),
+    [acceptAllProposals, bundle.trip.id]
+  );
+
+  const handleRejectAllProposals = useCallback(
+    () => rejectAllProposals(bundle.trip.id),
+    [bundle.trip.id, rejectAllProposals]
+  );
+
+  const handleOpenActivityDetails = useCallback((act: Activity) => {
+    setDetailsModalState({ activity: act, proposal: null });
+  }, []);
+
+  const handleOpenProposalDetails = useCallback(
+    (proposal: ProposalChange) => {
+      const propDay =
+        bundle.days.find(
+          (d) => (proposal.dayId && d.id === proposal.dayId) || d.dayNumber === proposal.dayNumber
+        ) || currentDay;
+      const dayActs =
+        propDay.activePlan === 'B' && propDay.planB.length > 0
+          ? propDay.planB
+          : propDay.activities;
+      const targetAct = proposal.targetActivityId
+        ? dayActs.find((a) => a.id === proposal.targetActivityId) ||
+          activeActivities.find((a) => a.id === proposal.targetActivityId) ||
+          null
+        : null;
+      setDetailsModalState({
+        activity: proposal.payload || targetAct,
+        proposal,
+      });
+    },
+    [activeActivities, bundle.days, currentDay]
+  );
+
+  const handleCloseDetailsModal = useCallback(() => {
+    setDetailsModalState(null);
+  }, []);
+
+  const handleCloseLoginModal = useCallback(() => {
+    setLoginModalOpen(false);
+  }, []);
+
+  const handleLoginSuccess = useCallback(async () => {
+    const user = auth.currentUser;
+    if (user) {
+      setIsSavingTrip(true);
+      try {
+        const savedBundle = await saveTrip(user.uid, bundle);
+        registerFetchedTrips([savedBundle]);
+        showToast(t('toast.tripSaved'));
+      } finally {
+        setIsSavingTrip(false);
+      }
+    }
+  }, [bundle, registerFetchedTrips, showToast, t]);
 
   const handleAddActivitySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -737,7 +724,7 @@ export const TripWorkspacePage: React.FC = () => {
   };
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 pb-28 md:pb-16 print:py-2 print:px-0">
+    <main className="max-w-7xl mx-auto px-0 md:px-8 py-6 md:py-8 pb-24 md:pb-16 print:py-2 print:px-0">
       {/* Print-Only Header (visible only when printing / exporting PDF) */}
       <div className="hidden print:block pb-4 mb-6 border-b-2 border-slate-900" aria-hidden="true">
         <div className="flex items-center justify-between">
@@ -755,7 +742,7 @@ export const TripWorkspacePage: React.FC = () => {
             </p>
             <p>
               {bundle.trip.travelersCount} {t('hero.travellers')} · {t('hero.budget')} €
-              {bundle.trip.totalBudget}
+              {tripTotalInfo.total}
             </p>
             <p>
               {t('trip.reliability')}: {reliability.verifiedPercent}% {t('trip.verified')}
@@ -776,7 +763,7 @@ export const TripWorkspacePage: React.FC = () => {
 
       {/* Top Trip Workspace Header */}
       <div className="print:hidden flex flex-col lg:flex-row lg:items-center justify-between gap-5 pb-6 mb-8 border-b border-slate-200 dark:border-slate-800">
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono-tabular">
             <span>
               {bundle.trip.startDate} → {bundle.trip.endDate}
@@ -786,9 +773,50 @@ export const TripWorkspacePage: React.FC = () => {
               {bundle.trip.travelersCount} {t('hero.travellers')}
             </span>
             <span aria-hidden="true">·</span>
-            <span>
-              {t('hero.budget')} €{bundle.trip.totalBudget}
+
+            {/* Live Reactive Trip Total Counter + Global Tier Switcher (Sprint 5 #4) */}
+            <span
+              data-testid="trip-total-counter"
+              data-trip-total={tripTotalInfo.total}
+              data-active-global-tier={tripTotalInfo.dominantTier}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono-tabular font-bold border transition-all duration-300 ${
+                pricePulseActive ? 'scale-105 ring-2 ring-amber-500/50' : 'scale-100'
+              } ${
+                tripTotalInfo.dominantTier === 'premium'
+                  ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-950 dark:text-amber-200 border-amber-400 dark:border-amber-700 shadow-xs'
+                  : 'bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5 text-[#D97706] shrink-0" aria-hidden="true" />
+              <span>{t('trip.tripTotalLive', { amount: tripTotalInfo.total })}</span>
             </span>
+
+            <div
+              data-testid="global-tier-switcher"
+              role="group"
+              aria-label={t('trip.globalTierLabel')}
+              className="inline-flex flex-wrap items-center gap-1.5 md:gap-1 bg-slate-100 dark:bg-slate-800 p-1 md:p-0.5 rounded-lg border border-slate-200 dark:border-slate-700"
+            >
+              {(['budget', 'mid', 'premium'] as BudgetTier[]).map((tier) => (
+                <button
+                  key={tier}
+                  type="button"
+                  data-testid={`global-tier-btn-${tier}`}
+                  aria-pressed={tripTotalInfo.dominantTier === tier}
+                  onClick={() => handleGlobalTierSwitch(tier)}
+                  className={`px-2 py-0.5 text-[11px] font-semibold rounded-md transition-all duration-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                    tripTotalInfo.dominantTier === tier
+                      ? tier === 'premium'
+                        ? 'bg-[#D97706] text-white shadow-2xs'
+                        : 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  {getTierLabel(tier)}
+                </button>
+              ))}
+            </div>
+
             <span aria-hidden="true">·</span>
             <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
               {t('trip.reliability')}: <span aria-hidden="true">🟢</span>{' '}
@@ -797,7 +825,7 @@ export const TripWorkspacePage: React.FC = () => {
               {reliability.totalChecks})
             </span>
           </div>
-          <h1 className="font-serif-atlas text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+          <h1 className="font-serif-atlas text-xl md:text-3xl font-bold text-slate-900 dark:text-white break-words">
             {bundle.trip.destination} {t('trip.atlasSuffix')}
           </h1>
         </div>
@@ -880,6 +908,18 @@ export const TripWorkspacePage: React.FC = () => {
           >
             <Compass className="w-3.5 h-3.5 text-[#D97706]" aria-hidden="true" />
             <span>{t('tour.triggerBtn')}</span>
+          </button>
+
+          {/* Save Trip to Firestore Button */}
+          <button
+            type="button"
+            data-testid="save-trip-btn"
+            disabled={isSavingTrip}
+            onClick={handleSaveTrip}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap cursor-pointer shadow-2xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+          >
+            <Bookmark className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{isSavingTrip ? t('trip.savingTripBtn') : t('trip.saveTripBtn')}</span>
           </button>
 
           {/* Magic Export (PDF & Calendar .ics) Dropdown */}
@@ -972,21 +1012,38 @@ export const TripWorkspacePage: React.FC = () => {
         </div>
       </div>
 
-      {/* Visual Diff Accept / Reject Bar (AI Architecture Rule #4) */}
-      <div className="print:hidden">
-        <DiffReviewBanner
-          proposals={proposals}
-          onAccept={(pId) => acceptProposal(bundle.trip.id, pId)}
-          onReject={(pId) => rejectProposal(bundle.trip.id, pId)}
-          onAcceptAll={() => acceptAllProposals(bundle.trip.id)}
-          onRejectAll={() => rejectAllProposals(bundle.trip.id)}
-        />
-      </div>
+      {/* Visual Diff Accept / Reject Bar (AI Architecture Rule #4) — Lazy-loaded via Suspense */}
+      {proposals.length > 0 && (
+        <div className="print:hidden">
+          <Suspense fallback={<DiffBannerSuspenseFallback />}>
+            <LazyDiffReviewBanner
+              proposals={proposals}
+              onAccept={handleAcceptProposal}
+              onReject={handleRejectProposal}
+              onAcceptAll={handleAcceptAllProposals}
+              onRejectAll={handleRejectAllProposals}
+              onOpenDetails={handleOpenProposalDetails}
+            />
+          </Suspense>
+        </div>
+      )}
 
-      {/* Sub-Views: Budget / Group / Expenses */}
-      {activeTab === 'budget' && <BudgetTabView bundle={bundle} />}
-      {activeTab === 'group' && <GroupTabView bundle={bundle} />}
-      {activeTab === 'expenses' && <ExpensesTabView bundle={bundle} />}
+      {/* Sub-Views: Budget / Group / Expenses (Lazy-loaded via Suspense) */}
+      {activeTab === 'budget' && (
+        <Suspense fallback={<TabViewSuspenseFallback />}>
+          <LazyBudgetTabView bundle={bundle} />
+        </Suspense>
+      )}
+      {activeTab === 'group' && (
+        <Suspense fallback={<TabViewSuspenseFallback />}>
+          <LazyGroupTabView bundle={bundle} />
+        </Suspense>
+      )}
+      {activeTab === 'expenses' && (
+        <Suspense fallback={<TabViewSuspenseFallback />}>
+          <LazyExpensesTabView bundle={bundle} />
+        </Suspense>
+      )}
 
       {/* Main Itinerary + Map View */}
       {activeTab === 'plan' && (
@@ -1004,6 +1061,7 @@ export const TripWorkspacePage: React.FC = () => {
                     key={day.id}
                     type="button"
                     role="tab"
+                    data-testid={`day-tab-${day.dayNumber}`}
                     aria-selected={selectedDayIndex === idx}
                     onClick={() => setSelectedDayIndex(idx)}
                     className={`px-4 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
@@ -1138,17 +1196,33 @@ export const TripWorkspacePage: React.FC = () => {
           {/* Day Header + Stat Chips Row + Vibe Slider (Target #2 of Guided Tour) */}
           <div
             data-tour="vibe-slider"
-            className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4 shadow-2xs"
+            className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4 shadow-2xs overflow-hidden"
           >
             <div className="space-y-3">
-              <div>
-                <p className="text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
-                  {t('trip.dayWord')} {currentDay.dayNumber} · {currentDay.date}{' '}
-                  {currentDay.activePlan === 'B' ? t('trip.planBIndoorTag') : ''}
-                </p>
-                <h2 className="font-serif-atlas text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mt-0.5">
-                  {currentDay.theme || `${t('trip.dayWord')} ${currentDay.dayNumber}`}
-                </h2>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
+                    {t('trip.dayWord')} {currentDay.dayNumber} · {currentDay.date}{' '}
+                    {currentDay.activePlan === 'B' ? t('trip.planBIndoorTag') : ''}
+                  </p>
+                  <h2 className="font-serif-atlas text-lg sm:text-xl md:text-2xl font-bold text-slate-900 dark:text-white mt-0.5 break-words">
+                    {currentDay.theme || `${t('trip.dayWord')} ${currentDay.dayNumber}`}
+                  </h2>
+                </div>
+
+                {/* Real-time Calculated Daily Total Counter in Day Header (Sprint 5 #1) */}
+                <span
+                  data-testid="day-header-daily-total"
+                  data-daily-total={daySubtotal.total}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-mono-tabular text-xs sm:text-sm font-bold border transition-all duration-300 self-start sm:self-center ${
+                    daySubtotal.dominantTier === 'premium'
+                      ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-950 dark:text-amber-200 border-amber-400 dark:border-amber-700'
+                      : 'bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  <Wallet className="w-3.5 h-3.5 text-[#D97706] shrink-0" aria-hidden="true" />
+                  <span>{t('logistics.dailyTotal', { amount: daySubtotal.total })}</span>
+                </span>
               </div>
 
               {/* Single Row of Clean Stat Chips Below Day Title */}
@@ -1197,27 +1271,36 @@ export const TripWorkspacePage: React.FC = () => {
               </div>
             </div>
 
-            <div className="print:hidden flex flex-col sm:flex-row sm:items-center gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <label htmlFor="vibe-slider" className="text-xs font-medium whitespace-nowrap">
+            <div
+              data-testid="vibe-slider-container"
+              className="print:hidden flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-3 pt-3 border-t border-slate-100 dark:border-slate-800 overflow-hidden"
+            >
+              <label
+                htmlFor="vibe-slider"
+                data-testid="vibe-slider-label"
+                className="w-full md:w-auto max-w-full whitespace-normal break-words text-xs md:text-sm font-medium text-slate-800 dark:text-slate-200"
+              >
                 {t('trip.vibeSlider')} (1 = {t('trip.paceRelaxed')} → 5 = {t('trip.pacePacked')}):
               </label>
-              <input
-                id="vibe-slider"
-                type="range"
-                min={1}
-                max={5}
-                step={1}
-                value={currentDay.paceLevel}
-                aria-valuemin={1}
-                aria-valuemax={5}
-                aria-valuenow={currentDay.paceLevel}
-                aria-valuetext={`${t('trip.step')} ${currentDay.paceLevel} (${localizedPaceLabel})`}
-                onChange={(e) => handleVibeSliderChange(Number(e.target.value))}
-                className="flex-1 accent-amber-600 cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
-              />
-              <span className="text-xs font-mono-tabular font-semibold whitespace-nowrap">
-                {t('trip.step')} {currentDay.paceLevel}/5
-              </span>
+              <div className="flex items-center gap-3 w-full md:w-auto md:flex-1 min-w-0">
+                <input
+                  id="vibe-slider"
+                  type="range"
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={currentDay.paceLevel}
+                  aria-valuemin={1}
+                  aria-valuemax={5}
+                  aria-valuenow={currentDay.paceLevel}
+                  aria-valuetext={`${t('trip.step')} ${currentDay.paceLevel} (${localizedPaceLabel})`}
+                  onChange={(e) => handleVibeSliderChange(Number(e.target.value))}
+                  className="flex-1 min-w-0 accent-amber-600 cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+                />
+                <span className="text-xs font-mono-tabular font-semibold whitespace-nowrap shrink-0">
+                  {t('trip.step')} {currentDay.paceLevel}/5
+                </span>
+              </div>
             </div>
 
             {paceMetrics.isUnrealistic && (
@@ -1250,7 +1333,7 @@ export const TripWorkspacePage: React.FC = () => {
                   className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
-              <div>
+              <div className="w-full sm:w-auto">
                 <label htmlFor="new-act-time" className="block text-xs font-medium mb-1">
                   {t('trip.actStartTime')}
                 </label>
@@ -1259,10 +1342,10 @@ export const TripWorkspacePage: React.FC = () => {
                   type="time"
                   value={newActTime}
                   onChange={(e) => setNewActTime(e.target.value)}
-                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full sm:w-auto px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
-              <div>
+              <div className="w-full sm:w-auto">
                 <label htmlFor="new-act-cost" className="block text-xs font-medium mb-1">
                   {t('trip.actEstCost')}
                 </label>
@@ -1272,12 +1355,12 @@ export const TripWorkspacePage: React.FC = () => {
                   min={0}
                   value={newActCost}
                   onChange={(e) => setNewActCost(Number(e.target.value))}
-                  className="w-24 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full sm:w-24 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
               <button
                 type="submit"
-                className="px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+                className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
                 {t('trip.saveStopBtn')}
               </button>
@@ -1295,63 +1378,60 @@ export const TripWorkspacePage: React.FC = () => {
               {vibeRecalculating ? (
                 <SkeletonItinerary cardsCount={3} destination={bundle.trip.destination} />
               ) : (
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
+                <DayTimeline
+                  dayNumber={currentDay.dayNumber}
+                  city={currentDay.city}
+                  theme={currentDay.theme}
+                  accommodation={currentDay.accommodation}
+                  intercityTransit={currentDay.intercity_transit}
+                  meals={currentDay.meals}
+                  activities={activeActivities}
+                  selectedActivityId={selectedActivityId}
+                  activeTravelerId={activeTravelerId}
+                  askingAccommodationAlt={askingAccommodationAlt}
                   onDragEnd={handleDragEnd}
-                >
-                  <SortableContext
-                    items={activeActivities.map((a) => a.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <ul
-                      aria-label={`${t('trip.dayWord')} ${currentDay.dayNumber} ${t('trip.tabPlan')}`}
-                      className="space-y-6 list-none p-0 m-0"
-                    >
-                      {activeActivities.map((act, idx) => (
-                        <SortableActivityCard
-                          key={act.id}
-                          act={act}
-                          idx={idx}
-                          totalCount={activeActivities.length}
-                          selectedActivityId={selectedActivityId}
-                          activeTravelerId={activeTravelerId}
-                          onSelect={(actId) => setSelectedActivityId(actId)}
-                          onMove={handleMoveActivity}
-                          onRemove={handleRemoveActivityDirect}
-                          onTierSelect={handleTierSelect}
-                          onEscapeCrowds={handleEscapeCrowds}
-                          onVote={(actId, v) =>
-                            castVote(bundle.trip.id, currentDay.id, actId, activeTravelerId, v)
-                          }
-                          onQuickExpense={() => navigate(`/trips/${bundle.trip.id}/expenses`)}
-                          getTierLabel={getTierLabel}
-                        />
-                      ))}
-                    </ul>
-                  </SortableContext>
-                </DndContext>
+                  onSelectActivity={handleSelectActivity}
+                  onMoveActivity={handleMoveActivity}
+                  onRemoveActivity={handleRemoveActivityDirect}
+                  onTierSelect={handleTierSelect}
+                  onEscapeCrowds={handleEscapeCrowds}
+                  onVote={handleVoteActivity}
+                  onQuickExpense={handleQuickExpense}
+                  getTierLabel={getTierLabel}
+                  onOpenActivityDetails={handleOpenActivityDetails}
+                  onRenameActivity={handleRenameActivity}
+                  onRenameAccommodation={handleRenameAccommodation}
+                  onAccommodationTierSelect={handleAccommodationTierSelect}
+                  onAskAccommodationAlternative={handleAskAccommodationAlternative}
+                />
               )}
             </div>
 
-            {/* Sticky Map Column with Elevated Breathing Room (Hidden in print mode) */}
+            {/* Sticky Map Column with Elevated Breathing Room (Hidden in print mode, Lazy-loaded via Suspense) */}
             <div
               className={`print:hidden lg:col-span-5 lg:sticky lg:top-24 h-[460px] lg:h-[620px] p-3 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs ${
                 mobileView === 'plan' ? 'hidden lg:block' : 'block'
               }`}
             >
-              <AtlasMap
-                activities={activeActivities}
-                selectedActivityId={selectedActivityId}
-                onSelectActivity={(actId) => setSelectedActivityId(actId)}
-              />
+              <Suspense fallback={<MapSuspenseFallback />}>
+                <LazyAtlasMap
+                  activities={activeActivities}
+                  accommodation={currentDay.accommodation}
+                  selectedActivityId={selectedActivityId}
+                  onSelectActivity={handleSelectActivity}
+                />
+              </Suspense>
             </div>
           </div>
         </div>
       )}
 
       {/* Interactive 4-Step First-Time User Onboarding Guided Tour */}
-      <GuidedTourOverlay isOpen={tourOpen} onClose={handleCloseTour} />
+      {tourOpen && (
+        <Suspense fallback={null}>
+          <LazyGuidedTourOverlay isOpen={tourOpen} onClose={handleCloseTour} />
+        </Suspense>
+      )}
 
       {/* Collapsible Conversational Assistant Side Panel (Feature A7, hidden in print) */}
       {chatOpen && (
@@ -1536,6 +1616,30 @@ export const TripWorkspacePage: React.FC = () => {
           {t('trip.mobileExpenses')}
         </Link>
       </nav>
+      {/* Login Modal triggered when unauthenticated user clicks Save Trip (Lazy-loaded via Suspense) */}
+      {loginModalOpen && (
+        <Suspense fallback={<ModalSuspenseFallback />}>
+          <LazyLoginModal
+            isOpen={loginModalOpen}
+            onClose={handleCloseLoginModal}
+            onSuccess={handleLoginSuccess}
+          />
+        </Suspense>
+      )}
+      {/* Activity & Proposal Extended Details Modal (Sprint 3, Lazy-loaded via Suspense) */}
+      {detailsModalState && (
+        <Suspense fallback={<ModalSuspenseFallback />}>
+          <LazyActivityDetailsModal
+            isOpen={Boolean(detailsModalState)}
+            onClose={handleCloseDetailsModal}
+            activity={detailsModalState.activity}
+            proposal={detailsModalState.proposal}
+            onAcceptProposal={handleAcceptProposal}
+            onRejectProposal={handleRejectProposal}
+            onEscapeCrowds={handleEscapeCrowds}
+          />
+        </Suspense>
+      )}
     </main>
   );
 };

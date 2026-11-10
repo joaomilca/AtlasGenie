@@ -1,14 +1,178 @@
-import {
+import type {
   Activity,
   BudgetTier,
   Day,
+  DayAccommodation,
+  DayMeals,
   Expense,
   FullTripBundle,
+  IntercityTransit,
   ProposalChange,
   TravelLeg,
   TravelMode,
   Traveler,
 } from '../types/models';
+
+export interface DaySubtotalBreakdown {
+  total: number;
+  accommodationCost: number;
+  transitCost: number;
+  mealsCost: number;
+  activitiesCost: number;
+  dominantTier: BudgetTier;
+}
+
+/**
+ * Resolves the day/global budget tier for day-level logistics (Accommodation and Meals).
+ * Strictly decoupled from individual activity `selectedTier` values so changing a single
+ * activity's price tier never switches the entire day's hotel or meals tier.
+ */
+export function resolveDayDominantTier(
+  _activities: Activity[],
+  accommodation?: DayAccommodation
+): BudgetTier {
+  if (accommodation?.selectedTier) {
+    return accommodation.selectedTier;
+  }
+  return 'mid';
+}
+
+/**
+ * Resolves the active DayAccommodation for a day given the day/global budget tier.
+ */
+export function resolveActiveDayAccommodation(
+  accommodation: DayAccommodation | undefined,
+  dominantTier: BudgetTier = 'mid'
+): DayAccommodation | undefined {
+  if (!accommodation) return undefined;
+  const activeTier = accommodation.selectedTier || dominantTier;
+  if (accommodation.customPriceLocked && !accommodation.selectedTier) {
+    return {
+      ...accommodation,
+      isPriceVerified: Boolean(accommodation.isPriceVerified),
+    };
+  }
+  const tierStay = accommodation.tierOptions?.[activeTier];
+  if (tierStay) {
+    return {
+      ...accommodation,
+      name: tierStay.name,
+      type: tierStay.type || accommodation.type,
+      price: tierStay.price,
+      isPriceVerified:
+        tierStay.isPriceVerified !== undefined
+          ? Boolean(tierStay.isPriceVerified)
+          : Boolean(accommodation.isPriceVerified),
+      coordinates: tierStay.coordinates || accommodation.coordinates,
+      selectedTier: activeTier,
+    };
+  }
+  return {
+    ...accommodation,
+    isPriceVerified: Boolean(accommodation.isPriceVerified),
+    selectedTier: activeTier,
+  };
+}
+
+/**
+ * Dynamically calculates a day's real-time subtotal:
+ * sums:
+ * 1. The current global/day tier price for Accommodation (`day.accommodation?.selectedTier || 'mid'`).
+ * 2. Intercity transit (if any).
+ * 3. The current global/day tier price for Meals (`day.accommodation?.selectedTier || 'mid'`).
+ * 4. The sum of the SPECIFICALLY SELECTED tier prices (`act.selectedTier || 'mid'`) for each individual activity.
+ */
+export function computeDaySubtotal(day: {
+  accommodation?: DayAccommodation;
+  intercity_transit?: IntercityTransit;
+  meals?: DayMeals;
+  activities: Activity[];
+  planB?: Activity[];
+  activePlan?: 'A' | 'B';
+}): DaySubtotalBreakdown {
+  const activeList =
+    day.activePlan === 'B' && day.planB && day.planB.length > 0 ? day.planB : day.activities || [];
+  const dominantTier: BudgetTier = day.accommodation?.selectedTier || 'mid';
+  const activeAcc = resolveActiveDayAccommodation(day.accommodation, dominantTier);
+
+  const accommodationCost = Math.max(0, Math.round(Number(activeAcc?.price || 0)));
+  const transitCost = Math.max(0, Math.round(Number(day.intercity_transit?.price || 0)));
+
+  let mealsCost = 0;
+  if (day.meals) {
+    for (const slotKey of ['breakfast', 'lunch', 'dinner'] as const) {
+      const meal = day.meals[slotKey];
+      if (!meal) continue;
+      const tierMeal = meal.tierVenues?.[dominantTier];
+      const price = tierMeal?.estimatedPrice ?? meal.estimatedPrice ?? 0;
+      mealsCost += Math.max(0, Math.round(Number(price)));
+    }
+  }
+
+  let activitiesCost = 0;
+  for (const act of activeList) {
+    const tier = act.selectedTier || 'mid';
+    const opt = act.costOptions?.[tier] || act.costOptions?.mid;
+    activitiesCost += Math.max(0, Math.round(Number(opt?.estimatedCost || 0)));
+  }
+
+  const total = accommodationCost + transitCost + mealsCost + activitiesCost;
+
+  return {
+    total,
+    accommodationCost,
+    transitCost,
+    mealsCost,
+    activitiesCost,
+    dominantTier,
+  };
+}
+
+/**
+ * Dynamically calculates the global Trip Total across all days (summing each day's active subtotal)
+ * and identifies the active trip-wide tier ('budget' | 'mid' | 'premium') for visual feedback.
+ */
+export function computeTripTotalCost(days: Day[]): {
+  total: number;
+  dominantTier: BudgetTier;
+  hasPremiumSelection: boolean;
+  perDayTotals: Record<number, number>;
+} {
+  let total = 0;
+  const perDayTotals: Record<number, number> = {};
+  const tierCounts: Record<BudgetTier, number> = { budget: 0, mid: 0, premium: 0 };
+  let hasPremiumSelection = false;
+
+  for (const day of days || []) {
+    const sub = computeDaySubtotal(day);
+    perDayTotals[day.dayNumber] = sub.total;
+    total += sub.total;
+    tierCounts[sub.dominantTier] += 1;
+
+    const activeList =
+      day.activePlan === 'B' && day.planB.length > 0 ? day.planB : day.activities;
+    if (
+      day.accommodation?.selectedTier === 'premium' ||
+      activeList.some((a) => a.selectedTier === 'premium')
+    ) {
+      hasPremiumSelection = true;
+    }
+  }
+
+  let dominantTier: BudgetTier = 'mid';
+  if (tierCounts.premium > 0 && tierCounts.premium >= tierCounts.mid && tierCounts.premium >= tierCounts.budget) {
+    dominantTier = 'premium';
+  } else if (tierCounts.budget > 0 && tierCounts.budget >= tierCounts.mid && tierCounts.budget > tierCounts.premium) {
+    dominantTier = 'budget';
+  }
+
+  return {
+    total,
+    dominantTier,
+    hasPremiumSelection,
+    perDayTotals,
+  };
+}
 
 /**
  * Haversine distance and travel duration estimator (used when Maps API is offline/fallback).
@@ -157,6 +321,7 @@ export interface BudgetOptimizationChange {
   toTier: BudgetTier;
   costDelta: number;
   newOptionTitle: string;
+  selected: boolean;
 }
 
 export interface BudgetOptimizationResult {
@@ -164,6 +329,26 @@ export interface BudgetOptimizationResult {
   totalEstimatedCost: number;
   changes: BudgetOptimizationChange[];
   withinBudget: boolean;
+}
+
+/**
+ * Computes the exact current itinerary activity total for the simulator slider baseline.
+ */
+export function computeCurrentItineraryTotal(
+  days: Day[],
+  travelersCount: number = 1
+): number {
+  const scale = Math.max(1, travelersCount);
+  let total = 0;
+  for (const day of days) {
+    const activeList = day.activePlan === 'B' && day.planB.length > 0 ? day.planB : day.activities;
+    for (const act of activeList) {
+      const tier: BudgetTier = act.selectedTier || 'mid';
+      const opt = act.costOptions?.[tier] || act.costOptions?.mid;
+      total += (opt ? opt.estimatedCost : 0) * scale;
+    }
+  }
+  return Math.round(total * 100) / 100;
 }
 
 /**
@@ -253,6 +438,7 @@ export function optimizeBudgetTiers(
         toTier,
         costDelta: Math.round((newCost - oldCost) * 100) / 100,
         newOptionTitle: activity.costOptions[toTier].title,
+        selected: true,
       });
     }
   }
@@ -507,9 +693,189 @@ export function computeExpenseBalancesAndSettlement(
   };
 }
 
+function normalizeActivityTitleKey(title: string | undefined): string {
+  return String(title || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
 /**
- * Applies a single accepted ProposalChange to the trip days array and recalculates travel times & pace score.
- * Guarantees immutability of input arrays/objects and idempotency when duplicate 'add' events arrive in real-time.
+ * Ensures an activity list has strictly unique IDs and unique normalized titles
+ * (updating existing nodes in-place while preserving stable IDs so DOM nodes never duplicate).
+ */
+export function deduplicateActivitiesById(activities: Activity[]): Activity[] {
+  const indexById = new Map<string, number>();
+  const indexByTitle = new Map<string, number>();
+  const result: Activity[] = [];
+
+  for (const act of activities) {
+    if (!act || !act.id) continue;
+    const normTitle = normalizeActivityTitleKey(act.title);
+    const existingById = indexById.get(act.id);
+    const existingByTitle = normTitle ? indexByTitle.get(normTitle) : undefined;
+    const existingIdx = existingById ?? existingByTitle;
+
+    if (existingIdx !== undefined) {
+      const preservedId = result[existingIdx].id;
+      const updatedAct: Activity = { ...act, id: preservedId };
+      result[existingIdx] = updatedAct;
+      indexById.set(preservedId, existingIdx);
+      indexById.set(act.id, existingIdx);
+      if (normTitle) indexByTitle.set(normTitle, existingIdx);
+    } else {
+      const newIdx = result.length;
+      indexById.set(act.id, newIdx);
+      if (normTitle) indexByTitle.set(normTitle, newIdx);
+      result.push(act);
+    }
+  }
+  return result;
+}
+
+/**
+ * Computes a deterministic target key for a ProposalChange so generating or receiving
+ * repeated proposals for the same slot/activity updates the existing proposal by key/ID
+ * instead of stacking duplicate banners.
+ */
+export function getProposalTargetKey(prop: ProposalChange): string {
+  const dayKey = prop.dayId || `day-${prop.dayNumber}`;
+  if (prop.type === 'replace_accommodation' || prop.accommodationPayload) {
+    return `${dayKey}:replace_accommodation:stay`;
+  }
+  if (prop.type === 'add') {
+    const payloadKey =
+      normalizeActivityTitleKey(prop.payload?.title) || prop.payload?.id || prop.id;
+    return `${dayKey}:add:${payloadKey}`;
+  }
+  const targetKey =
+    prop.targetActivityId ||
+    normalizeActivityTitleKey(prop.targetActivityTitle) ||
+    normalizeActivityTitleKey(prop.payload?.title) ||
+    prop.payload?.id ||
+    prop.id;
+  return `${dayKey}:${prop.type}:${targetKey}`;
+}
+
+/**
+ * Deduplicates and merges incoming ProposalChanges into an existing pending list using strict ID,
+ * target-slot, and payload-title matching. Also filters out proposals that have already been applied to currentDays.
+ */
+export function deduplicateAndMergeProposals(
+  existing: ProposalChange[],
+  incoming: ProposalChange[],
+  currentDays?: Day[]
+): ProposalChange[] {
+  const merged = [...existing];
+
+  for (const rawProp of incoming) {
+    if (!rawProp || rawProp.status === 'rejected') continue;
+
+    const normPayloadTitle = normalizeActivityTitleKey(
+      rawProp.accommodationPayload?.name || rawProp.payload?.title
+    );
+    const normTargetTitle = normalizeActivityTitleKey(
+      rawProp.targetAccommodationName || rawProp.targetActivityTitle
+    );
+
+    // Ignore no-op replace proposals where target and replacement titles are identical
+    if (
+      (rawProp.type === 'replace' || rawProp.type === 'replace_accommodation') &&
+      normPayloadTitle &&
+      normTargetTitle &&
+      normPayloadTitle === normTargetTitle
+    ) {
+      continue;
+    }
+
+    // Check if the proposal has already been applied to the target day
+    if (currentDays && currentDays.length > 0) {
+      const targetDay = currentDays.find(
+        (d) => (rawProp.dayId && d.id === rawProp.dayId) || d.dayNumber === rawProp.dayNumber
+      );
+      if (targetDay) {
+        if (
+          (rawProp.type === 'replace_accommodation' || rawProp.accommodationPayload) &&
+          rawProp.accommodationPayload
+        ) {
+          const currentStayName = normalizeActivityTitleKey(targetDay.accommodation?.name);
+          if (currentStayName && currentStayName === normPayloadTitle) {
+            continue;
+          }
+        } else {
+          const activeList =
+            targetDay.activePlan === 'B' && targetDay.planB.length > 0
+              ? targetDay.planB
+              : targetDay.activities;
+
+          if (rawProp.type === 'replace' && rawProp.payload) {
+            const payloadAlreadyInDay = activeList.some(
+              (a) =>
+                a.id === rawProp.payload!.id ||
+                (normPayloadTitle.length > 0 &&
+                  normalizeActivityTitleKey(a.title) === normPayloadTitle)
+            );
+            const targetRemovedFromDay =
+              !rawProp.targetActivityId ||
+              !activeList.some((a) => a.id === rawProp.targetActivityId);
+            if (payloadAlreadyInDay && targetRemovedFromDay) continue;
+          } else if (rawProp.type === 'add' && rawProp.payload) {
+            const payloadAlreadyAdded = activeList.some(
+              (a) =>
+                a.id === rawProp.payload!.id ||
+                (normPayloadTitle.length > 0 &&
+                  normalizeActivityTitleKey(a.title) === normPayloadTitle)
+            );
+            if (payloadAlreadyAdded) continue;
+          } else if (rawProp.type === 'remove') {
+            const targetStillExists = activeList.some(
+              (a) =>
+                (rawProp.targetActivityId && a.id === rawProp.targetActivityId) ||
+                (normTargetTitle.length > 0 &&
+                  normalizeActivityTitleKey(a.title) === normTargetTitle)
+            );
+            if (!targetStillExists) continue;
+          }
+        }
+      }
+    }
+
+    const incomingKey = getProposalTargetKey(rawProp);
+    const existingIdx = merged.findIndex((p) => {
+      if (p.id === rawProp.id || getProposalTargetKey(p) === incomingKey) {
+        return true;
+      }
+      const sameDay =
+        (p.dayId && rawProp.dayId && p.dayId === rawProp.dayId) ||
+        p.dayNumber === rawProp.dayNumber;
+      const existingTitle = normalizeActivityTitleKey(
+        p.accommodationPayload?.name || p.payload?.title
+      );
+      if (sameDay && normPayloadTitle.length > 0 && existingTitle === normPayloadTitle) {
+        return true;
+      }
+      return false;
+    });
+
+    if (existingIdx >= 0) {
+      // Update in-place preserving stable proposal ID so React keys don't thrash or duplicate
+      merged[existingIdx] = {
+        ...rawProp,
+        id: merged[existingIdx].id,
+      };
+    } else {
+      merged.push(rawProp);
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Applies a single accepted ProposalChange to the trip days array using strict ID-based updates
+ * (never blindly appending duplicate nodes) and recalculates travel times & pace score.
  */
 export function applySingleProposalChange(days: Day[], change: ProposalChange): Day[] {
   return days.map((day) => {
@@ -525,42 +891,143 @@ export function applySingleProposalChange(days: Day[], change: ProposalChange): 
       return day;
     }
 
-    let nextActivities = day.activities.map((a) => ({
+    const isPlanBActive = day.activePlan === 'B' && day.planB.length > 0;
+    const sourceList = isPlanBActive ? day.planB : day.activities;
+
+    // Handle swappable accommodation proposal
+    if (
+      (change.type === 'replace_accommodation' || change.accommodationPayload) &&
+      change.accommodationPayload
+    ) {
+      const incomingAcc = change.accommodationPayload;
+      const activeTier = incomingAcc.selectedTier || resolveDayDominantTier(sourceList, day.accommodation);
+      const updatedAcc: DayAccommodation = {
+        ...(day.accommodation || {}),
+        ...incomingAcc,
+        selectedTier: activeTier,
+        customPriceLocked: true,
+        tierOptions: {
+          ...(day.accommodation?.tierOptions || {}),
+          [activeTier]: {
+            name: incomingAcc.name,
+            type: incomingAcc.type,
+            price: incomingAcc.price,
+            coordinates: incomingAcc.coordinates,
+          },
+        },
+      };
+      return {
+        ...day,
+        accommodation: updatedAcc,
+      };
+    }
+
+    let nextActivities = sourceList.map((a) => ({
       ...a,
       votes: { ...(a.votes || {}) },
     }));
 
+    const findTargetIndex = (): number => {
+      if (change.targetActivityId) {
+        const byId = nextActivities.findIndex((a) => a.id === change.targetActivityId);
+        if (byId >= 0) return byId;
+      }
+      if (change.targetActivityTitle) {
+        const normTarget = normalizeActivityTitleKey(change.targetActivityTitle);
+        const byTitle = nextActivities.findIndex(
+          (a) => normalizeActivityTitleKey(a.title) === normTarget
+        );
+        if (byTitle >= 0) return byTitle;
+      }
+      return -1;
+    };
+
     if (change.type === 'add' && change.payload) {
       const clonedPayload: Activity = {
         ...change.payload,
+        id: change.payload.id || `act-added-${day.id}-${nextActivities.length + 1}`,
         votes: { ...(change.payload.votes || {}) },
       };
-      // Deduplicate by ID to ensure real-time replay idempotency
-      nextActivities = nextActivities.filter((a) => a.id !== clonedPayload.id);
-      nextActivities.push(clonedPayload);
-      nextActivities.sort((a, b) => a.startTime.localeCompare(b.startTime));
-    } else if (change.type === 'remove' && change.targetActivityId) {
-      nextActivities = nextActivities.filter((a) => a.id !== change.targetActivityId);
-    } else if (change.type === 'replace' && change.targetActivityId && change.payload) {
+
+      const normPayloadTitle = normalizeActivityTitleKey(clonedPayload.title);
+      const existingIdx = nextActivities.findIndex(
+        (a) =>
+          a.id === clonedPayload.id ||
+          (normPayloadTitle.length > 0 &&
+            normalizeActivityTitleKey(a.title) === normPayloadTitle)
+      );
+
+      if (existingIdx >= 0) {
+        // Strict ID-based in-place update when the activity already exists
+        nextActivities = nextActivities.map((a, idx) =>
+          idx === existingIdx ? { ...clonedPayload, id: a.id } : a
+        );
+      } else {
+        nextActivities = [...nextActivities, clonedPayload].sort((a, b) =>
+          a.startTime.localeCompare(b.startTime)
+        );
+      }
+    } else if (change.type === 'remove') {
+      const targetIdx = findTargetIndex();
+      if (targetIdx >= 0) {
+        const targetId = nextActivities[targetIdx].id;
+        nextActivities = nextActivities.filter((a) => a.id !== targetId);
+      }
+    } else if (change.type === 'replace' && change.payload) {
+      const targetIdx = findTargetIndex();
       const clonedPayload: Activity = {
         ...change.payload,
+        id:
+          change.payload.id ||
+          (change.targetActivityId ? `${change.targetActivityId}-rep` : `act-rep-${day.id}`),
         votes: { ...(change.payload.votes || {}) },
       };
-      nextActivities = nextActivities.map((a) =>
-        a.id === change.targetActivityId ? clonedPayload : a
-      );
-    } else if (change.type === 'move' && change.targetActivityId && change.newStartTime) {
-      nextActivities = nextActivities
-        .map((a) =>
-          a.id === change.targetActivityId ? { ...a, startTime: change.newStartTime! } : a
-        )
-        .sort((a, b) => a.startTime.localeCompare(b.startTime));
+      const normPayloadTitle = normalizeActivityTitleKey(clonedPayload.title);
+
+      if (targetIdx >= 0) {
+        const replacedId = nextActivities[targetIdx].id;
+        // Strict in-place replacement at targetIdx + filter out any duplicate occurrence of clonedPayload.id or title
+        nextActivities = nextActivities
+          .map((a, idx) => (idx === targetIdx ? clonedPayload : a))
+          .filter(
+            (a, idx) =>
+              idx === targetIdx ||
+              (a.id !== clonedPayload.id &&
+                a.id !== replacedId &&
+                (!normPayloadTitle || normalizeActivityTitleKey(a.title) !== normPayloadTitle))
+          );
+      } else {
+        // If the replacement was already applied earlier, update it in-place by ID or normalized title
+        const existingPayloadIdx = nextActivities.findIndex(
+          (a) =>
+            a.id === clonedPayload.id ||
+            (normPayloadTitle.length > 0 &&
+              normalizeActivityTitleKey(a.title) === normPayloadTitle)
+        );
+        if (existingPayloadIdx >= 0) {
+          nextActivities = nextActivities.map((a, idx) =>
+            idx === existingPayloadIdx
+              ? { ...clonedPayload, id: a.id }
+              : a
+          );
+        }
+      }
+    } else if (change.type === 'move' && change.newStartTime) {
+      const targetIdx = findTargetIndex();
+      if (targetIdx >= 0) {
+        const targetId = nextActivities[targetIdx].id;
+        nextActivities = nextActivities
+          .map((a) => (a.id === targetId ? { ...a, startTime: change.newStartTime! } : a))
+          .sort((a, b) => a.startTime.localeCompare(b.startTime));
+      }
     }
 
-    const withTravel = recalculateDayTravelTimes(nextActivities);
+    const deduped = deduplicateActivitiesById(nextActivities);
+    const withTravel = recalculateDayTravelTimes(deduped);
     const updatedDay: Day = {
       ...day,
-      activities: withTravel,
+      activities: isPlanBActive ? day.activities : withTravel,
+      planB: isPlanBActive ? withTravel : day.planB,
     };
     const metrics = computePaceMetrics(updatedDay);
     return {
@@ -583,6 +1050,229 @@ export function applyProposalChanges(days: Day[], changes: ProposalChange[]): Da
   }, days);
 }
 
+export interface ActivityExtendedTip {
+  id: string;
+  level: 'warning' | 'tip' | 'verified';
+  title: string;
+  detail: string;
+}
+
+export interface ActivityExtendedDetails {
+  title: string;
+  subtitle: string;
+  extendedOverview: string;
+  aiReasoning: string;
+  proposalSummary?: string;
+  tipsAndWarnings: ActivityExtendedTip[];
+}
+
+/**
+ * Builds rich, structured extended details, AI choice reasoning, and specific tips/warnings
+ * for the Activity Details ("Read More") modal on both ActivityCards and ProposalChanges.
+ */
+export function buildActivityExtendedDetails(
+  activity: Activity | undefined,
+  proposal?: ProposalChange,
+  language: 'en' | 'pt' = 'en'
+): ActivityExtendedDetails {
+  const isPt = language === 'pt';
+  const act = activity || proposal?.payload;
+  const accPayload = proposal?.accommodationPayload;
+
+  const title =
+    accPayload?.name ||
+    act?.title ||
+    proposal?.targetAccommodationName ||
+    proposal?.targetActivityTitle ||
+    (isPt ? 'Sugestão do AtlasGenie' : 'AtlasGenie Suggestion');
+
+  const subtitleParts: string[] = [];
+  if (accPayload) {
+    subtitleParts.push(`${accPayload.type.toUpperCase()} · ~€${accPayload.price}/night`);
+  }
+  if (act?.startTime) subtitleParts.push(`${act.startTime} (${act.durationMin || 60} min)`);
+  if (act?.location?.name) subtitleParts.push(act.location.name);
+  if (proposal?.dayNumber) {
+    subtitleParts.push(`${isPt ? 'Dia' : 'Day'} ${proposal.dayNumber}`);
+  }
+  const subtitle = subtitleParts.join(' · ');
+
+  let proposalSummary: string | undefined;
+  if (proposal) {
+    if (
+      (proposal.type === 'replace_accommodation' || proposal.accommodationPayload) &&
+      proposal.accommodationPayload
+    ) {
+      proposalSummary = isPt
+        ? `Substitui o alojamento "${proposal.targetAccommodationName || 'Atual'}" por "${proposal.accommodationPayload.name}" (~€${proposal.accommodationPayload.price}/noite).`
+        : `Replaces accommodation "${proposal.targetAccommodationName || 'Current Stay'}" with "${proposal.accommodationPayload.name}" (~€${proposal.accommodationPayload.price}/night).`;
+    } else if (proposal.type === 'replace' && proposal.targetActivityTitle && proposal.payload) {
+      proposalSummary = isPt
+        ? `Substitui "${proposal.targetActivityTitle}" por "${proposal.payload.title}" às ${proposal.payload.startTime}.`
+        : `Replaces "${proposal.targetActivityTitle}" with "${proposal.payload.title}" at ${proposal.payload.startTime}.`;
+    } else if (proposal.type === 'remove') {
+      proposalSummary = isPt
+        ? `Remove "${proposal.targetActivityTitle || title}" para libertar tempo de margem no seu dia.`
+        : `Removes "${proposal.targetActivityTitle || title}" to open up breathing room in your daily schedule.`;
+    } else if (proposal.type === 'move' && proposal.newStartTime) {
+      proposalSummary = isPt
+        ? `Altera o horário de "${proposal.targetActivityTitle || title}" para as ${proposal.newStartTime}.`
+        : `Moves "${proposal.targetActivityTitle || title}" to ${proposal.newStartTime}.`;
+    } else if (proposal.type === 'add' && proposal.payload) {
+      proposalSummary = isPt
+        ? `Adiciona "${proposal.payload.title}" às ${proposal.payload.startTime} (${proposal.payload.durationMin} min).`
+        : `Adds "${proposal.payload.title}" at ${proposal.payload.startTime} (${proposal.payload.durationMin} min).`;
+    }
+  }
+
+  const baseDesc =
+    act?.description ||
+    proposal?.reason ||
+    (isPt
+      ? 'Paragem selecionada para otimizar o equilíbrio cultural, gastronómico e logístico do seu dia.'
+      : 'Curated stop selected to optimize the cultural, culinary, and logistical balance of your day.');
+
+  const settingNote = act
+    ? act.isOutdoor
+      ? isPt
+        ? 'Experiência maioritariamente ao ar livre; ideal com bom tempo e integrada com alternativa interior no Plano B.'
+        : 'Primarily outdoor experience; best enjoyed in fair weather and paired with an indoor Plan B backup.'
+      : isPt
+      ? 'Espaço interior ou abrigado, seguro contra chuva e variações meteorológicas.'
+      : 'Indoor or sheltered venue, rain-safe regardless of weather conditions.'
+    : '';
+
+  const hoursNote = act?.openingHoursText
+    ? isPt
+      ? `Horário habitual de funcionamento: ${act.openingHoursText}.`
+      : `Typical opening hours: ${act.openingHoursText}.`
+    : '';
+
+  const extendedOverview = [baseDesc, settingNote, hoursNote].filter(Boolean).join(' ');
+
+  const whyBase = act?.whyThis || '';
+  const propReason = proposal?.reason || '';
+  const tagsText =
+    act?.interestTags && act.interestTags.length > 0
+      ? isPt
+        ? `Interesses correspondentes: ${act.interestTags.join(', ')}.`
+        : `Matched interests: ${act.interestTags.join(', ')}.`
+      : '';
+
+  const aiReasoning =
+    [
+      propReason && propReason !== whyBase ? propReason : '',
+      whyBase,
+      tagsText,
+    ]
+      .filter(Boolean)
+      .join(' — ') ||
+    (isPt
+      ? 'Selecionado pelo AtlasGenie para manter tempos de deslocação curtos e respeitar o seu ritmo diário.'
+      : 'Selected by AtlasGenie to keep transit legs short and match your preferred daily pace.');
+
+  const tipsAndWarnings: ActivityExtendedTip[] = [];
+
+  if (act) {
+    // 1. Crowd / Tourist-trap tip or warning
+    if (act.touristTrapScore >= 70) {
+      const altText = act.localAlternative
+        ? isPt
+          ? ` Alternativa local recomendada a ${act.localAlternative.travelMinutesAway} min: "${act.localAlternative.title}" (${act.localAlternative.reason}).`
+          : ` Recommended local alternative ${act.localAlternative.travelMinutesAway} min away: "${act.localAlternative.title}" (${act.localAlternative.reason}).`
+        : '';
+      tipsAndWarnings.push({
+        id: 'crowd-warning',
+        level: 'warning',
+        title: isPt
+          ? `Aviso de Afluência Elevada (${act.touristTrapScore}/100)`
+          : `High Crowd & Tourist-Trap Alert (${act.touristTrapScore}/100)`,
+        detail:
+          (isPt
+            ? 'Este local regista filas intensas nas horas de ponta. Reserve bilhete com hora marcada ou chegue 20 minutos antes da abertura.'
+            : 'This stop experiences heavy queues during peak hours. Book timed-entry tickets in advance or arrive 20 minutes before opening.') +
+          altText,
+      });
+    } else {
+      tipsAndWarnings.push({
+        id: 'crowd-tip',
+        level: 'tip',
+        title: isPt
+          ? `Ambiente Autêntico · Índice de Multidão Baixo (${act.touristTrapScore}/100)`
+          : `Authentic Pace · Low Crowd Index (${act.touristTrapScore}/100)`,
+        detail: isPt
+          ? 'Paragem tranquila fora dos circuitos turísticos mais saturados, permitindo uma visita sem pressas.'
+          : 'Calmer stop away from the heaviest tour-bus bottlenecks, allowing an unhurried visit.',
+      });
+    }
+
+    // 2. Price & Hours Verification Tip / Warning
+    if (
+      act.priceConfidence.status === 'verified' &&
+      act.hoursConfidence.status === 'verified'
+    ) {
+      tipsAndWarnings.push({
+        id: 'trust-verified',
+        level: 'verified',
+        title: isPt ? 'Preços e Horários Verificados' : 'Verified Prices & Opening Hours',
+        detail: isPt
+          ? `Dados confirmados através de fonte oficial${act.priceConfidence.verifiedAt ? ` em ${act.priceConfidence.verifiedAt}` : ''}.`
+          : `Data cross-checked against official venue sources${act.priceConfidence.verifiedAt ? ` on ${act.priceConfidence.verifiedAt}` : ''}.`,
+      });
+    } else {
+      tipsAndWarnings.push({
+        id: 'trust-estimate',
+        level: 'warning',
+        title: isPt
+          ? 'Aviso de Estimativa (~) · Confirmar Antes de Ir'
+          : 'Estimate Notice (~) · Verify Before Arrival',
+        detail: isPt
+          ? `${act.priceConfidence.notes || 'Os custos indicados são estimativas da IA (~).'} Confirme horários e tarifas sazonais no local ou portal oficial.`
+          : `${act.priceConfidence.notes || 'Listed costs are AI estimates (~).'} Please confirm seasonal opening hours and ticket rates prior to arrival.`,
+      });
+    }
+
+    // 3. Weather / Transit Logistics Tip
+    if (act.isOutdoor) {
+      tipsAndWarnings.push({
+        id: 'weather-outdoor',
+        level: 'tip',
+        title: isPt ? 'Dica Meteorológica (Ar Livre)' : 'Outdoor Weather Tip',
+        detail: isPt
+          ? 'Leve calçado confortável. Se chover, utilize o botão "Mudar para Plano B" no topo do dia para ativar a alternativa interior.'
+          : 'Wear comfortable walking shoes. If rain is forecast, use the "Switch to Plan B" button at the top of the day for an indoor backup.',
+      });
+    } else if (act.travelFromPrevious) {
+      tipsAndWarnings.push({
+        id: 'transit-tip',
+        level: 'tip',
+        title: isPt ? 'Dica de Deslocação' : 'Transit & Arrival Tip',
+        detail: isPt
+          ? `A cerca de ${act.travelFromPrevious.minutes} min (${act.travelFromPrevious.distanceKm} km) da paragem anterior.`
+          : `Located approximately ${act.travelFromPrevious.minutes} min (${act.travelFromPrevious.distanceKm} km) from your previous stop.`,
+      });
+    }
+  } else if (proposal) {
+    tipsAndWarnings.push({
+      id: 'proposal-control-tip',
+      level: 'tip',
+      title: isPt ? 'Controlo Não-Destrutivo' : 'Non-Destructive Diff Control',
+      detail: isPt
+        ? 'O seu roteiro original permanece intacto até clicar em Aceitar. Pode sempre anular a última alteração com um clique.'
+        : 'Your saved itinerary remains untouched until you click Accept. You can always undo any accepted change in one click.',
+    });
+  }
+
+  return {
+    title,
+    subtitle,
+    extendedOverview,
+    aiReasoning,
+    proposalSummary,
+    tipsAndWarnings,
+  };
+}
+
 /**
  * Immutably applies optimized budget tier selections onto a Day[] structure (both Plan A and Plan B).
  */
@@ -599,6 +1289,81 @@ export function applyBudgetOptimizationToDays(
       selections[act.id] ? { ...act, selectedTier: selections[act.id] } : act
     ),
   }));
+}
+
+/**
+ * Sprint 12.1: Uses .map() to iterate over the current itinerary and immutably apply
+ * ONLY the proposals where selected === true.
+ */
+export function applySelectedBudgetProposalsToDays(
+  days: Day[],
+  proposals: BudgetOptimizationChange[]
+): Day[] {
+  const selectedProposals = proposals.filter((p) => p.selected === true);
+  const selectedTierByActivityId = selectedProposals.reduce<Record<string, BudgetTier>>(
+    (acc, proposal) => ({
+      ...acc,
+      [proposal.activityId]: proposal.toTier,
+    }),
+    {}
+  );
+
+  return days.map((day) => ({
+    ...day,
+    activities: day.activities.map((act) =>
+      selectedTierByActivityId[act.id]
+        ? { ...act, selectedTier: selectedTierByActivityId[act.id] }
+        : act
+    ),
+    planB: day.planB.map((act) =>
+      selectedTierByActivityId[act.id]
+        ? { ...act, selectedTier: selectedTierByActivityId[act.id] }
+        : act
+    ),
+  }));
+}
+
+/**
+ * Sprint 12.2: Uses .reduce() to transform the flat expenses array into a grouped
+ * object keyed by payer displayName (or paidBy fallback), with each person's expenses
+ * sorted chronologically.
+ */
+export function groupExpensesByPayer(
+  expenses: Expense[],
+  travelers: Traveler[] = []
+): Record<string, Expense[]> {
+  const travelerNameById = travelers.reduce<Record<string, string>>((acc, tr) => {
+    acc[tr.id] = tr.displayName;
+    return acc;
+  }, {});
+
+  const groupedByPerson = expenses.reduce<Record<string, Expense[]>>((acc, exp) => {
+    const payerKey = travelerNameById[exp.paidBy] || exp.paidBy;
+    const currentList = acc[payerKey] || [];
+    return {
+      ...acc,
+      [payerKey]: [...currentList, exp],
+    };
+  }, {});
+
+  return Object.keys(groupedByPerson).reduce<Record<string, Expense[]>>((sortedAcc, payerKey) => {
+    const chronologicallySorted = [...groupedByPerson[payerKey]].sort((a, b) => {
+      const dateCompare = (a.date || '').localeCompare(b.date || '');
+      if (dateCompare !== 0) return dateCompare;
+      return a.id.localeCompare(b.id);
+    });
+    return {
+      ...sortedAcc,
+      [payerKey]: chronologicallySorted,
+    };
+  }, {});
+}
+
+/**
+ * Sprint 12.3: Immutably removes an expense by ID using .filter().
+ */
+export function removeExpenseById(expenses: Expense[], expenseId: string): Expense[] {
+  return expenses.filter((exp) => exp.id !== expenseId);
 }
 
 /**
@@ -1389,4 +2154,127 @@ export function formatGroundedPlaceReply(
   ].join('\n');
 }
 
+export const TRIP_DRAFT_STORAGE_KEY = 'atlasGenie_tripDraft';
 
+export interface TripWizardDraftState {
+  country: string;
+  cities: string[];
+  cityInput: string;
+  letAiDecideCities: boolean;
+  startDate: string;
+  endDate: string;
+  travelersCount: number;
+  totalBudget: number;
+  selectedInterests: string[];
+  defaultPace: number;
+  groupEnabled: boolean;
+  specialPreferences: string[];
+  customRequest: string;
+}
+
+export function createDefaultTripWizardDraft(
+  inferred?: { country: string; initialCities: string[] } | null
+): TripWizardDraftState {
+  return {
+    country: inferred ? inferred.country : '',
+    cities: inferred ? [...inferred.initialCities] : [],
+    cityInput: '',
+    letAiDecideCities: false,
+    startDate: '2026-11-18',
+    endDate: '2026-11-21',
+    travelersCount: 2,
+    totalBudget: 900,
+    selectedInterests: ['food', 'history', 'viewpoints'],
+    defaultPace: 3,
+    groupEnabled: true,
+    specialPreferences: [],
+    customRequest: '',
+  };
+}
+
+export function serializeTripWizardDraft(draft: TripWizardDraftState): string {
+  return JSON.stringify({
+    country: String(draft.country || ''),
+    cities: Array.isArray(draft.cities) ? [...draft.cities] : [],
+    cityInput: String(draft.cityInput || ''),
+    letAiDecideCities: Boolean(draft.letAiDecideCities),
+    startDate: String(draft.startDate || '2026-11-18'),
+    endDate: String(draft.endDate || '2026-11-21'),
+    travelersCount: Number.isFinite(Number(draft.travelersCount))
+      ? Math.max(1, Number(draft.travelersCount))
+      : 2,
+    totalBudget: Number.isFinite(Number(draft.totalBudget))
+      ? Math.max(0, Number(draft.totalBudget))
+      : 900,
+    selectedInterests: Array.isArray(draft.selectedInterests)
+      ? [...draft.selectedInterests]
+      : ['food', 'history', 'viewpoints'],
+    defaultPace: Number.isFinite(Number(draft.defaultPace))
+      ? Math.min(5, Math.max(1, Number(draft.defaultPace)))
+      : 3,
+    groupEnabled: Boolean(draft.groupEnabled),
+    specialPreferences: Array.isArray(draft.specialPreferences)
+      ? [...draft.specialPreferences]
+      : [],
+    customRequest: String(draft.customRequest || ''),
+  });
+}
+
+export function parseTripWizardDraft(
+  rawJson: string | null | undefined,
+  fallback?: TripWizardDraftState
+): TripWizardDraftState | null {
+  if (!rawJson || typeof rawJson !== 'string') {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const base = fallback || createDefaultTripWizardDraft();
+    return {
+      country: typeof parsed.country === 'string' ? parsed.country : base.country,
+      cities: Array.isArray(parsed.cities)
+        ? parsed.cities.filter((c: unknown): c is string => typeof c === 'string')
+        : [...base.cities],
+      cityInput: typeof parsed.cityInput === 'string' ? parsed.cityInput : base.cityInput,
+      letAiDecideCities:
+        typeof parsed.letAiDecideCities === 'boolean'
+          ? parsed.letAiDecideCities
+          : base.letAiDecideCities,
+      startDate:
+        typeof parsed.startDate === 'string' && parsed.startDate.trim()
+          ? parsed.startDate
+          : base.startDate,
+      endDate:
+        typeof parsed.endDate === 'string' && parsed.endDate.trim()
+          ? parsed.endDate
+          : base.endDate,
+      travelersCount:
+        typeof parsed.travelersCount === 'number' && Number.isFinite(parsed.travelersCount)
+          ? Math.max(1, Math.round(parsed.travelersCount))
+          : base.travelersCount,
+      totalBudget:
+        typeof parsed.totalBudget === 'number' && Number.isFinite(parsed.totalBudget)
+          ? Math.max(0, Math.round(parsed.totalBudget))
+          : base.totalBudget,
+      selectedInterests: Array.isArray(parsed.selectedInterests)
+        ? parsed.selectedInterests.filter((i: unknown): i is string => typeof i === 'string')
+        : [...base.selectedInterests],
+      defaultPace:
+        typeof parsed.defaultPace === 'number' && Number.isFinite(parsed.defaultPace)
+          ? Math.min(5, Math.max(1, Math.round(parsed.defaultPace)))
+          : base.defaultPace,
+      groupEnabled:
+        typeof parsed.groupEnabled === 'boolean' ? parsed.groupEnabled : base.groupEnabled,
+      specialPreferences: Array.isArray(parsed.specialPreferences)
+        ? parsed.specialPreferences.filter((p: unknown): p is string => typeof p === 'string')
+        : [...base.specialPreferences],
+      customRequest:
+        typeof parsed.customRequest === 'string' ? parsed.customRequest : base.customRequest,
+    };
+  } catch {
+    return null;
+  }
+}

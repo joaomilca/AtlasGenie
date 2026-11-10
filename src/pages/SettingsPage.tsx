@@ -40,22 +40,22 @@ export const SettingsPage: React.FC = () => {
   };
 
   return (
-    <main className="max-w-3xl mx-auto px-4 sm:px-8 py-10 space-y-8">
-      <div className="border-b border-slate-200 dark:border-slate-800 pb-4 flex items-center justify-between gap-4">
-        <h1 className="font-serif-atlas text-3xl font-bold text-slate-900 dark:text-white">
+    <main className="max-w-3xl mx-auto px-0 md:px-8 py-6 md:py-10 space-y-6 md:space-y-8">
+      <div className="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-wrap items-center justify-between gap-4">
+        <h1 className="font-serif-atlas text-xl md:text-3xl font-bold text-slate-900 dark:text-white">
           {t('settings.title')}
         </h1>
         <OfflineIndicator />
       </div>
 
       {/* Language & Theme */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-6">
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="font-serif-atlas text-lg font-semibold">{t('settings.language')}</h2>
+            <h2 className="font-serif-atlas text-base md:text-lg font-semibold">{t('settings.language')}</h2>
             <p className="text-xs text-slate-500">{t('settings.languageSub')}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setLanguage('en')}
@@ -83,10 +83,10 @@ export const SettingsPage: React.FC = () => {
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
           <div>
-            <h2 className="font-serif-atlas text-lg font-semibold">{t('settings.theme')}</h2>
+            <h2 className="font-serif-atlas text-base md:text-lg font-semibold">{t('settings.theme')}</h2>
             <p className="text-xs text-slate-500">{t('settings.themeSub')}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setTheme('light')}
@@ -117,11 +117,11 @@ export const SettingsPage: React.FC = () => {
           <div className="flex items-start gap-2.5">
             <Wifi className="w-4 h-4 text-teal-600 dark:text-teal-400 mt-1 shrink-0" />
             <div>
-              <h2 className="font-serif-atlas text-lg font-semibold">PWA & Airplane Mode</h2>
+              <h2 className="font-serif-atlas text-base md:text-lg font-semibold">PWA & Airplane Mode</h2>
               <p className="text-xs text-slate-500">{t('pwa.readyBadge')}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
               <CheckCircle2 className="w-3.5 h-3.5" />
               <span>Offline Cache Active</span>

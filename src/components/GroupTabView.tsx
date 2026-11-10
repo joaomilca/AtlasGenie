@@ -86,12 +86,12 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
   return (
     <div className="space-y-8">
       {/* Group Invite Header & Active Voter Switcher */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white">
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="font-serif-atlas text-xl md:text-2xl font-bold text-slate-900 dark:text-white break-words">
             {t('group.title')}
           </h2>
-          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 break-words">
             {t('group.inviteCode')}:{' '}
             <strong className="font-mono-tabular text-amber-700 dark:text-amber-400">
               {bundle.trip.inviteCode}
@@ -101,7 +101,7 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-slate-500">{t('group.votingAs')}</span>
             {bundle.travelers.map((tr) => (
               <button
@@ -130,10 +130,10 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
       </section>
 
       {/* Fairness Meter & Plain-Language Trade-offs */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-5">
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
+          <div className="min-w-0">
+            <h3 className="font-serif-atlas text-base md:text-lg font-semibold text-slate-900 dark:text-white break-words">
               {t('group.fairnessTitle')} — {t('group.overallBalance')}{' '}
               {fairness.overallFairnessIndex}%
             </h3>
@@ -188,8 +188,8 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
       </section>
 
       {/* Group Activity Voting Table */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-        <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4">
+        <h3 className="font-serif-atlas text-base md:text-lg font-semibold text-slate-900 dark:text-white">
           {t('group.liveVotingTitle')}
         </h3>
         <div className="space-y-4">
@@ -266,8 +266,8 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
       </section>
 
       {/* Add Traveler Profile Form */}
-      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 space-y-4">
-        <h3 className="font-serif-atlas text-lg font-semibold text-slate-900 dark:text-white">
+      <section className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-4">
+        <h3 className="font-serif-atlas text-base md:text-lg font-semibold text-slate-900 dark:text-white">
           {t('group.addMember')}
         </h3>
         <form onSubmit={handleAddMember} className="grid grid-cols-1 sm:grid-cols-4 gap-3">

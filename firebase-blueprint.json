@@ -22,6 +22,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "destination": { "type": "string", "minLength": 1, "maxLength": 120 },
         "startDate": { "type": "string", "maxLength": 32 },
@@ -41,6 +42,7 @@
       },
       "required": [
         "id",
+        "userId",
         "ownerId",
         "destination",
         "startDate",

@@ -1162,6 +1162,318 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
   },
 };
 
+// Enrich all DEMO_TRIPS days and activities with Sprint 4 accommodation, meals, intercity_transit, and distinct tier coordinates
+const DEMO_LOGISTICS_BY_TRIP: Record<
+  string,
+  {
+    cityByDay: string[];
+    accommodations: { name: string; type: 'hotel' | 'hostel' | 'apartment'; price: number; lat: number; lng: number }[];
+    mealsByDay: {
+      breakfast: { name: string; cuisine: string; estimatedPrice: number; lat: number; lng: number };
+      lunch: { name: string; cuisine: string; estimatedPrice: number; lat: number; lng: number };
+      dinner: { name: string; cuisine: string; estimatedPrice: number; lat: number; lng: number };
+    }[];
+    transitByDayNumber?: Record<number, { method: string; duration: string; price: number; fromCity: string; toCity: string }>;
+  }
+> = {
+  'demo-lisbon-4d': {
+    cityByDay: ['Lisbon', 'Lisbon', 'Lisbon', 'Almada & Cacilhas'],
+    accommodations: [
+      { name: 'Hotel da Baixa & Azulejo Courtyard', type: 'hotel', price: 138, lat: 38.7118, lng: -9.1376 },
+      { name: 'Solar do Castelo Heritage Stay', type: 'hotel', price: 145, lat: 38.7136, lng: -9.1338 },
+      { name: 'Príncipe Real Garden Loft Apartments', type: 'apartment', price: 132, lat: 38.7161, lng: -9.1482 },
+      { name: 'Cais do Ginjal Riverfront Boutique Stay', type: 'apartment', price: 118, lat: 38.6865, lng: -9.1538 },
+    ],
+    transitByDayNumber: {
+      4: {
+        method: 'Transtejo River Ferry & Rede Expressos Connection (Cais do Sodré → Cacilhas)',
+        duration: '15m',
+        price: 3,
+        fromCity: 'Lisbon',
+        toCity: 'Almada & Cacilhas',
+      },
+    },
+    mealsByDay: [
+      {
+        breakfast: { name: 'Fábrica Coffee Roasters Baixa', cuisine: 'Specialty Coffee & Croissant', estimatedPrice: 9, lat: 38.7145, lng: -9.1408 },
+        lunch: { name: 'Taberna da Rua das Flores', cuisine: 'Petiscos Portugueses', estimatedPrice: 24, lat: 38.7098, lng: -9.1432 },
+        dinner: { name: 'Zé dos Cornos Beco dos Surradores', cuisine: 'Traditional Spareribs & Bacalhau', estimatedPrice: 28, lat: 38.7158, lng: -9.1361 },
+      },
+      {
+        breakfast: { name: 'Antiga Confeitaria de Belém', cuisine: 'Pastéis de Belém & Bica', estimatedPrice: 8, lat: 38.6975, lng: -9.2032 },
+        lunch: { name: 'Enoteca de Belém Wine & Tasca', cuisine: 'Regional Alentejo & Tapas', estimatedPrice: 26, lat: 38.6981, lng: -9.2044 },
+        dinner: { name: 'Tapisco Príncipe Real', cuisine: 'Iberian Petiscos & Vermouth', estimatedPrice: 38, lat: 38.7156, lng: -9.1459 },
+      },
+      {
+        breakfast: { name: 'Copenhagen Coffee Lab & Bakery', cuisine: 'Artisan Sourdough & Espresso', estimatedPrice: 10, lat: 38.7172, lng: -9.1496 },
+        lunch: { name: 'Cantina Baldracca Mouraria', cuisine: 'Modern Neighbourhood Tasca', estimatedPrice: 21, lat: 38.7131, lng: -9.1319 },
+        dinner: { name: 'Cervejaria Ramiro', cuisine: 'Lisbon Marisqueira & Shellfish', estimatedPrice: 44, lat: 38.7209, lng: -9.1355 },
+      },
+      {
+        breakfast: { name: 'Manteigaria Time Out Chiado', cuisine: 'Warm Custard Tarts & Galão', estimatedPrice: 7, lat: 38.7107, lng: -9.1439 },
+        lunch: { name: 'Restaurante Ponto Final Cacilhas', cuisine: 'Grilled Monkfish Rice by the Tagus', estimatedPrice: 32, lat: 38.6869, lng: -9.1526 },
+        dinner: { name: 'Atira-te ao Rio', cuisine: 'Riverfront Contemporary Portuguese', estimatedPrice: 39, lat: 38.6867, lng: -9.1531 },
+      },
+    ],
+  },
+  'demo-porto-3d': {
+    cityByDay: ['Porto', 'Porto', 'Vila Nova de Gaia & Porto'],
+    accommodations: [
+      { name: 'Torel Avantgarde Boutique Hotel Porto', type: 'hotel', price: 135, lat: 41.1449, lng: -8.6202 },
+      { name: 'Casas do Porto Ribeira Apartments', type: 'apartment', price: 118, lat: 41.1411, lng: -8.6138 },
+      { name: 'The Yeatman & Gaia Cellar Quarter Stay', type: 'hotel', price: 155, lat: 41.1342, lng: -8.6131 },
+    ],
+    transitByDayNumber: {
+      3: {
+        method: 'Alfa Pendular / Metro Dom Luís I Upper Deck Crossing',
+        duration: '18m',
+        price: 4,
+        fromCity: 'Porto',
+        toCity: 'Vila Nova de Gaia & Porto',
+      },
+    },
+    mealsByDay: [
+      {
+        breakfast: { name: 'Confeitaria do Bolhão (Since 1896)', cuisine: 'Traditional Northern Bakery', estimatedPrice: 9, lat: 41.1489, lng: -8.6074 },
+        lunch: { name: 'Brasão Aliados Cervejaria', cuisine: 'Francesinha & Craft Beer', estimatedPrice: 21, lat: 41.1482, lng: -8.6114 },
+        dinner: { name: 'Cantinho do Avillez Porto', cuisine: 'Contemporary Douro Gastronomy', estimatedPrice: 38, lat: 41.1434, lng: -8.6147 },
+      },
+      {
+        breakfast: { name: 'Combi Coffee Roasters Morgado de Mateus', cuisine: 'Specialty Pour-Over & Brioche', estimatedPrice: 10, lat: 41.1476, lng: -8.6012 },
+        lunch: { name: 'O Gaveto Matosinhos', cuisine: 'Charcoal-Grilled Wild Sea Bass', estimatedPrice: 34, lat: 41.1818, lng: -8.6915 },
+        dinner: { name: 'Adega São Nicolau Ribeira', cuisine: 'Polvo à Lagareiro & Douro Red', estimatedPrice: 31, lat: 41.1409, lng: -8.6139 },
+      },
+      {
+        breakfast: { name: 'Majestic Café Historic Belle Époque Salon', cuisine: 'Rabanadas & Café de Saco', estimatedPrice: 14, lat: 41.1472, lng: -8.6066 },
+        lunch: { name: 'Culto ao Bacalhau Mercado do Bolhão', cuisine: 'Traditional Salt Cod Specialties', estimatedPrice: 26, lat: 41.1494, lng: -8.6067 },
+        dinner: { name: 'Vinum at Graham’s 1890 Lodge', cuisine: 'Douro Valley Grill & Vintage Port', estimatedPrice: 48, lat: 41.1369, lng: -8.6236 },
+      },
+    ],
+  },
+  'demo-rome-5d': {
+    cityByDay: ['Rome', 'Rome', 'Rome', 'Rome', 'Rome'],
+    accommodations: [
+      { name: 'Hotel Palazzo Manfredi & Monti Suites', type: 'hotel', price: 165, lat: 41.8901, lng: 12.4956 },
+      { name: 'Donna Camilla Savelli Trastevere Cloister Hotel', type: 'hotel', price: 158, lat: 41.8884, lng: 12.4669 },
+      { name: 'Campo de’ Fiori Renaissance Apartment', type: 'apartment', price: 142, lat: 41.8956, lng: 12.4722 },
+      { name: 'Prati Vatican Courtyard Boutique Hotel', type: 'hotel', price: 149, lat: 41.9068, lng: 12.4614 },
+      { name: 'Aventine Rose Garden Villa Stay', type: 'hotel', price: 152, lat: 41.8829, lng: 12.4847 },
+    ],
+    mealsByDay: [
+      {
+        breakfast: { name: 'Sciascia Caffè 1919', cuisine: 'Chocolate-Rimmed Espresso & Cornetto', estimatedPrice: 8, lat: 41.9082, lng: 12.4648 },
+        lunch: { name: 'Mordi e Vai Box 15 (Mercato di Testaccio)', cuisine: 'Roman Allesso & Supplì', estimatedPrice: 14, lat: 41.8768, lng: 12.4752 },
+        dinner: { name: 'Armando al Pantheon', cuisine: 'Classic Amatriciana & Saltimbocca', estimatedPrice: 42, lat: 41.8989, lng: 12.4764 },
+      },
+      {
+        breakfast: { name: 'Roscioli Caffè Pasticceria', cuisine: 'Maritozzo con la Panna & Cappuccino', estimatedPrice: 9, lat: 41.8938, lng: 12.4741 },
+        lunch: { name: 'Da Enzo al 29 Trastevere', cuisine: 'Cacio e Pepe & Carciofi alla Giudia', estimatedPrice: 26, lat: 41.8879, lng: 12.4779 },
+        dinner: { name: 'Taverna Trilussa Trastevere', cuisine: 'Roman Mimosa Ravioli & Castelli Wine', estimatedPrice: 44, lat: 41.8899, lng: 12.4704 },
+      },
+      {
+        breakfast: { name: 'Sant’Eustachio Il Caffè', cuisine: 'Wood-Roasted Gran Caffè', estimatedPrice: 8, lat: 41.8981, lng: 12.4755 },
+        lunch: { name: 'Nonna Betta Jewish Ghetto', cuisine: 'Kosher Roman Artichokes & Homemade Pasta', estimatedPrice: 28, lat: 41.8926, lng: 12.4781 },
+        dinner: { name: 'Salumeria Roscioli Salone', cuisine: 'Artisanal Burrata, Carbonara & Wine Cellar', estimatedPrice: 49, lat: 41.8942, lng: 12.4745 },
+      },
+      {
+        breakfast: { name: 'Pasticceria Regoli (Since 1916)', cuisine: 'Millefoglie alle Fragoline & Espresso', estimatedPrice: 9, lat: 41.8952, lng: 12.5021 },
+        lunch: { name: 'Pizzarium Bonci Prati', cuisine: 'Artisanal Roman Pizza al Taglio', estimatedPrice: 18, lat: 41.9071, lng: 12.4462 },
+        dinner: { name: 'Osteria dell’Ingegno Piazza di Pietra', cuisine: 'Seasonal Lazio Kitchen & Wine Bar', estimatedPrice: 39, lat: 41.9001, lng: 12.4792 },
+      },
+      {
+        breakfast: { name: 'Tazza d’Oro Pantheon Roastery', cuisine: 'Granita di Caffè con Panna', estimatedPrice: 7, lat: 41.8992, lng: 12.4775 },
+        lunch: { name: 'Hostaria Antica Roma (Via Appia Antica)', cuisine: 'Roman Countryside Garden Trattoria', estimatedPrice: 31, lat: 41.8524, lng: 12.5218 },
+        dinner: { name: 'Flavio al Velavevodetto (Monte Testaccio)', cuisine: 'Rigatoni alla Carbonara in Amphora Cave', estimatedPrice: 38, lat: 41.8756, lng: 12.4761 },
+      },
+    ],
+  },
+};
+
+for (const [tripKey, bundle] of Object.entries(DEMO_TRIPS)) {
+  const logistics = DEMO_LOGISTICS_BY_TRIP[tripKey];
+  bundle.days.forEach((day, dIdx) => {
+    const acc = logistics?.accommodations?.[dIdx] || logistics?.accommodations?.[0];
+    const meals = logistics?.mealsByDay?.[dIdx] || logistics?.mealsByDay?.[0];
+    const transit = logistics?.transitByDayNumber?.[day.dayNumber];
+    day.city = logistics?.cityByDay?.[dIdx] || bundle.trip.destination;
+
+    if (acc && !day.accommodation) {
+      const accVerified = dIdx % 2 === 0;
+      day.accommodation = {
+        name: acc.name,
+        type: acc.type,
+        price: acc.price,
+        isPriceVerified: accVerified,
+        coordinates: { lat: acc.lat, lng: acc.lng },
+        tierOptions: {
+          budget: {
+            name: `${day.city} Central Social Hostel & Guesthouse`,
+            type: 'hostel',
+            price: Math.max(38, Math.round(acc.price * 0.42)),
+            isPriceVerified: accVerified,
+            coordinates: { lat: Number((acc.lat - 0.0042).toFixed(5)), lng: Number((acc.lng + 0.0038).toFixed(5)) },
+          },
+          mid: {
+            name: acc.name,
+            type: acc.type,
+            price: acc.price,
+            isPriceVerified: accVerified,
+            coordinates: { lat: acc.lat, lng: acc.lng },
+          },
+          premium: {
+            name: `Palazzo & Grand Heritage Hotel ${day.city}`,
+            type: 'hotel',
+            price: Math.round(acc.price * 1.95),
+            isPriceVerified: false,
+            coordinates: { lat: Number((acc.lat + 0.0049).toFixed(5)), lng: Number((acc.lng - 0.0045).toFixed(5)) },
+          },
+        },
+      };
+    }
+
+    if (transit && !day.intercity_transit) {
+      day.intercity_transit = {
+        ...transit,
+        isPriceVerified: true,
+      };
+    }
+
+    if (meals && !day.meals) {
+      day.meals = {
+        breakfast: {
+          name: meals.breakfast.name,
+          cuisine: meals.breakfast.cuisine,
+          estimatedPrice: meals.breakfast.estimatedPrice,
+          isPriceVerified: true,
+          coordinates: { lat: meals.breakfast.lat, lng: meals.breakfast.lng },
+          tierVenues: {
+            budget: {
+              name: `${meals.breakfast.name} — Balcão`,
+              estimatedPrice: Math.max(4, Math.round(meals.breakfast.estimatedPrice * 0.65)),
+              isPriceVerified: true,
+              coordinates: { lat: meals.breakfast.lat, lng: meals.breakfast.lng },
+            },
+            mid: {
+              name: meals.breakfast.name,
+              estimatedPrice: meals.breakfast.estimatedPrice,
+              isPriceVerified: true,
+              coordinates: { lat: meals.breakfast.lat, lng: meals.breakfast.lng },
+            },
+            premium: {
+              name: `${meals.breakfast.name} — Degustação`,
+              estimatedPrice: Math.round(meals.breakfast.estimatedPrice * 1.8),
+              isPriceVerified: false,
+              coordinates: { lat: meals.breakfast.lat, lng: meals.breakfast.lng },
+            },
+          },
+        },
+        lunch: {
+          name: meals.lunch.name,
+          cuisine: meals.lunch.cuisine,
+          estimatedPrice: meals.lunch.estimatedPrice,
+          isPriceVerified: false,
+          coordinates: { lat: meals.lunch.lat, lng: meals.lunch.lng },
+          tierVenues: {
+            budget: {
+              name: `${meals.lunch.name} — Menu do Dia`,
+              estimatedPrice: Math.max(8, Math.round(meals.lunch.estimatedPrice * 0.6)),
+              isPriceVerified: false,
+              coordinates: { lat: meals.lunch.lat, lng: meals.lunch.lng },
+            },
+            mid: {
+              name: meals.lunch.name,
+              estimatedPrice: meals.lunch.estimatedPrice,
+              isPriceVerified: false,
+              coordinates: { lat: meals.lunch.lat, lng: meals.lunch.lng },
+            },
+            premium: {
+              name: `${meals.lunch.name} — Reserva Especial`,
+              estimatedPrice: Math.round(meals.lunch.estimatedPrice * 1.85),
+              isPriceVerified: false,
+              coordinates: { lat: meals.lunch.lat, lng: meals.lunch.lng },
+            },
+          },
+        },
+        dinner: {
+          name: meals.dinner.name,
+          cuisine: meals.dinner.cuisine,
+          estimatedPrice: meals.dinner.estimatedPrice,
+          isPriceVerified: false,
+          coordinates: { lat: meals.dinner.lat, lng: meals.dinner.lng },
+          tierVenues: {
+            budget: {
+              name: `${meals.dinner.name} — Petiscos`,
+              estimatedPrice: Math.max(12, Math.round(meals.dinner.estimatedPrice * 0.6)),
+              isPriceVerified: false,
+              coordinates: { lat: meals.dinner.lat, lng: meals.dinner.lng },
+            },
+            mid: {
+              name: meals.dinner.name,
+              estimatedPrice: meals.dinner.estimatedPrice,
+              isPriceVerified: false,
+              coordinates: { lat: meals.dinner.lat, lng: meals.dinner.lng },
+            },
+            premium: {
+              name: `${meals.dinner.name} — Menu de Autor`,
+              estimatedPrice: Math.round(meals.dinner.estimatedPrice * 1.9),
+              isPriceVerified: false,
+              coordinates: { lat: meals.dinner.lat, lng: meals.dinner.lng },
+            },
+          },
+        },
+      };
+    }
+
+    const enrichActivities = (acts: typeof day.activities) => {
+      acts.forEach((act, aIdx) => {
+        const baseLat = act.location.lat;
+        const baseLng = act.location.lng;
+        const angle = ((dIdx + 1) * 1.7 + (aIdx + 1) * 1.25) % (Math.PI * 2);
+        const verified = act.priceConfidence.status === 'verified';
+        act.isPriceVerified = verified;
+
+        if (act.costOptions.budget.isPriceVerified === undefined) {
+          act.costOptions.budget.isPriceVerified = verified;
+        }
+        if (act.costOptions.mid.isPriceVerified === undefined) {
+          act.costOptions.mid.isPriceVerified = verified;
+        }
+        if (act.costOptions.premium.isPriceVerified === undefined) {
+          act.costOptions.premium.isPriceVerified = verified;
+        }
+
+        if (!act.costOptions.budget.coordinates) {
+          act.costOptions.budget.venueName =
+            act.costOptions.budget.venueName || `${act.costOptions.budget.title} — Local Quarter`;
+          act.costOptions.budget.coordinates = {
+            lat: Number((baseLat + Math.sin(angle + 1.1) * 0.0054).toFixed(5)),
+            lng: Number((baseLng + Math.cos(angle + 1.1) * 0.0054).toFixed(5)),
+          };
+        }
+        if (!act.costOptions.mid.coordinates) {
+          act.costOptions.mid.venueName =
+            act.costOptions.mid.venueName || `${act.location.name}`;
+          act.costOptions.mid.coordinates = {
+            lat: Number(baseLat.toFixed(5)),
+            lng: Number(baseLng.toFixed(5)),
+          };
+        }
+        if (!act.costOptions.premium.coordinates) {
+          act.costOptions.premium.venueName =
+            act.costOptions.premium.venueName || `${act.costOptions.premium.title} — Private Salon`;
+          act.costOptions.premium.coordinates = {
+            lat: Number((baseLat + Math.sin(angle - 1.35) * 0.0068).toFixed(5)),
+            lng: Number((baseLng + Math.cos(angle - 1.35) * 0.0068).toFixed(5)),
+          };
+        }
+      });
+    };
+
+    enrichActivities(day.activities);
+    enrichActivities(day.planB);
+  });
+}
+
 export interface MiniPreviewStop {
   time: string;
   title: string;

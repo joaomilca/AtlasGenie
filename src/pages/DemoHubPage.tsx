@@ -9,13 +9,13 @@ export const DemoHubPage: React.FC = () => {
   const { t } = useTranslation();
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-8 py-10 space-y-8">
+    <main className="max-w-7xl mx-auto px-0 md:px-8 py-6 md:py-10 space-y-6 md:space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-6">
         <div>
           <p className="text-xs font-mono-tabular uppercase text-amber-700 dark:text-amber-400">
             {t('demo.kicker')}
           </p>
-          <h1 className="font-serif-atlas text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white mt-1">
+          <h1 className="font-serif-atlas text-xl sm:text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mt-1">
             {t('hero.demoSamplesTitle')}
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">

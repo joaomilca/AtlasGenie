@@ -41,16 +41,17 @@ service cloud.firestore {
     // Validation Blueprint: Trip
     function isValidTrip(data) {
       return data.keys().hasAll([
-          'id', 'ownerId', 'destination', 'startDate', 'endDate', 'currency',
+          'id', 'userId', 'ownerId', 'destination', 'startDate', 'endDate', 'currency',
           'totalBudget', 'travelersCount', 'interests', 'defaultPace', 'status',
           'memberIds', 'inviteCode', 'assumptions', 'groupEnabled', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'ownerId', 'destination', 'startDate', 'endDate', 'currency',
+          'id', 'userId', 'ownerId', 'destination', 'startDate', 'endDate', 'currency',
           'totalBudget', 'travelersCount', 'interests', 'defaultPace', 'status',
           'memberIds', 'inviteCode', 'assumptions', 'groupEnabled', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
+        && isValidId(data.userId)
         && isValidId(data.ownerId)
         && data.destination is string && data.destination.size() >= 1 && data.destination.size() <= 120
         && data.startDate is string && data.startDate.size() >= 8 && data.startDate.size() <= 32
@@ -193,12 +194,13 @@ service cloud.firestore {
 
     // 2. Trips Collection
     match /trips/{tripId} {
-      allow get: if isSignedIn() && isValidId(tripId) && (existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
-      allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
+      allow get: if isSignedIn() && isValidId(tripId) && (existing().userId == request.auth.uid || existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
       allow create: if isVerifiedUser()
         && isValidId(tripId)
         && isValidTrip(incoming())
         && incoming().id == tripId
+        && incoming().userId == request.auth.uid
         && incoming().ownerId == request.auth.uid
         && request.auth.uid in incoming().memberIds
         && incoming().status != 'completed'
@@ -209,6 +211,7 @@ service cloud.firestore {
         && isValidTrip(incoming())
         && existing().status != 'completed'
         && incoming().id == existing().id
+        && incoming().userId == existing().userId
         && incoming().ownerId == existing().ownerId
         && incoming().inviteCode == existing().inviteCode
         && incoming().createdAt == existing().createdAt

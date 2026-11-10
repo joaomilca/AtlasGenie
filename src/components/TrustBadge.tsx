@@ -7,9 +7,15 @@ interface TrustBadgeProps {
   type: 'price' | 'hours';
   confidence: ConfidenceInfo;
   valueText: string;
+  testId?: string;
 }
 
-export const TrustBadge: React.FC<TrustBadgeProps> = ({ type, confidence, valueText }) => {
+export const TrustBadge: React.FC<TrustBadgeProps> = ({
+  type,
+  confidence,
+  valueText,
+  testId,
+}) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const popoverId = useId();
@@ -17,7 +23,7 @@ export const TrustBadge: React.FC<TrustBadgeProps> = ({ type, confidence, valueT
   const isVerified = confidence.status === 'verified';
   const isEstimated = confidence.status === 'estimated';
 
-  const icon = isVerified ? '🟢' : isEstimated ? '🟡' : '⚪';
+  const icon = isVerified ? '✅' : isEstimated ? '🟡' : '⚪';
 
   const label = isVerified
     ? t('trip.verified')
@@ -40,20 +46,26 @@ export const TrustBadge: React.FC<TrustBadgeProps> = ({ type, confidence, valueT
   const typeLabel = type === 'price' ? t('trust.price') : t('trust.hours');
 
   return (
-    <div className="relative inline-block">
+    <div className="relative inline-block max-w-full min-w-0">
       <button
         type="button"
+        data-testid={testId}
+        data-price-verified={type === 'price' ? (isVerified ? 'true' : 'false') : undefined}
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
         aria-controls={popoverId}
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 ${badgeStyle}`}
+        className={`inline-flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs transition-colors max-w-full h-auto whitespace-normal text-left min-w-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 ${badgeStyle}`}
       >
-        <span aria-hidden="true">{icon}</span>
+        <span aria-hidden="true" className="shrink-0">{icon}</span>
         <span className="sr-only">
           {srConfidenceStatus} ({typeLabel}):{' '}
         </span>
-        <span className="font-mono-tabular font-semibold">{valueText}</span>
-        <span className="text-[11px] opacity-85 font-medium">· {label}</span>
+        <span className="font-mono-tabular font-semibold break-words text-left min-w-0">
+          {valueText}
+        </span>
+        <span className="text-[11px] opacity-85 font-medium break-words text-left">
+          · {label}
+        </span>
       </button>
 
       {open && (
