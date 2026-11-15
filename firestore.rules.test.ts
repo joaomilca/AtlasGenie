@@ -25,4 +25,10 @@ test('Dirty Dozen #1-12: Firestore rules structural & invariant verification', (
   // 8. Master gate relational check on subcollections
   assert.ok(rules.includes('isTripMember(tripId)'));
   assert.ok(rules.includes('isTripOwner(tripId)'));
+  // 9. Sprint 25: User profile preferences schema validation
+  assert.ok(rules.includes('defaultGroupSize'));
+  assert.ok(rules.includes('defaultPaceLevel'));
+  assert.ok(rules.includes('savedInterests'));
+  assert.ok(rules.includes('savedRestrictions'));
 });
+

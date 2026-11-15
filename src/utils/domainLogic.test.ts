@@ -1320,3 +1320,951 @@ test('Sprint 17: Form state persistence (atlasGenie_tripDraft) serialization, de
   assert.equal(parseTripWizardDraft('invalid-json{'), null);
   assert.equal(parseTripWizardDraft(null), null);
 });
+
+test('Sprint 18: Demo trips mock data PT-PT localization and i18n dictionary switching', async () => {
+  const { getLocalizedDemoTripMeta } = await import('../data/demoTrips');
+  const { translations } = await import('../i18n/translations');
+
+  // 1. Default DEMO_TRIPS mock data titles, locations, and summaries are strictly in PT-PT
+  const lisbon = DEMO_TRIPS['demo-lisbon-4d'];
+  const porto = DEMO_TRIPS['demo-porto-3d'];
+  const rome = DEMO_TRIPS['demo-rome-5d'];
+
+  assert.equal(lisbon.trip.destination, 'Lisboa');
+  assert.equal(lisbon.trip.country, 'Portugal');
+  assert.equal(lisbon.days[0].theme, 'Alma de Alfama, Azulejos e Pôr do Sol no Tejo');
+
+  assert.equal(porto.trip.destination, 'Porto');
+  assert.equal(porto.trip.country, 'Portugal');
+  assert.equal(porto.days[0].theme, 'Azulejos de São Bento, Clérigos e Caves de Gaia');
+
+  assert.equal(rome.trip.destination, 'Roma');
+  assert.equal(rome.trip.country, 'Itália');
+  assert.equal(rome.days[0].theme, 'Coliseu, Fórum Romano e Ruas de Monti');
+
+  // 2. Helper function with PT dictionary produces exact PT-PT titles, summaries, and action buttons
+  const tPt = (key: string, opts?: Record<string, any>) => {
+    let val = translations.pt[key] ?? opts?.defaultValue ?? key;
+    if (opts) {
+      for (const [k, v] of Object.entries(opts)) {
+        if (k !== 'defaultValue') {
+          val = val.replace(`{{${k}}}`, String(v));
+        }
+      }
+    }
+    return val;
+  };
+
+  const lisbonPtMeta = getLocalizedDemoTripMeta(lisbon, tPt);
+  const romePtMeta = getLocalizedDemoTripMeta(rome, tPt);
+
+  assert.equal(lisbonPtMeta.locationTitle, 'Lisboa, Portugal');
+  assert.equal(lisbonPtMeta.openBtnLabel, 'Abrir Atlas Demo de Lisboa');
+
+  assert.equal(romePtMeta.locationTitle, 'Roma, Itália');
+  assert.equal(romePtMeta.theme, 'Coliseu, Fórum Romano e Ruas de Monti');
+  assert.equal(romePtMeta.openBtnLabel, 'Abrir Atlas Demo de Roma');
+
+  // 3. Helper function with EN dictionary switches seamlessly to English
+  const tEn = (key: string, opts?: Record<string, any>) => {
+    let val = translations.en[key] ?? opts?.defaultValue ?? key;
+    if (opts) {
+      for (const [k, v] of Object.entries(opts)) {
+        if (k !== 'defaultValue') {
+          val = val.replace(`{{${k}}}`, String(v));
+        }
+      }
+    }
+    return val;
+  };
+
+  const lisbonEnMeta = getLocalizedDemoTripMeta(lisbon, tEn);
+  const romeEnMeta = getLocalizedDemoTripMeta(rome, tEn);
+
+  assert.equal(lisbonEnMeta.locationTitle, 'Lisbon, Portugal');
+  assert.equal(lisbonEnMeta.openBtnLabel, 'Open Lisbon Demo Atlas');
+
+  assert.equal(romeEnMeta.locationTitle, 'Rome, Italy');
+  assert.equal(romeEnMeta.theme, 'Colosseum, Roman Forum & Monti Backstreets');
+  assert.equal(romeEnMeta.openBtnLabel, 'Open Rome Demo Atlas');
+});
+
+test('Sprint 21: AI Grounding, Noun Preservation, sanitizeItineraryForAI, Multi-Option Proposals, and Non-Blocking Budget Guard', async () => {
+  const {
+    CHAT_ASSISTANT_PT_DIRECTIVE,
+    PROPER_NOUN_PRESERVATION_DIRECTIVE,
+    NON_LATIN_SCRIPT_DIRECTIVE,
+    MULTI_OPTION_PROPOSALS_DIRECTIVE,
+    sanitizeItineraryForAI,
+    buildChatAssistantSystemPrompt,
+    evaluateBudgetGuard,
+    computeProposalPriceDifference,
+    computeTripTotalCost,
+    deduplicateAndMergeProposals,
+  } = await import('./domainLogic');
+
+  const lisbonBundle = DEMO_TRIPS['demo-lisbon-4d'];
+
+  // 1. System Prompt Directives: PT-PT strictness, Proper Noun preservation, Non-Latin Script rule, Multi-Option rule
+  const chatSysPrompt = buildChatAssistantSystemPrompt(lisbonBundle);
+  assert.ok(chatSysPrompt.includes(CHAT_ASSISTANT_PT_DIRECTIVE));
+  assert.ok(chatSysPrompt.includes(PROPER_NOUN_PRESERVATION_DIRECTIVE));
+  assert.ok(chatSysPrompt.includes(NON_LATIN_SCRIPT_DIRECTIVE));
+  assert.ok(chatSysPrompt.includes(MULTI_OPTION_PROPOSALS_DIRECTIVE));
+  assert.ok(chatSysPrompt.includes('景福宫 (Palácio Gyeongbokgung)'));
+
+  // 2. Optimized Context Injection: sanitizeItineraryForAI strips UI-specific & redundant properties
+  const sanitized = sanitizeItineraryForAI(lisbonBundle);
+  const serialized = JSON.stringify(sanitized);
+  assert.equal(sanitized.destination, 'Lisboa');
+  assert.equal(sanitized.totalBudget, 1050);
+  assert.equal(sanitized.days.length, 4);
+  assert.ok(!serialized.includes('"lat"'), 'Sanitized JSON must strip lat coordinates');
+  assert.ok(!serialized.includes('"lng"'), 'Sanitized JSON must strip lng coordinates');
+  assert.ok(!serialized.includes('"isPriceVerified"'), 'Sanitized JSON must strip isPriceVerified flags');
+  assert.ok(!serialized.includes('"priceConfidence"'), 'Sanitized JSON must strip priceConfidence');
+  assert.ok(!serialized.includes('"hoursConfidence"'), 'Sanitized JSON must strip hoursConfidence');
+  assert.ok(!serialized.includes('"votes"'), 'Sanitized JSON must strip votes');
+
+  // 3. Multi-Option Proposals (2 to 3 distinct alternatives preserved side-by-side without collapsing)
+  const day1 = lisbonBundle.days[0];
+  const targetAct = day1.activities[0]; // Castelo de São Jorge (€15 mid)
+  const threeProposals = [
+    {
+      id: 'prop-opt-1',
+      dayId: day1.id,
+      dayNumber: 1,
+      type: 'replace' as const,
+      targetActivityId: targetAct.id,
+      targetActivityTitle: targetAct.title,
+      payload: {
+        ...targetAct,
+        id: 'opt-1',
+        title: 'Miradouro da Senhora do Monte',
+        selectedTier: 'budget' as const,
+      },
+      reason: 'Opção 1 (Económico · 0€): Miradouro autêntico.',
+      source: 'chat' as const,
+      status: 'pending' as const,
+    },
+    {
+      id: 'prop-opt-2',
+      dayId: day1.id,
+      dayNumber: 1,
+      type: 'replace' as const,
+      targetActivityId: targetAct.id,
+      targetActivityTitle: targetAct.title,
+      payload: {
+        ...targetAct,
+        id: 'opt-2',
+        title: 'Museu Nacional do Azulejo',
+        selectedTier: 'mid' as const,
+      },
+      reason: 'Opção 2 (Intermédio · 15€): Claustros históricos.',
+      source: 'chat' as const,
+      status: 'pending' as const,
+    },
+    {
+      id: 'prop-opt-3',
+      dayId: day1.id,
+      dayNumber: 1,
+      type: 'replace' as const,
+      targetActivityId: targetAct.id,
+      targetActivityTitle: targetAct.title,
+      payload: {
+        ...targetAct,
+        id: 'opt-3',
+        title: 'Clube de Fado',
+        selectedTier: 'premium' as const,
+      },
+      reason: 'Opção 3 (Premium · 45€): Experiência exclusiva em Alfama.',
+      source: 'chat' as const,
+      status: 'pending' as const,
+    },
+  ];
+
+  const mergedMulti = deduplicateAndMergeProposals([], threeProposals, lisbonBundle.days);
+  assert.equal(
+    mergedMulti.length,
+    3,
+    'All 3 distinct alternative proposals for the same activity slot must coexist side-by-side'
+  );
+
+  // 4. Non-Blocking Budget Guard: prospectiveTotal = currentTotal + priceDifference > targetBudget
+  const currentTotal = computeTripTotalCost(lisbonBundle.days).total; // 1035€
+  const targetBudget = lisbonBundle.trip.totalBudget; // 1050€
+  assert.equal(currentTotal, 1035);
+  assert.equal(targetBudget, 1050);
+
+  // Option 1 (Budget, 0€ vs 15€ => delta -15€): 1020€ <= 1050€ (does not exceed)
+  const diffOpt1 = computeProposalPriceDifference(lisbonBundle.days, threeProposals[0]);
+  assert.equal(diffOpt1, -15);
+  const guardOpt1 = evaluateBudgetGuard({
+    currentTotal,
+    priceDifference: diffOpt1,
+    targetBudget,
+  });
+  assert.equal(guardOpt1.exceedsBudget, false);
+  assert.equal(guardOpt1.prospectiveTotal, 1020);
+
+  // Option 3 (Premium, 45€ vs 15€ => delta +30€): 1065€ > 1050€ (exceeds budget!)
+  const diffOpt3 = computeProposalPriceDifference(lisbonBundle.days, threeProposals[2]);
+  assert.equal(diffOpt3, 30);
+  const guardOpt3 = evaluateBudgetGuard({
+    currentTotal,
+    priceDifference: diffOpt3,
+    targetBudget,
+  });
+  assert.equal(guardOpt3.exceedsBudget, true);
+  assert.equal(guardOpt3.prospectiveTotal, 1065);
+  assert.equal(
+    guardOpt3.warningMessage,
+    'Atenção: Esta alteração vai colocar o custo total (1065€) acima do seu limite (1050€). Deseja continuar?'
+  );
+});
+
+test('Sprint 22: Firebase Auth error code extraction and PT-PT localization mapping', async () => {
+  const { extractFirebaseAuthErrorCode, mapFirebaseAuthErrorToPt } = await import('./domainLogic');
+
+  assert.equal(
+    extractFirebaseAuthErrorCode({ code: 'auth/invalid-credential' }),
+    'auth/invalid-credential'
+  );
+  assert.equal(
+    extractFirebaseAuthErrorCode(new Error('Firebase: Error (auth/email-already-in-use).')),
+    'auth/email-already-in-use'
+  );
+
+  // Required exact PT-PT mappings
+  assert.equal(
+    mapFirebaseAuthErrorToPt({ code: 'auth/invalid-credential' }),
+    'Email ou palavra-passe incorretos.'
+  );
+  assert.equal(
+    mapFirebaseAuthErrorToPt(new Error('Firebase: Error (auth/invalid-credential).')),
+    'Email ou palavra-passe incorretos.'
+  );
+  assert.equal(
+    mapFirebaseAuthErrorToPt({ code: 'auth/email-already-in-use' }),
+    'Já existe uma conta com este email.'
+  );
+  assert.equal(
+    mapFirebaseAuthErrorToPt(new Error('Firebase: Error (auth/email-already-in-use).')),
+    'Já existe uma conta com este email.'
+  );
+  assert.equal(
+    mapFirebaseAuthErrorToPt({ code: 'auth/invalid-email' }),
+    'O endereço de email introduzido não é válido.'
+  );
+  assert.equal(
+    mapFirebaseAuthErrorToPt({ code: 'auth/weak-password' }),
+    'A palavra-passe é demasiado fraca (mínimo de 6 caracteres).'
+  );
+});
+
+test('Sprint 24: App-wide bilingual architecture, global AI prompt injection, proper noun rule, and 100% i18n dictionary key parity', async () => {
+  const {
+    buildGlobalLanguageDirective,
+    buildUniversalProperNounDirective,
+    buildChatAssistantSystemPrompt,
+    normalizeTargetUiLanguage,
+    evaluateBudgetGuard,
+    mapFirebaseAuthError,
+  } = await import('./domainLogic');
+  const { buildGenerateItinerarySystemPrompt } = await import('../services/api');
+  const { translations } = await import('../i18n/translations');
+
+  // 1. Target language normalization
+  assert.equal(normalizeTargetUiLanguage('en'), 'en');
+  assert.equal(normalizeTargetUiLanguage('en-US'), 'en');
+  assert.equal(normalizeTargetUiLanguage('pt'), 'pt-PT');
+  assert.equal(normalizeTargetUiLanguage('pt-PT'), 'pt-PT');
+
+  // 2. Global language directive & Universal Proper Noun Golden Rule in both EN and PT-PT
+  const globalEn = buildGlobalLanguageDirective('en');
+  assert.ok(
+    globalEn.startsWith(
+      'SYSTEM LANGUAGE: ENGLISH. You are strictly forbidden from generating any Portuguese text.'
+    )
+  );
+  assert.ok(
+    globalEn.includes(
+      'You MUST generate all conversational text, descriptions, reasoning strings, and tips strictly in the provided target language: en. Do NOT mix languages.'
+    )
+  );
+  const globalPt = buildGlobalLanguageDirective('pt-PT');
+  assert.ok(
+    globalPt.startsWith(
+      'SYSTEM LANGUAGE: PORTUGUESE. You are strictly forbidden from generating any English text.'
+    )
+  );
+  assert.ok(
+    globalPt.includes(
+      'You MUST generate all conversational text, descriptions, reasoning strings, and tips strictly in the provided target language: pt-PT. Do NOT mix languages.'
+    )
+  );
+
+  const properNounEn = buildUniversalProperNounDirective('en');
+  assert.equal(
+    properNounEn,
+    'You are STRICTLY FORBIDDEN from translating proper nouns. Names of specific venues, museums, restaurants, neighborhoods, and streets MUST remain in their original local language or international English, regardless of the en.'
+  );
+  const properNounPt = buildUniversalProperNounDirective('pt-PT');
+  assert.equal(
+    properNounPt,
+    'You are STRICTLY FORBIDDEN from translating proper nouns. Names of specific venues, museums, restaurants, neighborhoods, and streets MUST remain in their original local language or international English, regardless of the pt-PT.'
+  );
+
+  // 3. Verify Initial Trip Generation & Chat Assistant system prompts inject both directives for EN and PT-PT
+  const genPromptEn = buildGenerateItinerarySystemPrompt('Rome', 'Italy', [], '', 'en');
+  assert.ok(genPromptEn.includes(globalEn));
+  assert.ok(genPromptEn.includes(properNounEn));
+
+  const genPromptPt = buildGenerateItinerarySystemPrompt('Rome', 'Italy', [], '', 'pt-PT');
+  assert.ok(genPromptPt.includes(globalPt));
+  assert.ok(genPromptPt.includes(properNounPt));
+
+  const lisbonBundle = DEMO_TRIPS['demo-lisbon-4d'];
+  const chatPromptEn = buildChatAssistantSystemPrompt(lisbonBundle, 'en');
+  assert.ok(chatPromptEn.includes(globalEn));
+  assert.ok(chatPromptEn.includes(properNounEn));
+
+  const chatPromptPt = buildChatAssistantSystemPrompt(lisbonBundle, 'pt-PT');
+  assert.ok(chatPromptPt.includes(globalPt));
+  assert.ok(chatPromptPt.includes(properNounPt));
+
+  // 4. Verify Budget Guard & Auth Error Mapper respect active UI language (EN vs PT-PT)
+  const guardEn = evaluateBudgetGuard(
+    { currentTotal: 1035, priceDifference: 30, targetBudget: 1050, language: 'en' }
+  );
+  assert.equal(
+    guardEn.warningMessage,
+    'Warning: This change will raise the total cost (1065€) above your budget limit (1050€). Do you want to continue?'
+  );
+
+  assert.equal(
+    mapFirebaseAuthError({ code: 'auth/invalid-credential' }, 'en'),
+    'Incorrect email or password.'
+  );
+  assert.equal(
+    mapFirebaseAuthError({ code: 'auth/invalid-credential' }, 'pt-PT'),
+    'Email ou palavra-passe incorretos.'
+  );
+
+  // 5. Verify 100% translation dictionary parity between English (en) and European Portuguese (pt)
+  const enKeys = Object.keys(translations.en).sort();
+  const ptKeys = Object.keys(translations.pt).sort();
+  const missingInPt = enKeys.filter((k) => !(k in translations.pt));
+  const missingInEn = ptKeys.filter((k) => !(k in translations.en));
+  assert.deepEqual(missingInPt, [], `Keys in EN missing from PT: ${missingInPt.join(', ')}`);
+  assert.deepEqual(missingInEn, [], `Keys in PT missing from EN: ${missingInEn.join(', ')}`);
+
+  for (const key of enKeys) {
+    assert.ok(
+      typeof (translations.en as Record<string, string>)[key] === 'string' &&
+        (translations.en as Record<string, string>)[key].trim().length > 0,
+      `Empty EN translation for key: ${key}`
+    );
+    assert.ok(
+      typeof (translations.pt as Record<string, string>)[key] === 'string' &&
+        (translations.pt as Record<string, string>)[key].trim().length > 0,
+      `Empty PT translation for key: ${key}`
+    );
+  }
+});
+
+test('Sprint 25: User Profile Firestore schema (defaultGroupSize, defaultPaceLevel, savedInterests, savedRestrictions), restriction chip matching, and Smart Auto-Fill', async () => {
+  const {
+    DEFAULT_TRAVELER_PROFILE_PREFERENCES,
+    buildInitialUserProfileDocument,
+    normalizeUserProfileSnapshot,
+    doesRestrictionMatchChip,
+    toggleRestrictionInList,
+    applyUserProfileToTripDraft,
+    createDefaultTripWizardDraft,
+  } = await import('./domainLogic');
+  const { SPECIAL_PREFERENCE_CHIPS } = await import('../services/api');
+
+  // 1. Default schema creation for users/{uid} on signup
+  const initialDoc = buildInitialUserProfileDocument({
+    uid: 'user-abc-123',
+    name: 'Joana Silva',
+    email: 'joana@example.pt',
+  });
+  assert.equal(initialDoc.id, 'user-abc-123');
+  assert.equal(initialDoc.name, 'Joana Silva');
+  assert.equal(initialDoc.email, 'joana@example.pt');
+  assert.equal(initialDoc.defaultGroupSize, DEFAULT_TRAVELER_PROFILE_PREFERENCES.defaultGroupSize);
+  assert.equal(initialDoc.defaultPaceLevel, DEFAULT_TRAVELER_PROFILE_PREFERENCES.defaultPaceLevel);
+  assert.deepEqual(initialDoc.savedInterests, ['food', 'history', 'viewpoints']);
+  assert.deepEqual(initialDoc.savedRestrictions, []);
+
+  // 2. Custom profile snapshot normalization with savedInterests & savedRestrictions (e.g., 'Vegan', 'Reduced Mobility')
+  const normalized = normalizeUserProfileSnapshot('user-abc-123', {
+    id: 'user-abc-123',
+    name: 'Joana Silva',
+    email: 'joana@example.pt',
+    defaultGroupSize: 4,
+    defaultPaceLevel: 2,
+    savedInterests: ['food', 'art', 'nature'],
+    savedRestrictions: ['Vegan', 'Reduced Mobility'],
+  });
+  assert.equal(normalized.defaultGroupSize, 4);
+  assert.equal(normalized.defaultPaceLevel, 2);
+  assert.deepEqual(normalized.savedInterests, ['food', 'art', 'nature']);
+  assert.deepEqual(normalized.savedRestrictions, ['Vegan', 'Reduced Mobility']);
+
+  // 3. Restriction chip matching supports both shorthand ('Vegan', 'Reduced Mobility') and full localized labels
+  const vegChip = SPECIAL_PREFERENCE_CHIPS.find((c) => c.id === 'diet_veg')!;
+  const mobilityChip = SPECIAL_PREFERENCE_CHIPS.find((c) => c.id === 'reduced_mobility')!;
+  const kidsChip = SPECIAL_PREFERENCE_CHIPS.find((c) => c.id === 'kids_family')!;
+
+  assert.equal(doesRestrictionMatchChip(normalized.savedRestrictions, vegChip), true);
+  assert.equal(doesRestrictionMatchChip(normalized.savedRestrictions, mobilityChip), true);
+  assert.equal(doesRestrictionMatchChip(normalized.savedRestrictions, kidsChip), false);
+
+  // Toggling off an active restriction removes it immutably
+  const afterRemoveVeg = toggleRestrictionInList(normalized.savedRestrictions, vegChip);
+  assert.equal(doesRestrictionMatchChip(afterRemoveVeg, vegChip), false);
+  assert.equal(doesRestrictionMatchChip(afterRemoveVeg, mobilityChip), true);
+
+  // Toggling on an inactive restriction adds it immutably
+  const afterAddKids = toggleRestrictionInList(afterRemoveVeg, kidsChip);
+  assert.equal(doesRestrictionMatchChip(afterAddKids, kidsChip), true);
+
+  // 4. Smart Auto-Fill into New Trip form draft state (immutably)
+  const baseDraft = createDefaultTripWizardDraft(null);
+  const autoFilled = applyUserProfileToTripDraft(baseDraft, normalized);
+
+  assert.equal(autoFilled.travelersCount, 4);
+  assert.equal(autoFilled.groupEnabled, true);
+  assert.equal(autoFilled.defaultPace, 2);
+  assert.deepEqual(autoFilled.selectedInterests, ['food', 'art', 'nature']);
+  assert.deepEqual(autoFilled.specialPreferences, ['Vegan', 'Reduced Mobility']);
+  // Verify original baseDraft was not mutated
+  assert.equal(baseDraft.travelersCount, 2);
+  assert.equal(baseDraft.defaultPace, 3);
+});
+
+test('Sprint 28: Nuclear language toggle prefix (EN vs PT-PT) and existing itinerary auto-translation', async () => {
+  const {
+    NUCLEAR_LANGUAGE_PREFIX_EN,
+    NUCLEAR_LANGUAGE_PREFIX_PT,
+    buildNuclearLanguagePrefix,
+    buildChatAssistantSystemPrompt,
+    translateItineraryBundleDeterministic,
+  } = await import('./domainLogic');
+  const { buildGenerateItinerarySystemPrompt } = await import('../services/api');
+
+  // 1. Verify exact nuclear prefixes
+  assert.equal(
+    buildNuclearLanguagePrefix('en'),
+    'SYSTEM LANGUAGE: ENGLISH. You are strictly forbidden from generating any Portuguese text.'
+  );
+  assert.equal(
+    buildNuclearLanguagePrefix('pt-PT'),
+    'SYSTEM LANGUAGE: PORTUGUESE. You are strictly forbidden from generating any English text.'
+  );
+
+  // 2. Verify AI generation & chat prompts strictly start with the nuclear language prefix
+  const genEn = buildGenerateItinerarySystemPrompt('Rome', 'Italy', [], '', 'en');
+  assert.ok(genEn.startsWith(NUCLEAR_LANGUAGE_PREFIX_EN));
+
+  const genPt = buildGenerateItinerarySystemPrompt('Rome', 'Italy', [], '', 'pt-PT');
+  assert.ok(genPt.startsWith(NUCLEAR_LANGUAGE_PREFIX_PT));
+
+  const chatEn = buildChatAssistantSystemPrompt(DEMO_TRIPS['demo-lisbon-4d'], 'en');
+  assert.ok(chatEn.startsWith(NUCLEAR_LANGUAGE_PREFIX_EN));
+
+  const chatPt = buildChatAssistantSystemPrompt(DEMO_TRIPS['demo-lisbon-4d'], 'pt-PT');
+  assert.ok(chatPt.startsWith(NUCLEAR_LANGUAGE_PREFIX_PT));
+
+  // 3. Verify existing itinerary auto-translation between EN and PT-PT preserves proper nouns and translates descriptions/themes
+  const lisbonPt = translateItineraryBundleDeterministic(DEMO_TRIPS['demo-lisbon-4d'], 'pt-PT');
+  assert.equal(lisbonPt.days[0].theme, 'Alma de Alfama, Azulejos e Pôr do Sol no Tejo');
+  assert.equal(
+    lisbonPt.days[0].activities[0].description,
+    'Cidadela mourisca no topo da colina com vistas panorâmicas sobre os telhados de terracota e o estuário do Tejo.'
+  );
+  assert.ok(lisbonPt.days[0].activities[0].title.includes('Castelo de São Jorge'));
+
+  const lisbonEn = translateItineraryBundleDeterministic(lisbonPt, 'en');
+  assert.equal(lisbonEn.days[0].theme, 'Soul of Alfama, Azulejos & Tagus Sunset');
+  assert.equal(
+    lisbonEn.days[0].activities[0].description,
+    'Moorish hilltop citadel with sweeping panoramas over terracotta rooftops and the Tagus estuary.'
+  );
+  assert.ok(lisbonEn.days[0].activities[0].title.includes('Castelo de São Jorge'));
+});
+
+test('Sprint 30: Infinite loading bugfix — 15000ms timeout guard, console.error logging, error toast, and finally state recovery', async () => {
+  const {
+    TRANSLATION_TIMEOUT_MS,
+    fetchWithTranslationTimeout,
+    runAutoTranslateWithRecovery,
+  } = await import('./domainLogic');
+  const { translateTripItinerary } = await import('../services/api');
+
+  // 1. Default timeout constant is strictly 15000ms (15 seconds)
+  assert.equal(TRANSLATION_TIMEOUT_MS, 15000);
+
+  // 2. Timeout guard aborts a hanging fetch request and rejects with AbortError
+  const hangingFetch = ((_url: string, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(init.signal?.reason || new Error('Aborted'));
+      });
+    })) as typeof fetch;
+
+  await assert.rejects(
+    () => fetchWithTranslationTimeout('/api/ai/translate-itinerary', { method: 'POST' }, 35, hangingFetch),
+    (err: any) => {
+      assert.equal(err.name, 'AbortError');
+      assert.ok(String(err.message).includes('timed out after 35ms'));
+      return true;
+    }
+  );
+
+  // 3. Recovery wrapper guarantees setIsTranslating(false) in finally on success
+  const loadingStatesSuccess: boolean[] = [];
+  let savedBundleSuccess: any = null;
+  const successRes = await runAutoTranslateWithRecovery({
+    bundle: DEMO_TRIPS['demo-lisbon-4d'],
+    activeLanguage: 'en',
+    translateFn: (b, lang) => translateTripItinerary(b, lang),
+    onSuccess: (b) => {
+      savedBundleSuccess = b;
+    },
+    setIsTranslating: (state) => loadingStatesSuccess.push(state),
+  });
+  assert.equal(successRes.ok, true);
+  assert.deepEqual(loadingStatesSuccess, [true, false]);
+  assert.equal(savedBundleSuccess.days[0].theme, 'Soul of Alfama, Azulejos & Tagus Sunset');
+
+  // 4. Recovery wrapper guarantees setIsTranslating(false) in finally, logs console.error("Translation API failed:", error), and triggers "Erro ao traduzir. Tente novamente." when API times out or fails
+  const loadingStatesFailure: boolean[] = [];
+  const toastMessages: string[] = [];
+  const loggedErrors: any[][] = [];
+  const origConsoleError = console.error;
+  console.error = (...args: any[]) => {
+    loggedErrors.push(args);
+  };
+
+  try {
+    const failRes = await runAutoTranslateWithRecovery({
+      bundle: {
+        ...DEMO_TRIPS['demo-lisbon-4d'],
+        trip: { ...DEMO_TRIPS['demo-lisbon-4d'].trip, isDemo: false },
+      },
+      activeLanguage: 'pt-PT',
+      translateFn: (b, lang) =>
+        translateTripItinerary(b, lang, {
+          forceLiveApi: true,
+          timeoutMs: 30,
+          fetchImpl: hangingFetch,
+        }),
+      onSuccess: () => {},
+      setIsTranslating: (state) => loadingStatesFailure.push(state),
+      onErrorToast: (msg) => toastMessages.push(msg),
+    });
+
+    assert.equal(failRes.ok, false);
+    // CRITICAL: loading state started as true and was strictly reset to false in finally
+    assert.deepEqual(loadingStatesFailure, [true, false]);
+    // Error toast triggered with exact PT-PT message
+    assert.deepEqual(toastMessages, ['Erro ao traduzir. Tente novamente.']);
+    // console.error("Translation API failed:", error) was logged
+    assert.equal(loggedErrors.length, 1);
+    assert.equal(loggedErrors[0][0], 'Translation API failed:');
+  } finally {
+    console.error = origConsoleError;
+  }
+});
+
+test('Dynamic Budget Recalculation: Group multiplier (sumOfPerPersonCosts * travelers), defensive math, and per-person breakdown', async () => {
+  const {
+    computeDaySubtotal,
+    computeTripTotalCost,
+    calculateDaySubtotals,
+    calculateTripTotal,
+  } = await import('./domainLogic');
+
+  const lisbonDemo = JSON.parse(JSON.stringify(DEMO_TRIPS['demo-lisbon-4d'])) as FullTripBundle;
+  const day1 = lisbonDemo.days[0];
+  const travelers = lisbonDemo.trip.travelersCount; // 3 travelers
+
+  // Day 1: accommodation = 138, transit = 0, per-person meals = 61 (9+24+28), per-person activities = 91 (15+28+14+34)
+  // For 3 travelers: mealsCost = 61 * 3 = 183, activitiesCost = 91 * 3 = 273
+  // Group day total = 138 + 0 + (61 + 91) * 3 = 138 + 456 = 594
+  // Per-person day total = Math.round(594 / 3) = 198
+  const day1Group = calculateDaySubtotals(day1, travelers);
+  assert.equal(day1Group.accommodationCost, 138);
+  assert.equal(day1Group.transitCost, 0);
+  assert.equal(day1Group.mealsCost, 183);
+  assert.equal(day1Group.activitiesCost, 273);
+  assert.equal(day1Group.total, 594);
+  assert.equal(day1Group.perPersonTotal, 198);
+
+  // Full 4-day trip with 3 travelers
+  const tripGroup = calculateTripTotal(lisbonDemo.days, travelers);
+  assert.equal(
+    tripGroup.perPersonTotal,
+    Math.round(tripGroup.total / travelers)
+  );
+  assert.ok(tripGroup.total > computeTripTotalCost(lisbonDemo.days, 1).total);
+
+  // Defensive math: undefined prices fallback to 0 and Math.round() prevents infinite decimals
+  const sparseDay: any = {
+    accommodation: { name: 'Test Stay', type: 'hotel', price: undefined },
+    intercity_transit: { method: 'Train', duration: '1h', price: undefined },
+    meals: {
+      breakfast: { name: 'Cafe', estimatedPrice: undefined },
+      lunch: { name: 'Bistro', estimatedPrice: 12.3333 },
+      dinner: undefined,
+    },
+    activities: [
+      {
+        id: 'sparse-1',
+        title: 'Museum',
+        selectedTier: 'mid',
+        costOptions: {
+          budget: { title: 'B', estimatedCost: undefined },
+          mid: { title: 'M', estimatedCost: 10.3333 },
+          premium: { title: 'P', estimatedCost: undefined },
+        },
+      },
+    ],
+  };
+  const sparseRes = computeDaySubtotal(sparseDay, 3);
+  // (12.3333 + 10.3333) * 3 = 67.9998 -> Math.round = 68
+  assert.equal(sparseRes.accommodationCost, 0);
+  assert.equal(sparseRes.transitCost, 0);
+  assert.equal(sparseRes.total, 68);
+  assert.equal(sparseRes.perPersonTotal, Math.round(68 / 3));
+});
+
+test('Input Budget Normalization: perPersonBudget = inputTotalBudget / travelers and budget tier evaluation', async () => {
+  const {
+    normalizeInputBudget,
+    evaluateBudgetTierFromPerPersonBudget,
+    sanitizeItineraryForAI,
+    buildChatAssistantSystemPrompt,
+  } = await import('./domainLogic');
+  const { buildGenerateItinerarySystemPrompt } = await import('../services/api');
+
+  // Group of 3 travelers with €900 total budget -> €300/person -> 'budget' tier (NOT 'premium')
+  const groupBudgetNorm = normalizeInputBudget(900, 3);
+  assert.equal(groupBudgetNorm.inputTotalBudget, 900);
+  assert.equal(groupBudgetNorm.travelers, 3);
+  assert.equal(groupBudgetNorm.perPersonBudget, 300);
+  assert.equal(groupBudgetNorm.budgetTier, 'budget');
+
+  // Solo traveler with €900 total budget -> €900/person -> 'premium' tier
+  const soloPremiumNorm = normalizeInputBudget(900, 1);
+  assert.equal(soloPremiumNorm.perPersonBudget, 900);
+  assert.equal(soloPremiumNorm.budgetTier, 'premium');
+
+  // Group of 2 travelers with €1100 total budget -> €550/person -> 'mid' tier
+  const coupleMidNorm = normalizeInputBudget(1100, 2);
+  assert.equal(coupleMidNorm.perPersonBudget, 550);
+  assert.equal(coupleMidNorm.budgetTier, 'mid');
+
+  assert.equal(evaluateBudgetTierFromPerPersonBudget(280), 'budget');
+  assert.equal(evaluateBudgetTierFromPerPersonBudget(500), 'mid');
+  assert.equal(evaluateBudgetTierFromPerPersonBudget(950), 'premium');
+
+  // AI system prompt must inject the normalized per-person budget and tier
+  const genPrompt = buildGenerateItinerarySystemPrompt(
+    'Lisboa',
+    'Portugal',
+    [],
+    '',
+    'pt-PT',
+    900,
+    3
+  );
+  assert.ok(genPrompt.includes('€300/person'));
+  assert.ok(genPrompt.includes('"budget"'));
+
+  const lisbonBundle = DEMO_TRIPS['demo-lisbon-4d']; // totalBudget: 1050, travelersCount: 3 -> €350/person ('mid')
+  const sanitized = sanitizeItineraryForAI(lisbonBundle);
+  assert.equal(sanitized.perPersonBudget, 350);
+  assert.equal(sanitized.budgetTier, 'mid');
+
+  const chatPrompt = buildChatAssistantSystemPrompt(lisbonBundle, 'en');
+  assert.ok(chatPrompt.includes('€350/person'));
+});
+
+test('Active Trip Persistence (atlasgenie_active_trip) & Undo History Stack (max 10 deep-cloned states + instant budget recalculation)', async () => {
+  const {
+    ACTIVE_TRIP_STORAGE_KEY,
+    MAX_TRIP_HISTORY_LENGTH,
+    pushTripHistoryState,
+    popTripHistoryState,
+    serializeActiveTripToStorage,
+    parseActiveTripFromStorage,
+    computeDaySubtotal,
+    computeTripTotalCost,
+  } = await import('./domainLogic');
+
+  assert.equal(ACTIVE_TRIP_STORAGE_KEY, 'atlasgenie_active_trip');
+  assert.equal(MAX_TRIP_HISTORY_LENGTH, 10);
+
+  const initialBundle = JSON.parse(JSON.stringify(DEMO_TRIPS['demo-lisbon-4d'])) as FullTripBundle;
+  const travelers = initialBundle.trip.travelersCount; // 3
+
+  // 1. Serialize & rehydrate active trip from localStorage payload
+  const rawJson = serializeActiveTripToStorage(initialBundle);
+  const rehydrated = parseActiveTripFromStorage(rawJson);
+  assert.ok(rehydrated);
+  assert.equal(rehydrated.trip.id, 'demo-lisbon-4d');
+  assert.equal(rehydrated.days.length, 4);
+  assert.equal(parseActiveTripFromStorage(null), null);
+  assert.equal(parseActiveTripFromStorage('{bad-json'), null);
+  assert.equal(parseActiveTripFromStorage('{"trip":{}}'), null);
+
+  // 2. Push before mutating and verify deep clone isolation
+  const initialTripTotal = computeTripTotalCost(initialBundle.days, travelers);
+  const initialDay1Subtotal = computeDaySubtotal(initialBundle.days[0], travelers);
+  assert.equal(initialTripTotal.total, 2033);
+  assert.equal(initialTripTotal.perPersonTotal, 678);
+  assert.equal(initialDay1Subtotal.total, 594);
+  assert.equal(initialDay1Subtotal.perPersonTotal, 198);
+
+  let history: FullTripBundle[] = [];
+  history = pushTripHistoryState(history, initialBundle);
+  assert.equal(history.length, 1);
+
+  // Mutate initialBundle to Premium tier across Day 1
+  const mutatedBundle: FullTripBundle = {
+    ...initialBundle,
+    days: initialBundle.days.map((d, idx) =>
+      idx === 0
+        ? {
+            ...d,
+            accommodation: d.accommodation
+              ? { ...d.accommodation, selectedTier: 'premium', price: 295 }
+              : d.accommodation,
+            activities: d.activities.map((a) => ({ ...a, selectedTier: 'premium' as const })),
+          }
+        : d
+    ),
+  };
+
+  // Mutating the current bundle must NOT mutate the snapshot stored in history[0]
+  assert.equal(history[0].days[0].activities[0].selectedTier, 'mid');
+  const mutatedTripTotal = computeTripTotalCost(mutatedBundle.days, travelers);
+  const mutatedDay1Subtotal = computeDaySubtotal(mutatedBundle.days[0], travelers);
+  assert.ok(mutatedTripTotal.total > initialTripTotal.total);
+  assert.ok(mutatedDay1Subtotal.total > initialDay1Subtotal.total);
+
+  // 3. Pop from history (handleUndo) restores exact prior state and recalculates totals immediately
+  const { restoredState, nextHistory } = popTripHistoryState(history);
+  assert.ok(restoredState);
+  assert.equal(nextHistory.length, 0);
+
+  const restoredTripTotal = computeTripTotalCost(restoredState.days, travelers);
+  const restoredDay1Subtotal = computeDaySubtotal(restoredState.days[0], travelers);
+  assert.equal(restoredTripTotal.total, 2033);
+  assert.equal(restoredTripTotal.perPersonTotal, 678);
+  assert.equal(restoredDay1Subtotal.total, 594);
+  assert.equal(restoredDay1Subtotal.perPersonTotal, 198);
+
+  // 4. Cap history at MAX_TRIP_HISTORY_LENGTH (10 actions)
+  let cappedHistory: FullTripBundle[] = [];
+  for (let i = 1; i <= 14; i++) {
+    const stepState: FullTripBundle = {
+      ...initialBundle,
+      trip: { ...initialBundle.trip, totalBudget: 1000 + i * 10 },
+    };
+    cappedHistory = pushTripHistoryState(cappedHistory, stepState);
+  }
+  assert.equal(cappedHistory.length, 10);
+  // Oldest 4 states (1..4) were dropped; oldest remaining is step 5 (1050) and newest is step 14 (1140)
+  assert.equal(cappedHistory[0].trip.totalBudget, 1050);
+  assert.equal(cappedHistory[9].trip.totalBudget, 1140);
+});
+
+test('Synchronous Lazy Initialization, Guarded Persistence (hasValidItineraryData), and Form Draft Key Isolation (atlasgenie_form_draft)', async () => {
+  const {
+    ACTIVE_TRIP_STORAGE_KEY,
+    FORM_DRAFT_STORAGE_KEY,
+    TRIP_DRAFT_STORAGE_KEY,
+    hasValidItineraryData,
+    readActiveTripFromLocalStorage,
+    writeActiveTripToLocalStorageGuarded,
+  } = await import('./domainLogic');
+
+  // 1. Storage keys are strictly distinct so form draft clear never touches active trip
+  assert.equal(ACTIVE_TRIP_STORAGE_KEY, 'atlasgenie_active_trip');
+  assert.equal(FORM_DRAFT_STORAGE_KEY, 'atlasgenie_form_draft');
+  assert.notEqual(FORM_DRAFT_STORAGE_KEY, ACTIVE_TRIP_STORAGE_KEY);
+  assert.notEqual(TRIP_DRAFT_STORAGE_KEY, ACTIVE_TRIP_STORAGE_KEY);
+
+  // 2. Guard validation rejects null, empty objects, empty days, and days with empty activities
+  assert.equal(hasValidItineraryData(null), false);
+  assert.equal(hasValidItineraryData({}), false);
+  assert.equal(hasValidItineraryData({ trip: { id: 'trip-1' }, days: [] }), false);
+  assert.equal(
+    hasValidItineraryData({
+      trip: { id: 'trip-1' },
+      days: [{ id: 'd1', activities: [], planB: [] }],
+    }),
+    false
+  );
+
+  const generatedTrip: FullTripBundle = {
+    ...JSON.parse(JSON.stringify(DEMO_TRIPS['demo-lisbon-4d'])),
+    trip: {
+      ...DEMO_TRIPS['demo-lisbon-4d'].trip,
+      id: 'trip-generated-madrid-1',
+      destination: 'Madrid, Spain',
+      isDemo: false,
+    },
+  };
+  assert.equal(hasValidItineraryData(generatedTrip), true);
+
+  // 3. In-memory mock Storage to verify guarded setItem / removeItem lifecycle
+  const store = new Map<string, string>();
+  const mockStorage = {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => {
+      store.set(k, v);
+    },
+    removeItem: (k: string) => {
+      store.delete(k);
+    },
+  };
+
+  // Write valid generated trip
+  const wroteValid = writeActiveTripToLocalStorageGuarded(generatedTrip, { storage: mockStorage });
+  assert.equal(wroteValid, true);
+  assert.equal(readActiveTripFromLocalStorage(mockStorage)?.trip.id, 'trip-generated-madrid-1');
+
+  // Attempt to overwrite with null or empty activities on mount MUST be blocked by guard
+  const wroteNull = writeActiveTripToLocalStorageGuarded(null, { storage: mockStorage });
+  assert.equal(wroteNull, false);
+  const emptyActivitiesBundle: any = {
+    ...generatedTrip,
+    days: [{ ...generatedTrip.days[0], activities: [], planB: [] }],
+  };
+  const wroteEmpty = writeActiveTripToLocalStorageGuarded(emptyActivitiesBundle, {
+    storage: mockStorage,
+  });
+  assert.equal(wroteEmpty, false);
+  assert.equal(
+    readActiveTripFromLocalStorage(mockStorage)?.trip.id,
+    'trip-generated-madrid-1',
+    'Valid localStorage data must NEVER be overwritten by null or empty state on mount'
+  );
+
+  // Attempt to overwrite user-generated trip with static demo fallback (`demo-lisbon-4d`) on mount MUST be blocked
+  const wroteDemoFallback = writeActiveTripToLocalStorageGuarded(DEMO_TRIPS['demo-lisbon-4d'], {
+    storage: mockStorage,
+  });
+  assert.equal(wroteDemoFallback, false);
+  assert.equal(readActiveTripFromLocalStorage(mockStorage)?.trip.id, 'trip-generated-madrid-1');
+
+  // Clearing form draft (`atlasgenie_form_draft`) leaves `atlasgenie_active_trip` intact
+  mockStorage.setItem(FORM_DRAFT_STORAGE_KEY, '{"country":"Spain"}');
+  mockStorage.removeItem(FORM_DRAFT_STORAGE_KEY);
+  assert.equal(readActiveTripFromLocalStorage(mockStorage)?.trip.id, 'trip-generated-madrid-1');
+
+  // Explicit user deletion removes `atlasgenie_active_trip`
+  const cleared = writeActiveTripToLocalStorageGuarded(null, {
+    storage: mockStorage,
+    explicitClear: true,
+  });
+  assert.equal(cleared, true);
+  assert.equal(readActiveTripFromLocalStorage(mockStorage), null);
+});
+
+test('Bug Triage: new_trip_draft Persistence, Strict Budget Enforcement (AI Prompting & Cap), and Date Min Validation', async () => {
+  const {
+    NEW_TRIP_DRAFT_STORAGE_KEY,
+    buildStrictBudgetConstraintDirective,
+    computeTripTotalCost,
+    createDefaultTripWizardDraft,
+    enforceStrictBudgetCapOnDays,
+    getTodayIsoDateString,
+    normalizeInputBudget,
+    parseTripWizardDraft,
+    serializeTripWizardDraft,
+  } = await import('./domainLogic');
+
+  // 1. new_trip_draft storage key & round-trip serialization
+  assert.equal(NEW_TRIP_DRAFT_STORAGE_KEY, 'new_trip_draft');
+  const draftInput = {
+    country: 'Spain',
+    cities: ['Madrid', 'Toledo'],
+    cityInput: '',
+    letAiDecideCities: false,
+    startDate: '2026-11-20',
+    endDate: '2026-11-24',
+    travelersCount: 4,
+    totalBudget: 1600,
+    selectedInterests: ['food', 'nightlife'],
+    defaultPace: 4,
+    groupEnabled: true,
+    specialPreferences: ['Vegetarian / Vegan Diet'],
+    customRequest: 'We want rooftop tapas bars',
+  };
+  const serialized = serializeTripWizardDraft(draftInput);
+  const restored = parseTripWizardDraft(serialized);
+  assert.ok(restored);
+  assert.equal(restored.country, 'Spain');
+  assert.deepEqual(restored.cities, ['Madrid', 'Toledo']);
+  assert.equal(restored.travelersCount, 4);
+  assert.equal(restored.totalBudget, 1600);
+  assert.equal(restored.customRequest, 'We want rooftop tapas bars');
+
+  // 2. Strict Budget Enforcement: exact CRITICAL SYSTEM INSTRUCTION
+  const { perPersonBudget } = normalizeInputBudget(1600, 4);
+  assert.equal(perPersonBudget, 400);
+  const strictDirective = buildStrictBudgetConstraintDirective(perPersonBudget);
+  assert.equal(
+    strictDirective,
+    'You MUST STRICTLY adhere to the per-person budget of 400. The sum of all daily activities, meals, and accommodations MUST NOT exceed this exact number. This is a hard limit.'
+  );
+
+  const systemPrompt = buildGenerateItinerarySystemPrompt(
+    'Madrid',
+    'Spain',
+    [],
+    '',
+    'en',
+    1600,
+    4
+  );
+  assert.ok(
+    systemPrompt.includes(
+      'You MUST STRICTLY adhere to the per-person budget of 400. The sum of all daily activities, meals, and accommodations MUST NOT exceed this exact number. This is a hard limit.'
+    ),
+    'System prompt must contain the exact strict per-person budget instruction'
+  );
+
+  // 3. Deterministic Budget Cap Enforcement on generated days
+  const sampleDays = JSON.parse(JSON.stringify(DEMO_TRIPS['demo-lisbon-4d'].days));
+  const tightTotalBudget = 600;
+  const groupTravelers = 3; // €200 per person across 4 days
+  const uncalibratedTotals = computeTripTotalCost(sampleDays, groupTravelers);
+  assert.ok(uncalibratedTotals.total > tightTotalBudget);
+
+  const cappedDays = enforceStrictBudgetCapOnDays(sampleDays, tightTotalBudget, groupTravelers);
+  const cappedTotals = computeTripTotalCost(cappedDays, groupTravelers);
+  assert.ok(
+    cappedTotals.total <= tightTotalBudget,
+    `Capped trip total (${cappedTotals.total}) must not exceed totalBudget (${tightTotalBudget})`
+  );
+  assert.ok(
+    cappedTotals.perPersonTotal <= 200,
+    `Capped per-person total (${cappedTotals.perPersonTotal}) must not exceed perPersonBudget (200)`
+  );
+
+  // 4. Date min validation: todayIso is YYYY-MM-DD and default draft dates are never in the past
+  const todayIso = getTodayIsoDateString();
+  assert.match(todayIso, /^\d{4}-\d{2}-\d{2}$/);
+  const defaultDraft = createDefaultTripWizardDraft();
+  assert.ok(defaultDraft.startDate >= todayIso);
+  assert.ok(defaultDraft.endDate >= defaultDraft.startDate);
+});

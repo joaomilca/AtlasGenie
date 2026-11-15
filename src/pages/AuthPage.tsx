@@ -2,16 +2,16 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  loginWithEmail,
-  registerWithEmail,
   resetUserPassword,
   signInWithGoogle,
 } from '../services/firebase';
 import { useAtlas } from '../context/AtlasContext';
+import { useAuth, mapFirebaseAuthError } from '../context/AuthContext';
 
 export const AuthPage: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { enableDemoMode, showToast } = useAtlas();
+  const { login, signup } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const isSignup = location.pathname === '/signup';
@@ -25,20 +25,16 @@ export const AuthPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!email.includes('@') || password.length < 6) {
-      setError(t('auth.errInvalid'));
-      return;
-    }
     setLoading(true);
     try {
       if (isSignup) {
-        await registerWithEmail(name, email, password);
+        await signup(email, password);
       } else {
-        await loginWithEmail(email, password);
+        await login(email, password);
       }
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err?.message || t('auth.errFailed'));
+      setError(mapFirebaseAuthError(err, i18n.language));
     } finally {
       setLoading(false);
     }

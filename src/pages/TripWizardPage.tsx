@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, Globe, Loader2, MapPin, Plus, Sparkles, X } from 'lucide-react';
 import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
+import { useAuth } from '../context/AuthContext';
 import {
   SPECIAL_PREFERENCE_CHIPS,
   SpecialPreferenceChipOption,
@@ -11,14 +12,23 @@ import {
   generateTripItinerary,
   validateLocationWithGeocoder,
 } from '../services/api';
+import { getUserProfile } from '../services/firebase';
 import { SkeletonItinerary } from '../components/SkeletonItinerary';
 
 import {
+  FORM_DRAFT_STORAGE_KEY,
+  INTEREST_OPTION_ITEMS,
+  NEW_TRIP_DRAFT_STORAGE_KEY,
   TRIP_DRAFT_STORAGE_KEY,
   TripWizardDraftState,
+  applyUserProfileToTripDraft,
   createDefaultTripWizardDraft,
+  doesRestrictionMatchChip,
+  normalizeInputBudget,
   parseTripWizardDraft,
   serializeTripWizardDraft,
+  toggleRestrictionInList,
+  writeActiveTripToLocalStorageGuarded,
 } from '../utils/domainLogic';
 import {
   WorldCountryOption,
@@ -30,14 +40,14 @@ import {
 } from '../utils/worldDestinations';
 
 const INTEREST_OPTIONS = [
-  { id: 'food', labelEn: 'Food & Markets', labelPt: 'Gastronomia e Mercados', icon: '🍲' },
-  { id: 'history', labelEn: 'History & Ruins', labelPt: 'História e Património', icon: '🏛️' },
-  { id: 'architecture', labelEn: 'Architecture & Tiles', labelPt: 'Arquitetura e Azulejos', icon: '🧱' },
-  { id: 'viewpoints', labelEn: 'Miradouros & Views', labelPt: 'Miradouros e Vistas', icon: '🌅' },
-  { id: 'art', labelEn: 'Museums & Galleries', labelPt: 'Museus e Arte', icon: '🎨' },
-  { id: 'wine', labelEn: 'Wine & Cellars', labelPt: 'Vinhos e Caves', icon: '🍷' },
-  { id: 'music', labelEn: 'Live Music & Fado', labelPt: 'Música ao Vivo e Fado', icon: '🎸' },
-  { id: 'nature', labelEn: 'Parks & Coastal Walks', labelPt: 'Parques e Costa', icon: '🌿' },
+  { id: 'food', icon: '🍲' },
+  { id: 'history', icon: '🏛️' },
+  { id: 'architecture', icon: '🧱' },
+  { id: 'viewpoints', icon: '🌅' },
+  { id: 'art', icon: '🎨' },
+  { id: 'wine', icon: '🍷' },
+  { id: 'music', icon: '🎸' },
+  { id: 'nature', icon: '🌿' },
 ];
 
 interface CountrySelectOptionsProps {
@@ -96,8 +106,10 @@ CountrySelectOptions.displayName = 'CountrySelectOptions';
 
 export const TripWizardPage: React.FC = () => {
   const { t } = useTranslation();
-  const { language } = useI18n();
+  const { language, activeLanguage } = useI18n();
   const { currentUser, saveTripBundle, showToast } = useAtlas();
+  const { user, userProfile } = useAuth();
+  const activeAuthUser = user || currentUser;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -114,16 +126,25 @@ export const TripWizardPage: React.FC = () => {
     [cityParam, hasExplicitCityParam]
   );
 
-  const initialDraft = useMemo<TripWizardDraftState>(() => {
-    const fallbackDraft = createDefaultTripWizardDraft(inferred);
+  const defaultState = useMemo<TripWizardDraftState>(
+    () => createDefaultTripWizardDraft(inferred),
+    [inferred]
+  );
+  const hadSavedDraftOnMountRef = useRef<boolean>(false);
+
+  const [formData, setFormData] = useState<TripWizardDraftState>(() => {
     if (typeof window === 'undefined') {
-      return fallbackDraft;
+      return defaultState;
     }
     try {
-      const savedRaw = window.localStorage.getItem(TRIP_DRAFT_STORAGE_KEY);
-      if (savedRaw) {
-        const parsed = parseTripWizardDraft(savedRaw, fallbackDraft);
+      const draft =
+        window.localStorage.getItem(NEW_TRIP_DRAFT_STORAGE_KEY) ||
+        window.localStorage.getItem(FORM_DRAFT_STORAGE_KEY) ||
+        window.localStorage.getItem(TRIP_DRAFT_STORAGE_KEY);
+      if (draft) {
+        const parsed = parseTripWizardDraft(draft, defaultState);
         if (parsed) {
+          hadSavedDraftOnMountRef.current = true;
           if (hasExplicitCityParam && inferred) {
             return {
               ...parsed,
@@ -137,74 +158,60 @@ export const TripWizardPage: React.FC = () => {
     } catch {
       // ignore localStorage read errors
     }
-    return fallbackDraft;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return defaultState;
+  });
 
-  const [country, setCountry] = useState<string>(() => initialDraft.country);
+  const [country, setCountry] = useState<string>(() => formData.country);
   const [countrySearch, setCountrySearch] = useState<string>(() => {
-    if (!initialDraft.country) return '';
-    const opt = findWorldCountry(initialDraft.country);
-    return isPt ? opt?.labelPt || initialDraft.country : opt?.labelEn || initialDraft.country;
+    if (!formData.country) return '';
+    const opt = findWorldCountry(formData.country);
+    return isPt ? opt?.labelPt || formData.country : opt?.labelEn || formData.country;
   });
   const [isFilteringCountries, setIsFilteringCountries] = useState<boolean>(false);
   const [countryDropdownOpen, setCountryDropdownOpen] = useState<boolean>(false);
   const countryDropdownRef = useRef<HTMLDivElement | null>(null);
-  const [cities, setCities] = useState<string[]>(() => [...initialDraft.cities]);
-  const [cityInput, setCityInput] = useState<string>(() => initialDraft.cityInput);
+  const [cities, setCities] = useState<string[]>(() => [...formData.cities]);
+  const [cityInput, setCityInput] = useState<string>(() => formData.cityInput);
   const [letAiDecideCities, setLetAiDecideCities] = useState<boolean>(
-    () => initialDraft.letAiDecideCities
+    () => formData.letAiDecideCities
   );
 
-  const [startDate, setStartDate] = useState<string>(() => initialDraft.startDate);
-  const [endDate, setEndDate] = useState<string>(() => initialDraft.endDate);
-  const [travelersCount, setTravelersCount] = useState<number>(() => initialDraft.travelersCount);
-  const [totalBudget, setTotalBudget] = useState<number>(() => initialDraft.totalBudget);
+  const [startDate, setStartDate] = useState<string>(() => formData.startDate);
+  const [endDate, setEndDate] = useState<string>(() => formData.endDate);
+  const [travelersCount, setTravelersCount] = useState<number>(() => formData.travelersCount);
+  const [totalBudget, setTotalBudget] = useState<number>(() => formData.totalBudget);
   const [selectedInterests, setSelectedInterests] = useState<string[]>(() => [
-    ...initialDraft.selectedInterests,
+    ...formData.selectedInterests,
   ]);
-  const [defaultPace, setDefaultPace] = useState<number>(() => initialDraft.defaultPace);
-  const [groupEnabled, setGroupEnabled] = useState<boolean>(() => initialDraft.groupEnabled);
+  const [defaultPace, setDefaultPace] = useState<number>(() => formData.defaultPace);
+  const [groupEnabled, setGroupEnabled] = useState<boolean>(() => formData.groupEnabled);
 
   const [specialPreferences, setSpecialPreferences] = useState<string[]>(() => [
-    ...initialDraft.specialPreferences,
+    ...formData.specialPreferences,
   ]);
-  const [customRequest, setCustomRequest] = useState<string>(() => initialDraft.customRequest);
+  const [customRequest, setCustomRequest] = useState<string>(() => formData.customRequest);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isVerifyingCity, setIsVerifyingCity] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const skipNextDraftSaveRef = useRef<boolean>(false);
 
-  // Sprint 17: Auto-save draft to localStorage whenever any form field changes
+  // Synchronize formData state whenever any individual form control changes
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (skipNextDraftSaveRef.current) {
-      skipNextDraftSaveRef.current = false;
-      return;
-    }
-    try {
-      const draftPayload: TripWizardDraftState = {
-        country,
-        cities,
-        cityInput,
-        letAiDecideCities,
-        startDate,
-        endDate,
-        travelersCount,
-        totalBudget,
-        selectedInterests,
-        defaultPace,
-        groupEnabled,
-        specialPreferences,
-        customRequest,
-      };
-      window.localStorage.setItem(
-        TRIP_DRAFT_STORAGE_KEY,
-        serializeTripWizardDraft(draftPayload)
-      );
-    } catch {
-      // ignore storage quota errors
-    }
+    setFormData({
+      country,
+      cities,
+      cityInput,
+      letAiDecideCities,
+      startDate,
+      endDate,
+      travelersCount,
+      totalBudget,
+      selectedInterests,
+      defaultPace,
+      groupEnabled,
+      specialPreferences,
+      customRequest,
+    });
   }, [
     country,
     cities,
@@ -221,14 +228,88 @@ export const TripWizardPage: React.FC = () => {
     customRequest,
   ]);
 
+  // Save formData to localStorage ('new_trip_draft') on every change
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (skipNextDraftSaveRef.current) {
+      skipNextDraftSaveRef.current = false;
+      return;
+    }
+    try {
+      const serializedDraft = serializeTripWizardDraft(formData);
+      window.localStorage.setItem(NEW_TRIP_DRAFT_STORAGE_KEY, serializedDraft);
+      window.localStorage.setItem(FORM_DRAFT_STORAGE_KEY, serializedDraft);
+      window.localStorage.setItem(TRIP_DRAFT_STORAGE_KEY, serializedDraft);
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [formData]);
+
+  // Sprint 25: Smart Auto-Fill from Firestore user profile on mount ONLY when no saved draft exists
+  useEffect(() => {
+    let isMounted = true;
+    if (hadSavedDraftOnMountRef.current) return;
+    const uid = activeAuthUser?.uid;
+    if (!uid) return;
+
+    (async () => {
+      const profile =
+        (await getUserProfile(
+          uid,
+          activeAuthUser?.email || undefined,
+          activeAuthUser?.displayName || undefined
+        )) || userProfile;
+
+      if (!isMounted || !profile || hadSavedDraftOnMountRef.current) return;
+
+      const updatedDraft = applyUserProfileToTripDraft(
+        {
+          country,
+          cities,
+          cityInput,
+          letAiDecideCities,
+          startDate,
+          endDate,
+          travelersCount,
+          totalBudget,
+          selectedInterests,
+          defaultPace,
+          groupEnabled,
+          specialPreferences,
+          customRequest,
+        },
+        profile
+      );
+
+      setTravelersCount(updatedDraft.travelersCount);
+      setGroupEnabled(updatedDraft.groupEnabled);
+      setDefaultPace(updatedDraft.defaultPace);
+      setSelectedInterests([...updatedDraft.selectedInterests]);
+      setSpecialPreferences([...updatedDraft.specialPreferences]);
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+    // Run on component mount and when authenticated user uid changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAuthUser?.uid]);
+
   const handleClearForm = useCallback(() => {
-    const clean = createDefaultTripWizardDraft(null);
+    const clean = applyUserProfileToTripDraft(
+      createDefaultTripWizardDraft(null),
+      activeAuthUser ? userProfile : null
+    );
+    hadSavedDraftOnMountRef.current = false;
     skipNextDraftSaveRef.current = true;
     try {
+      window.localStorage.removeItem(NEW_TRIP_DRAFT_STORAGE_KEY);
+      window.localStorage.removeItem(FORM_DRAFT_STORAGE_KEY);
       window.localStorage.removeItem(TRIP_DRAFT_STORAGE_KEY);
     } catch {
       // ignore localStorage errors
     }
+    setFormData(clean);
     setCountry(clean.country);
     setCountrySearch('');
     setIsFilteringCountries(false);
@@ -246,7 +327,7 @@ export const TripWizardPage: React.FC = () => {
     setSpecialPreferences([...clean.specialPreferences]);
     setCustomRequest(clean.customRequest);
     setFormError(null);
-  }, []);
+  }, [activeAuthUser, userProfile]);
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -399,13 +480,7 @@ export const TripWizardPage: React.FC = () => {
   }, []);
 
   const toggleSpecialPreference = useCallback((chip: SpecialPreferenceChipOption) => {
-    setSpecialPreferences((prev) => {
-      const exists = prev.includes(chip.labelPt) || prev.includes(chip.labelEn);
-      if (exists) {
-        return prev.filter((item) => item !== chip.labelPt && item !== chip.labelEn);
-      }
-      return [...prev, chip.labelPt];
-    });
+    setSpecialPreferences((prev) => toggleRestrictionInList(prev, chip));
   }, []);
 
   // Compute display destination string for headers & skeleton loader
@@ -421,6 +496,11 @@ export const TripWizardPage: React.FC = () => {
     : Array.from(new Set([...cities, ...pendingTypedCities]));
   const computedDestination =
     effectiveCities.length > 0 ? `${effectiveCities.join(', ')}, ${country}` : country;
+  const normalizedBudget = useMemo(
+    () => normalizeInputBudget(totalBudget, travelersCount),
+    [totalBudget, travelersCount]
+  );
+  const perPersonSuffix = language === 'en' ? '/person' : '/pessoa';
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -497,13 +577,19 @@ export const TripWizardPage: React.FC = () => {
           groupEnabled,
           ownerId: currentUser?.uid || 'demo-user',
           ownerName: currentUser?.displayName || 'Ana',
+          language,
+          uiLanguage: activeLanguage,
+          activeLanguage,
         }),
         new Promise((resolve) => setTimeout(resolve, 1800)),
       ]);
 
+      writeActiveTripToLocalStorageGuarded(bundle, { allowDemoOverwrite: true });
       await saveTripBundle(bundle);
       try {
         skipNextDraftSaveRef.current = true;
+        window.localStorage.removeItem(NEW_TRIP_DRAFT_STORAGE_KEY);
+        window.localStorage.removeItem(FORM_DRAFT_STORAGE_KEY);
         window.localStorage.removeItem(TRIP_DRAFT_STORAGE_KEY);
       } catch {
         // ignore localStorage errors
@@ -664,8 +750,15 @@ export const TripWizardPage: React.FC = () => {
               <input
                 id="wiz-start"
                 type="date"
+                min={new Date().toISOString().split('T')[0]}
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  const nextStart = e.target.value;
+                  setStartDate(nextStart);
+                  if (endDate && nextStart && endDate < nextStart) {
+                    setEndDate(nextStart);
+                  }
+                }}
                 className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 font-mono-tabular"
               />
             </div>
@@ -677,6 +770,11 @@ export const TripWizardPage: React.FC = () => {
               <input
                 id="wiz-end"
                 type="date"
+                min={
+                  startDate && startDate >= new Date().toISOString().split('T')[0]
+                    ? startDate
+                    : new Date().toISOString().split('T')[0]
+                }
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 font-mono-tabular"
@@ -843,6 +941,13 @@ export const TripWizardPage: React.FC = () => {
                 onChange={(e) => setTotalBudget(Number(e.target.value))}
                 className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 font-mono-tabular"
               />
+              <p
+                data-testid="wiz-per-person-budget-hint"
+                className="mt-1 text-[11px] font-mono-tabular text-slate-600 dark:text-slate-400"
+              >
+                ~€{normalizedBudget.inputTotalBudget} (~€{normalizedBudget.perPersonBudget}
+                {perPersonSuffix})
+              </p>
             </div>
           </div>
 
@@ -912,7 +1017,7 @@ export const TripWizardPage: React.FC = () => {
                       {item.icon}
                     </span>
                     <span className="text-xs font-medium leading-tight">
-                      {language === 'pt' ? item.labelPt : item.labelEn}
+                      {t(`interest.${item.id}`)}
                     </span>
                   </button>
                 );
@@ -971,9 +1076,7 @@ export const TripWizardPage: React.FC = () => {
             className="flex flex-wrap gap-2.5"
           >
             {SPECIAL_PREFERENCE_CHIPS.map((chip) => {
-              const isSelected =
-                specialPreferences.includes(chip.labelPt) ||
-                specialPreferences.includes(chip.labelEn);
+              const isSelected = doesRestrictionMatchChip(specialPreferences, chip);
               const displayLabel = t(
                 `wizard.prefChip.${chip.id}`,
                 isPt ? chip.labelPt : chip.labelEn

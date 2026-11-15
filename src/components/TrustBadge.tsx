@@ -1,6 +1,7 @@
 import React, { useState, useId } from 'react';
 import { ExternalLink, CheckCircle2, Sparkles, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useI18n } from '../i18n/I18nContext';
 import { ConfidenceInfo } from '../types/models';
 
 interface TrustBadgeProps {
@@ -17,6 +18,7 @@ export const TrustBadge: React.FC<TrustBadgeProps> = ({
   testId,
 }) => {
   const { t } = useTranslation();
+  useI18n();
   const [open, setOpen] = useState(false);
   const popoverId = useId();
 
@@ -32,10 +34,10 @@ export const TrustBadge: React.FC<TrustBadgeProps> = ({
     : t('trip.toConfirm');
 
   const srConfidenceStatus = isVerified
-    ? 'Verified Source'
+    ? t('trust.srVerified')
     : isEstimated
-    ? 'AI Estimated'
-    : 'To Confirm';
+    ? t('trust.srEstimated')
+    : t('trust.srConfirm');
 
   const badgeStyle = isVerified
     ? 'bg-emerald-50/90 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border-emerald-300 dark:border-emerald-800 hover:bg-emerald-100/80'

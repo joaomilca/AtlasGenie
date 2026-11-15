@@ -39,6 +39,7 @@ import {
   computeDaySubtotal,
   resolveActiveDayAccommodation,
 } from '../utils/domainLogic';
+import { useI18n } from '../i18n/I18nContext';
 import { ActivityCard } from './ActivityCard';
 
 export interface DayTimelineProps {
@@ -49,6 +50,7 @@ export interface DayTimelineProps {
   intercityTransit?: IntercityTransit;
   meals?: DayMeals;
   activities: Activity[];
+  travelers?: number;
   selectedActivityId: string | null;
   activeTravelerId: string;
   askingAccommodationAlt?: boolean;
@@ -76,6 +78,7 @@ const DayTimelineInner: React.FC<DayTimelineProps> = ({
   intercityTransit,
   meals,
   activities,
+  travelers = 1,
   selectedActivityId,
   activeTravelerId,
   askingAccommodationAlt = false,
@@ -95,6 +98,8 @@ const DayTimelineInner: React.FC<DayTimelineProps> = ({
   onAskAccommodationAlternative,
 }) => {
   const { t } = useTranslation();
+  const { language } = useI18n();
+  const safeTravelers = Math.max(1, Math.round(Number(travelers) || 1));
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -120,18 +125,22 @@ const DayTimelineInner: React.FC<DayTimelineProps> = ({
   // Real-time calculated Daily Total summing:
   // 1. Current global/day tier price for Accommodation
   // 2. Intercity transit (if any)
-  // 3. Current global/day tier price for Meals
-  // 4. Sum of the SPECIFICALLY SELECTED tier prices for each individual activity
+  // 3. Per-person Meals & Activities multiplied by safeTravelers
   const dailySubtotal = useMemo(
     () =>
-      computeDaySubtotal({
-        accommodation,
-        intercity_transit: intercityTransit,
-        meals,
-        activities,
-      }),
-    [accommodation, intercityTransit, meals, activities]
+      computeDaySubtotal(
+        {
+          accommodation,
+          intercity_transit: intercityTransit,
+          meals,
+          activities,
+        },
+        safeTravelers
+      ),
+    [accommodation, intercityTransit, meals, activities, safeTravelers]
   );
+  const perPersonDailyTotal = Math.round(dailySubtotal.total / safeTravelers);
+  const perPersonSuffix = language === 'en' ? '/person' : '/pessoa';
 
   const [isEditingAccTitle, setIsEditingAccTitle] = useState(false);
   const [draftAccTitle, setDraftAccTitle] = useState(activeAccommodation?.name || '');
@@ -198,6 +207,7 @@ const DayTimelineInner: React.FC<DayTimelineProps> = ({
           <span
             data-testid={`day-${dayNumber}-daily-total`}
             data-daily-total={dailySubtotal.total}
+            data-daily-per-person={perPersonDailyTotal}
             className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-mono-tabular text-xs sm:text-sm font-bold border transition-all duration-300 ${
               dominantTier === 'premium'
                 ? 'bg-amber-100/90 dark:bg-amber-950/70 text-amber-950 dark:text-amber-200 border-amber-400 dark:border-amber-700 shadow-xs'
@@ -205,7 +215,10 @@ const DayTimelineInner: React.FC<DayTimelineProps> = ({
             }`}
           >
             <Wallet className="w-3.5 h-3.5 text-[#D97706] shrink-0" aria-hidden="true" />
-            <span>{t('logistics.dailyTotal', { amount: dailySubtotal.total })}</span>
+            <span>
+              {t('logistics.dailyTotal', { amount: dailySubtotal.total })} (~€{perPersonDailyTotal}
+              {perPersonSuffix})
+            </span>
           </span>
         </div>
       </div>

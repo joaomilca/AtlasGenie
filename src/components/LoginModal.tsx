@@ -1,11 +1,8 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import {
-  loginWithEmail,
-  registerWithEmail,
-  signInWithGoogle,
-} from '../services/firebase';
+import { signInWithGoogle } from '../services/firebase';
+import { useAuth, mapFirebaseAuthError } from '../context/AuthContext';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -14,7 +11,8 @@ interface LoginModalProps {
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSuccess }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { login, signup } = useAuth();
   const [isSignup, setIsSignup] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -27,21 +25,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!email.includes('@') || password.length < 6) {
-      setError(t('auth.errInvalid'));
-      return;
-    }
     setLoading(true);
     try {
       if (isSignup) {
-        await registerWithEmail(name, email, password);
+        await signup(email, password);
       } else {
-        await loginWithEmail(email, password);
+        await login(email, password);
       }
       onSuccess?.();
       onClose();
     } catch (err: any) {
-      setError(err?.message || t('auth.errFailed'));
+      setError(mapFirebaseAuthError(err, i18n.language));
     } finally {
       setLoading(false);
     }
@@ -72,7 +66,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-mono-tabular uppercase tracking-widest text-amber-700 dark:text-amber-400">
-              AtlasGenie · Cloud Sync
+              {t('auth.cloudSyncKicker')}
             </p>
             <h2
               id="login-modal-title"

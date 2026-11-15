@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { DEMO_TRIPS } from '../data/demoTrips';
+import { DEMO_TRIPS, getLocalizedDemoTripMeta } from '../data/demoTrips';
 import { computeReliabilitySummary } from '../utils/domainLogic';
 
 export const DemoHubPage: React.FC = () => {
@@ -34,9 +34,11 @@ export const DemoHubPage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {Object.values(DEMO_TRIPS).map((bundle) => {
           const reliability = computeReliabilitySummary(bundle.days);
+          const meta = getLocalizedDemoTripMeta(bundle, t);
           return (
             <article
               key={bundle.trip.id}
+              data-testid={`demo-hub-card-${bundle.trip.id}`}
               className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 flex flex-col justify-between space-y-6"
             >
               <div className="space-y-3">
@@ -52,8 +54,12 @@ export const DemoHubPage: React.FC = () => {
                 </div>
 
                 <h2 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white">
-                  {bundle.trip.destination} ({bundle.days.length} {t('hero.days')})
+                  {meta.locationTitle} ({bundle.days.length} {t('hero.days')})
                 </h2>
+
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {t('hero.sampleCardDesc', { theme: meta.theme })}
+                </p>
 
                 <p className="text-xs text-slate-600 dark:text-slate-300">
                   {t('demo.interests')}{' '}
@@ -87,7 +93,7 @@ export const DemoHubPage: React.FC = () => {
                   onClick={() => navigate(`/trips/${bundle.trip.id}`)}
                   className="col-span-2 py-2.5 px-4 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors cursor-pointer"
                 >
-                  {t('demo.exploreBtn')}
+                  {meta.openBtnLabel}
                 </button>
                 <button
                   type="button"

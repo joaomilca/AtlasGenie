@@ -11,10 +11,27 @@
         "language": { "type": "string", "enum": ["pt", "en"], "maxLength": 5 },
         "notificationEnabled": { "type": "boolean" },
         "reminderDaysBefore": { "type": "number" },
+        "defaultGroupSize": { "type": "number" },
+        "defaultPaceLevel": { "type": "number" },
+        "savedInterests": { "type": "array", "maxLength": 10 },
+        "savedRestrictions": { "type": "array", "maxLength": 10 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "name", "email", "language", "notificationEnabled", "reminderDaysBefore", "createdAt", "updatedAt"]
+      "required": [
+        "id",
+        "name",
+        "email",
+        "language",
+        "notificationEnabled",
+        "reminderDaysBefore",
+        "defaultGroupSize",
+        "defaultPaceLevel",
+        "savedInterests",
+        "savedRestrictions",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "Trip": {
       "title": "Trip",

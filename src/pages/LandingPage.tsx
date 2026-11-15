@@ -4,7 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useI18n } from '../i18n/I18nContext';
 import { useAtlas } from '../context/AtlasContext';
-import { buildInstantMiniPreview, DEMO_TRIPS } from '../data/demoTrips';
+import { buildInstantMiniPreview, DEMO_TRIPS, getLocalizedDemoTripMeta } from '../data/demoTrips';
 
 interface LandingPageProps {
   onOpenSupport?: () => void;
@@ -15,13 +15,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenSupport }) => {
   const { language } = useI18n();
   const { showToast } = useAtlas();
   const navigate = useNavigate();
-  const [miniCity, setMiniCity] = useState('Lisbon');
+  const [miniCity, setMiniCity] = useState(() => (language === 'pt' ? 'Lisboa' : 'Lisbon'));
   const [miniLoading, setMiniLoading] = useState(false);
-  const [preview, setPreview] = useState(() => buildInstantMiniPreview('Lisbon', language));
+  const [preview, setPreview] = useState(() =>
+    buildInstantMiniPreview(language === 'pt' ? 'Lisboa' : 'Lisbon', language)
+  );
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
 
   useEffect(() => {
-    setPreview(buildInstantMiniPreview(miniCity || 'Lisbon', language));
+    setMiniCity((prev) => {
+      if (language === 'pt' && prev.trim().toLowerCase() === 'lisbon') return 'Lisboa';
+      if (language === 'en' && prev.trim().toLowerCase() === 'lisboa') return 'Lisbon';
+      return prev;
+    });
+    setPreview(buildInstantMiniPreview(miniCity || (language === 'pt' ? 'Lisboa' : 'Lisbon'), language));
   }, [language]);
 
   const handleGenerateMini = (e: React.FormEvent) => {
@@ -306,42 +313,46 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenSupport }) => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {Object.values(DEMO_TRIPS).map((bundle) => (
-            <div
-              key={bundle.trip.id}
-              className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 flex flex-col justify-between space-y-5"
-            >
-              <div className="space-y-2">
-                <p className="text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
-                  {bundle.days.length} {t('hero.days')} · {bundle.travelers.length} {t('hero.travellers')} · €{bundle.trip.totalBudget} {t('hero.budget')}
-                </p>
-                <h3 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white">
-                  {bundle.trip.destination}, {bundle.trip.country}
-                </h3>
-                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  {t('hero.sampleCardDesc', { theme: bundle.days[0]?.theme || bundle.trip.destination })}
-                </p>
-              </div>
-
-              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
-                  <span>
-                    {t('hero.groupMembers')} {bundle.travelers.map((tr) => tr.displayName).join(', ')}
-                  </span>
-                  <span className="font-mono-tabular">
-                    {t('hero.code')} {bundle.trip.inviteCode}
-                  </span>
+          {Object.values(DEMO_TRIPS).map((bundle) => {
+            const meta = getLocalizedDemoTripMeta(bundle, t);
+            return (
+              <div
+                key={bundle.trip.id}
+                data-testid={`demo-sample-card-${bundle.trip.id}`}
+                className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 flex flex-col justify-between space-y-5"
+              >
+                <div className="space-y-2">
+                  <p className="text-xs font-mono-tabular text-slate-500 dark:text-slate-400">
+                    {bundle.days.length} {t('hero.days')} · {bundle.travelers.length} {t('hero.travellers')} · €{bundle.trip.totalBudget} {t('hero.budget')}
+                  </p>
+                  <h3 className="font-serif-atlas text-2xl font-bold text-slate-900 dark:text-white">
+                    {meta.locationTitle}
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    {t('hero.sampleCardDesc', { theme: meta.theme })}
+                  </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/trips/${bundle.trip.id}`)}
-                  className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 dark:hover:bg-amber-500 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-                >
-                  {t('hero.openDemoBtn', { city: bundle.trip.destination })}
-                </button>
+
+                <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                    <span>
+                      {t('hero.groupMembers')} {bundle.travelers.map((tr) => tr.displayName).join(', ')}
+                    </span>
+                    <span className="font-mono-tabular">
+                      {t('hero.code')} {bundle.trip.inviteCode}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/trips/${bundle.trip.id}`)}
+                    className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 dark:hover:bg-amber-500 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    {meta.openBtnLabel}
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

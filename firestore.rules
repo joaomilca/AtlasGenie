@@ -25,8 +25,16 @@ service cloud.firestore {
 
     // Validation Blueprint: User
     function isValidUser(data) {
-      return data.keys().hasAll(['id', 'name', 'email', 'language', 'notificationEnabled', 'reminderDaysBefore', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'name', 'email', 'language', 'notificationEnabled', 'reminderDaysBefore', 'createdAt', 'updatedAt'])
+      return data.keys().hasAll([
+          'id', 'name', 'email', 'language', 'notificationEnabled', 'reminderDaysBefore',
+          'defaultGroupSize', 'defaultPaceLevel', 'savedInterests', 'savedRestrictions',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'name', 'email', 'language', 'notificationEnabled', 'reminderDaysBefore',
+          'defaultGroupSize', 'defaultPaceLevel', 'savedInterests', 'savedRestrictions',
+          'createdAt', 'updatedAt'
+        ])
         && isValidId(data.id)
         && data.id == request.auth.uid
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
@@ -34,6 +42,12 @@ service cloud.firestore {
         && data.language is string && data.language.size() == 2 && (data.language == 'pt' || data.language == 'en')
         && data.notificationEnabled is bool
         && data.reminderDaysBefore is number && data.reminderDaysBefore >= 1 && data.reminderDaysBefore <= 30
+        && data.defaultGroupSize is number && data.defaultGroupSize >= 1 && data.defaultGroupSize <= 50
+        && data.defaultPaceLevel is number && data.defaultPaceLevel >= 1 && data.defaultPaceLevel <= 5
+        && data.savedInterests is list && data.savedInterests.size() <= 10
+        && (data.savedInterests.size() == 0 || (data.savedInterests[0] is string && data.savedInterests[0].size() <= 50))
+        && data.savedRestrictions is list && data.savedRestrictions.size() <= 10
+        && (data.savedRestrictions.size() == 0 || (data.savedRestrictions[0] is string && data.savedRestrictions[0].size() <= 100))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -188,7 +202,11 @@ service cloud.firestore {
         && incoming().email == existing().email
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'language', 'notificationEnabled', 'reminderDaysBefore', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'language', 'notificationEnabled', 'reminderDaysBefore',
+          'defaultGroupSize', 'defaultPaceLevel', 'savedInterests', 'savedRestrictions',
+          'updatedAt'
+        ]);
       allow delete: if false;
     }
 

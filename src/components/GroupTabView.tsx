@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { FullTripBundle, VoteValue } from '../types/models';
 import { computeGroupFairness } from '../utils/domainLogic';
 import { useAtlas } from '../context/AtlasContext';
+import { useI18n } from '../i18n/I18nContext';
 import { requestAiProposals } from '../services/api';
 
 interface GroupTabViewProps {
@@ -11,6 +12,7 @@ interface GroupTabViewProps {
 
 export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
   const { t } = useTranslation();
+  const { language } = useI18n();
   const {
     activeTravelerIdByTrip,
     setActiveTravelerId,
@@ -75,6 +77,9 @@ export const GroupTabView: React.FC<GroupTabViewProps> = ({ bundle }) => {
         message: 'Resolve group downvotes and balance Fairness Meter',
         currentDay: dayWithDisagreement,
         travelers: bundle.travelers,
+        language,
+        uiLanguage: language === 'pt' ? 'pt-PT' : 'en',
+        itinerary: bundle,
       });
       addProposals(bundle.trip.id, res.proposals);
       showToast(t('diff.bannerTitle'));

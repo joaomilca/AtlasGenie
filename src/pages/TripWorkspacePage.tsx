@@ -20,15 +20,24 @@ import { useAtlas } from '../context/AtlasContext';
 import { useI18n } from '../i18n/I18nContext';
 import { saveTrip, auth } from '../firebase';
 import {
+  ACTIVE_TRIP_STORAGE_KEY,
+  MAX_TRIP_HISTORY_LENGTH,
   computeDaySubtotal,
   computePaceMetrics,
+  computeProposalPriceDifference,
   computeReliabilitySummary,
   computeTripTotalCost,
+  evaluateBudgetGuard,
+  hasValidItineraryData,
+  parseActiveTripFromStorage,
+  popTripHistoryState,
+  pushTripHistoryState,
   reorderActivitiesList,
   generateIcsCalendar,
   downloadIcsFile,
+  writeActiveTripToLocalStorageGuarded,
 } from '../utils/domainLogic';
-import { Activity, BudgetTier, ProposalChange, VoteValue } from '../types/models';
+import { Activity, BudgetTier, FullTripBundle, ProposalChange, VoteValue } from '../types/models';
 import { SkeletonItinerary } from '../components/SkeletonItinerary';
 import { DayTimeline } from '../components/DayTimeline';
 import {
@@ -72,15 +81,14 @@ export const TripWorkspacePage: React.FC = () => {
     currentUser,
     trips,
     proposalsByTrip,
-    undoHistoryByTrip,
     activeTravelerIdByTrip,
     registerFetchedTrips,
+    saveTripBundle,
     addProposals,
     acceptProposal,
     rejectProposal,
     acceptAllProposals,
     rejectAllProposals,
-    undoLastChange,
     togglePlanB,
     updateDayActivities,
     updateDayAccommodation,
@@ -89,11 +97,66 @@ export const TripWorkspacePage: React.FC = () => {
     showToast,
   } = useAtlas();
 
-  const bundle = trips[id] || trips['demo-lisbon-4d'];
+  // 1. Synchronous Lazy Initialization from localStorage (`atlasgenie_active_trip`)
+  const [itinerary, setItinerary] = useState<FullTripBundle | null>(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
+      return saved ? parseActiveTripFromStorage(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Resolve the active bundle synchronously on mount without falling back to empty/demo state if a matching persisted trip exists
+  const bundle =
+    trips[id] ||
+    (itinerary && (itinerary.trip.id === id || !trips[id]) ? itinerary : null) ||
+    trips['demo-lisbon-4d'];
+
+  // Keep local `itinerary` state synchronized when `trips[id]` updates from context mutations
+  useEffect(() => {
+    const contextTrip = trips[id];
+    if (contextTrip && hasValidItineraryData(contextTrip) && contextTrip !== itinerary) {
+      setItinerary(contextTrip);
+    } else if (itinerary && hasValidItineraryData(itinerary) && !trips[itinerary.trip.id]) {
+      registerFetchedTrips([itinerary]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, itinerary, trips]);
+
+  // 2. Guarded Persistence (`useEffect`): ONLY save to localStorage if the itinerary has valid, non-empty activities
+  useEffect(() => {
+    const activeTarget = trips[id] || itinerary || bundle;
+    if (
+      activeTarget &&
+      hasValidItineraryData(activeTarget) &&
+      activeTarget.days.some((d) => Array.isArray(d.activities) && d.activities.length > 0)
+    ) {
+      writeActiveTripToLocalStorageGuarded(activeTarget);
+    }
+  }, [bundle, id, itinerary, trips]);
+
   const proposals = proposalsByTrip[bundle.trip.id] || [];
-  const undoStack = undoHistoryByTrip[bundle.trip.id] || [];
   const activeTravelerId =
     activeTravelerIdByTrip[bundle.trip.id] || bundle.travelers[0]?.id || 'ana';
+
+  // Undo History Stack (stores deep clones of up to the last 10 trip states)
+  const [tripHistory, setTripHistory] = useState<FullTripBundle[]>([]);
+
+  const recordTripHistorySnapshot = useCallback(() => {
+    setTripHistory((prev) => pushTripHistoryState(prev, bundle, MAX_TRIP_HISTORY_LENGTH));
+  }, [bundle]);
+
+  const handleUndo = useCallback(async () => {
+    if (tripHistory.length === 0) return;
+    const { restoredState, nextHistory } = popTripHistoryState(tripHistory);
+    if (!restoredState) return;
+    setTripHistory(nextHistory);
+    setItinerary(restoredState);
+    writeActiveTripToLocalStorageGuarded(restoredState, { allowDemoOverwrite: true });
+    await saveTripBundle(restoredState);
+    showToast(t('toast.undidLastChange'), 'alert');
+  }, [saveTripBundle, showToast, t, tripHistory]);
 
   // Active sub-route determination
   const activeTab: 'plan' | 'map' | 'budget' | 'group' | 'expenses' = useMemo(() => {
@@ -124,6 +187,12 @@ export const TripWorkspacePage: React.FC = () => {
   const [detailsModalState, setDetailsModalState] = useState<{
     activity?: Activity | null;
     proposal?: ProposalChange | null;
+  } | null>(null);
+  const [budgetGuardModal, setBudgetGuardModal] = useState<{
+    warningMessage: string;
+    prospectiveTotal: number;
+    targetBudget: number;
+    onConfirm: () => Promise<void> | void;
   } | null>(null);
   const exportRef = useRef<HTMLDivElement | null>(null);
 
@@ -180,10 +249,22 @@ export const TripWorkspacePage: React.FC = () => {
       ? currentDay.planB
       : currentDay.activities;
 
+  const travelers = Math.max(1, Math.round(Number(bundle.trip.travelersCount) || 1));
   const reliability = useMemo(() => computeReliabilitySummary(bundle.days), [bundle.days]);
   const paceMetrics = useMemo(() => computePaceMetrics(currentDay), [currentDay]);
-  const daySubtotal = useMemo(() => computeDaySubtotal(currentDay), [currentDay]);
-  const tripTotalInfo = useMemo(() => computeTripTotalCost(bundle.days), [bundle.days]);
+  const daySubtotal = useMemo(
+    () => computeDaySubtotal(currentDay, travelers),
+    [currentDay, activeActivities, travelers]
+  );
+  const tripTotalInfo = useMemo(
+    () => computeTripTotalCost(bundle.days, travelers),
+    [bundle.days, activeActivities, travelers]
+  );
+  const perPersonTotal = useMemo(
+    () => Math.round(tripTotalInfo.total / travelers),
+    [tripTotalInfo.total, activeActivities, travelers]
+  );
+  const perPersonSuffix = language === 'en' ? '/person' : '/pessoa';
 
   // Trigger a subtle visual pulse whenever the live Trip Total changes
   const prevTripTotalRef = useRef<number>(tripTotalInfo.total);
@@ -205,11 +286,20 @@ export const TripWorkspacePage: React.FC = () => {
       const newIndex = activeActivities.findIndex((a) => a.id === over.id);
       if (oldIndex < 0 || newIndex < 0) return;
 
+      recordTripHistorySnapshot();
       const reordered = reorderActivitiesList(activeActivities, oldIndex, newIndex);
       await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
       showToast(t('toast.itineraryUpdated'));
     },
-    [activeActivities, bundle.trip.id, currentDay.id, showToast, t, updateDayActivities]
+    [
+      activeActivities,
+      bundle.trip.id,
+      currentDay.id,
+      recordTripHistorySnapshot,
+      showToast,
+      t,
+      updateDayActivities,
+    ]
   );
 
   const localizedPaceLabel =
@@ -225,11 +315,12 @@ export const TripWorkspacePage: React.FC = () => {
       if (tier === 'mid') return t('trip.tierMid');
       return t('trip.tierPremium');
     },
-    [t]
+    [t, language]
   );
 
   const handleVibeSliderChange = useCallback(
     async (nextPace: number) => {
+      recordTripHistorySnapshot();
       setVibeRecalculating(true);
       try {
         await updateDayActivities(bundle.trip.id, currentDay.id, activeActivities, nextPace);
@@ -239,7 +330,10 @@ export const TripWorkspacePage: React.FC = () => {
             destination: bundle.trip.destination,
             message: `Adjust day pace to level ${nextPace}/5`,
             currentDay: { ...currentDay, paceLevel: nextPace },
+            itinerary: bundle,
             travelers: bundle.travelers,
+            language,
+            uiLanguage: language === 'pt' ? 'pt-PT' : 'en',
           }),
           new Promise((resolve) => setTimeout(resolve, 900)),
         ]);
@@ -251,10 +345,10 @@ export const TripWorkspacePage: React.FC = () => {
     [
       activeActivities,
       addProposals,
-      bundle.travelers,
-      bundle.trip.destination,
-      bundle.trip.id,
+      bundle,
       currentDay,
+      language,
+      recordTripHistorySnapshot,
       updateDayActivities,
     ]
   );
@@ -369,37 +463,54 @@ export const TripWorkspacePage: React.FC = () => {
       };
 
       addProposals(bundle.trip.id, [prop]);
-      showToast(
-        language === 'pt'
-          ? 'Alternativa local proposta na barra de revisão acima!'
-          : 'Local alternative proposed in the Diff Bar above!'
-      );
+      showToast(t('toast.localAltProposed'));
     },
-    [addProposals, bundle.trip.id, currentDay.dayNumber, currentDay.id, language, showToast, t]
+    [addProposals, bundle.trip.id, currentDay.dayNumber, currentDay.id, showToast, t]
   );
 
   const handleMoveActivity = useCallback(
     async (index: number, direction: -1 | 1) => {
       const targetIdx = index + direction;
       if (targetIdx < 0 || targetIdx >= activeActivities.length) return;
+      recordTripHistorySnapshot();
       const reordered = reorderActivitiesList(activeActivities, index, targetIdx);
       await updateDayActivities(bundle.trip.id, currentDay.id, reordered);
       showToast(t('toast.itineraryUpdated'));
     },
-    [activeActivities, bundle.trip.id, currentDay.id, showToast, t, updateDayActivities]
+    [
+      activeActivities,
+      bundle.trip.id,
+      currentDay.id,
+      recordTripHistorySnapshot,
+      showToast,
+      t,
+      updateDayActivities,
+    ]
   );
 
   const handleRemoveActivityDirect = useCallback(
     async (activityId: string) => {
+      recordTripHistorySnapshot();
+      const removed = activeActivities.find((a) => a.id === activityId);
       const next = activeActivities.filter((a) => a.id !== activityId);
       await updateDayActivities(bundle.trip.id, currentDay.id, next);
       showToast(
-        language === 'pt'
-          ? 'Atividade removida e tempos de deslocação atualizados.'
-          : 'Removed activity and updated travel times.'
+        t('toast.activityRemoved', {
+          title: removed?.title || '',
+          day: currentDay.dayNumber,
+        })
       );
     },
-    [activeActivities, bundle.trip.id, currentDay.id, language, showToast, updateDayActivities]
+    [
+      activeActivities,
+      bundle.trip.id,
+      currentDay.dayNumber,
+      currentDay.id,
+      recordTripHistorySnapshot,
+      showToast,
+      t,
+      updateDayActivities,
+    ]
   );
 
   const handleTierSelect = useCallback(
@@ -407,28 +518,85 @@ export const TripWorkspacePage: React.FC = () => {
       const next = activeActivities.map((a) =>
         a.id === activityId ? { ...a, selectedTier: tier } : a
       );
+      const isPlanB = currentDay.activePlan === 'B' && currentDay.planB.length > 0;
+      const prospectiveDays = bundle.days.map((d) =>
+        d.id !== currentDay.id
+          ? d
+          : {
+              ...d,
+              activities: isPlanB ? d.activities : next,
+              planB: isPlanB ? next : d.planB,
+            }
+      );
+      const currentTotal = tripTotalInfo.total;
+      const nextTotal = computeTripTotalCost(prospectiveDays, travelers).total;
+      const priceDifference = nextTotal - currentTotal;
+      const guard = evaluateBudgetGuard({
+        currentTotal,
+        priceDifference,
+        targetBudget: bundle.trip.totalBudget,
+        language,
+      });
+
+      if (guard.exceedsBudget) {
+        setBudgetGuardModal({
+          warningMessage: guard.warningMessage,
+          prospectiveTotal: guard.prospectiveTotal,
+          targetBudget: guard.targetBudget,
+          onConfirm: async () => {
+            recordTripHistorySnapshot();
+            await updateDayActivities(bundle.trip.id, currentDay.id, next);
+          },
+        });
+        return;
+      }
+
+      recordTripHistorySnapshot();
       await updateDayActivities(bundle.trip.id, currentDay.id, next);
     },
-    [activeActivities, bundle.trip.id, currentDay.id, updateDayActivities]
+    [
+      activeActivities,
+      bundle.days,
+      bundle.trip.id,
+      bundle.trip.totalBudget,
+      currentDay.activePlan,
+      currentDay.id,
+      currentDay.planB.length,
+      language,
+      recordTripHistorySnapshot,
+      travelers,
+      tripTotalInfo.total,
+      updateDayActivities,
+    ]
   );
 
   const handleRenameActivity = useCallback(
     async (activityId: string, newTitle: string) => {
       const cleanTitle = newTitle.trim();
       if (!cleanTitle) return;
+      recordTripHistorySnapshot();
       const next = activeActivities.map((a) =>
         a.id === activityId ? { ...a, title: cleanTitle } : a
       );
       await updateDayActivities(bundle.trip.id, currentDay.id, next);
       showToast(t('toast.itineraryUpdated'));
     },
-    [activeActivities, bundle.trip.id, currentDay.id, showToast, t, updateDayActivities]
+    [
+      activeActivities,
+      bundle.trip.id,
+      currentDay.id,
+      recordTripHistorySnapshot,
+      showToast,
+      t,
+      updateDayActivities,
+    ]
   );
 
   const handleRenameAccommodation = useCallback(
     async (newName: string) => {
       const cleanName = newName.trim();
       if (!cleanName || !currentDay.accommodation) return;
+      recordTripHistorySnapshot();
       const currentAcc = currentDay.accommodation;
       const activeTier = daySubtotal.dominantTier;
       const updatedAcc = {
@@ -452,6 +620,7 @@ export const TripWorkspacePage: React.FC = () => {
       currentDay.accommodation,
       currentDay.id,
       daySubtotal.dominantTier,
+      recordTripHistorySnapshot,
       showToast,
       t,
       updateDayAccommodation,
@@ -475,9 +644,47 @@ export const TripWorkspacePage: React.FC = () => {
             }
           : {}),
       };
+      const prospectiveDays = bundle.days.map((d) =>
+        d.id === currentDay.id ? { ...d, accommodation: updatedAcc } : d
+      );
+      const currentTotal = tripTotalInfo.total;
+      const nextTotal = computeTripTotalCost(prospectiveDays, travelers).total;
+      const priceDifference = nextTotal - currentTotal;
+      const guard = evaluateBudgetGuard({
+        currentTotal,
+        priceDifference,
+        targetBudget: bundle.trip.totalBudget,
+        language,
+      });
+
+      if (guard.exceedsBudget) {
+        setBudgetGuardModal({
+          warningMessage: guard.warningMessage,
+          prospectiveTotal: guard.prospectiveTotal,
+          targetBudget: guard.targetBudget,
+          onConfirm: async () => {
+            recordTripHistorySnapshot();
+            await updateDayAccommodation(bundle.trip.id, currentDay.id, updatedAcc);
+          },
+        });
+        return;
+      }
+
+      recordTripHistorySnapshot();
       await updateDayAccommodation(bundle.trip.id, currentDay.id, updatedAcc);
     },
-    [bundle.trip.id, currentDay.accommodation, currentDay.id, updateDayAccommodation]
+    [
+      bundle.days,
+      bundle.trip.id,
+      bundle.trip.totalBudget,
+      currentDay.accommodation,
+      currentDay.id,
+      language,
+      recordTripHistorySnapshot,
+      travelers,
+      tripTotalInfo.total,
+      updateDayAccommodation,
+    ]
   );
 
   const handleAskAccommodationAlternative = useCallback(
@@ -490,13 +697,10 @@ export const TripWorkspacePage: React.FC = () => {
           day: currentDay,
           tier,
           language,
+          uiLanguage: language === 'pt' ? 'pt-PT' : 'en',
         });
         addProposals(bundle.trip.id, [res.proposal]);
-        showToast(
-          language === 'pt'
-            ? 'Nova opção de alojamento proposta acima — clique em Aceitar ou Rejeitar!'
-            : 'Alternative accommodation proposed above — click Accept or Reject!'
-        );
+        showToast(t('toast.accommodationAltProposed'));
       } finally {
         setAskingAccommodationAlt(false);
       }
@@ -509,19 +713,76 @@ export const TripWorkspacePage: React.FC = () => {
       currentDay,
       language,
       showToast,
+      t,
     ]
   );
 
   const handleGlobalTierSwitch = useCallback(
     async (tier: BudgetTier) => {
-      await setGlobalTripTier(bundle.trip.id, tier);
-      showToast(
-        language === 'pt'
-          ? `Escalão global alterado para ${getTierLabel(tier)}.`
-          : `Switched global trip tier to ${getTierLabel(tier)}.`
-      );
+      const prospectiveDays = bundle.days.map((d) => {
+        const tierOpt = d.accommodation?.tierOptions?.[tier];
+        return {
+          ...d,
+          accommodation: d.accommodation
+            ? {
+                ...d.accommodation,
+                ...(tierOpt
+                  ? {
+                      name: tierOpt.name,
+                      type: tierOpt.type || d.accommodation.type,
+                      price: tierOpt.price,
+                      coordinates: tierOpt.coordinates || d.accommodation.coordinates,
+                    }
+                  : {}),
+                selectedTier: tier,
+                customPriceLocked: false,
+              }
+            : d.accommodation,
+          activities: d.activities.map((a) => ({ ...a, selectedTier: tier })),
+          planB: d.planB.map((a) => ({ ...a, selectedTier: tier })),
+        };
+      });
+      const currentTotal = tripTotalInfo.total;
+      const nextTotal = computeTripTotalCost(prospectiveDays, travelers).total;
+      const priceDifference = nextTotal - currentTotal;
+      const guard = evaluateBudgetGuard({
+        currentTotal,
+        priceDifference,
+        targetBudget: bundle.trip.totalBudget,
+        language,
+      });
+
+      const applySwitch = async () => {
+        recordTripHistorySnapshot();
+        await setGlobalTripTier(bundle.trip.id, tier);
+        showToast(t('toast.globalTierSwitched', { tier: getTierLabel(tier) }));
+      };
+
+      if (guard.exceedsBudget) {
+        setBudgetGuardModal({
+          warningMessage: guard.warningMessage,
+          prospectiveTotal: guard.prospectiveTotal,
+          targetBudget: guard.targetBudget,
+          onConfirm: applySwitch,
+        });
+        return;
+      }
+
+      await applySwitch();
     },
-    [bundle.trip.id, getTierLabel, language, setGlobalTripTier, showToast]
+    [
+      bundle.days,
+      bundle.trip.id,
+      bundle.trip.totalBudget,
+      getTierLabel,
+      language,
+      recordTripHistorySnapshot,
+      setGlobalTripTier,
+      showToast,
+      t,
+      travelers,
+      tripTotalInfo.total,
+    ]
   );
 
   const handleSelectActivity = useCallback((actId: string) => {
@@ -540,8 +801,46 @@ export const TripWorkspacePage: React.FC = () => {
   }, [bundle.trip.id, navigate]);
 
   const handleAcceptProposal = useCallback(
-    (pId: string) => acceptProposal(bundle.trip.id, pId),
-    [acceptProposal, bundle.trip.id]
+    (pId: string) => {
+      const proposal = proposals.find((p) => p.id === pId);
+      const currentTotal = tripTotalInfo.total;
+      const priceDifference = proposal
+        ? computeProposalPriceDifference(bundle.days, proposal, travelers)
+        : 0;
+      const guard = evaluateBudgetGuard({
+        currentTotal,
+        priceDifference,
+        targetBudget: bundle.trip.totalBudget,
+        language,
+      });
+
+      if (guard.exceedsBudget) {
+        setBudgetGuardModal({
+          warningMessage: guard.warningMessage,
+          prospectiveTotal: guard.prospectiveTotal,
+          targetBudget: guard.targetBudget,
+          onConfirm: async () => {
+            recordTripHistorySnapshot();
+            await acceptProposal(bundle.trip.id, pId);
+          },
+        });
+        return;
+      }
+
+      recordTripHistorySnapshot();
+      void acceptProposal(bundle.trip.id, pId);
+    },
+    [
+      acceptProposal,
+      bundle.days,
+      bundle.trip.id,
+      bundle.trip.totalBudget,
+      language,
+      proposals,
+      recordTripHistorySnapshot,
+      travelers,
+      tripTotalInfo.total,
+    ]
   );
 
   const handleRejectProposal = useCallback(
@@ -549,15 +848,20 @@ export const TripWorkspacePage: React.FC = () => {
     [bundle.trip.id, rejectProposal]
   );
 
-  const handleAcceptAllProposals = useCallback(
-    () => acceptAllProposals(bundle.trip.id),
-    [acceptAllProposals, bundle.trip.id]
-  );
+  const handleAcceptAllProposals = useCallback(() => {
+    recordTripHistorySnapshot();
+    void acceptAllProposals(bundle.trip.id);
+  }, [acceptAllProposals, bundle.trip.id, recordTripHistorySnapshot]);
 
   const handleRejectAllProposals = useCallback(
     () => rejectAllProposals(bundle.trip.id),
     [bundle.trip.id, rejectAllProposals]
   );
+
+  const handleTogglePlanB = useCallback(async () => {
+    recordTripHistorySnapshot();
+    await togglePlanB(bundle.trip.id, currentDay.id);
+  }, [bundle.trip.id, currentDay.id, recordTripHistorySnapshot, togglePlanB]);
 
   const handleOpenActivityDetails = useCallback((act: Activity) => {
     setDetailsModalState({ activity: act, proposal: null });
@@ -620,10 +924,7 @@ export const TripWorkspacePage: React.FC = () => {
       id: `custom-${Date.now().toString(36)}`,
       title: newActTitle.trim(),
       category: 'culture',
-      description:
-        language === 'pt'
-          ? 'Paragem personalizada adicionada ao seu atlas pessoal.'
-          : 'Custom stop added to your personal atlas.',
+      description: t('trip.customStopDesc'),
       startTime: newActTime,
       durationMin: 75,
       openingHoursText: '09:30 – 19:00',
@@ -654,10 +955,11 @@ export const TripWorkspacePage: React.FC = () => {
       selectedTier: 'mid',
       priceConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
       hoursConfidence: { status: 'to_confirm', notes: t('trip.toConfirm') },
-      whyThis: language === 'pt' ? 'Adicionada diretamente por si.' : 'Added directly by you.',
+      whyThis: t('trip.customStopWhy'),
       touristTrapScore: 20,
       votes: {},
     };
+    recordTripHistorySnapshot();
     const next = [...activeActivities, created].sort((a, b) =>
       a.startTime.localeCompare(b.startTime)
     );
@@ -686,8 +988,10 @@ export const TripWorkspacePage: React.FC = () => {
         destination: bundle.trip.destination,
         message: clean,
         currentDay,
+        itinerary: bundle,
         travelers: bundle.travelers,
         language,
+        uiLanguage: language === 'pt' ? 'pt-PT' : 'en',
         onToolFetching: (info) => {
           setFetchingPlaceName(info.placeName);
         },
@@ -741,8 +1045,9 @@ export const TripWorkspacePage: React.FC = () => {
               {bundle.trip.startDate} → {bundle.trip.endDate}
             </p>
             <p>
-              {bundle.trip.travelersCount} {t('hero.travellers')} · {t('hero.budget')} €
-              {tripTotalInfo.total}
+              {bundle.trip.travelersCount} {t('hero.travellers')} · {t('hero.budget')} ~€
+              {tripTotalInfo.total} (~€{perPersonTotal}
+              {perPersonSuffix})
             </p>
             <p>
               {t('trip.reliability')}: {reliability.verifiedPercent}% {t('trip.verified')}
@@ -762,7 +1067,7 @@ export const TripWorkspacePage: React.FC = () => {
       </div>
 
       {/* Top Trip Workspace Header */}
-      <div className="print:hidden flex flex-col lg:flex-row lg:items-center justify-between gap-5 pb-6 mb-8 border-b border-slate-200 dark:border-slate-800">
+      <div className="print:hidden flex flex-col gap-4 pb-6 mb-8 border-b border-slate-200 dark:border-slate-800">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono-tabular">
             <span>
@@ -774,10 +1079,11 @@ export const TripWorkspacePage: React.FC = () => {
             </span>
             <span aria-hidden="true">·</span>
 
-            {/* Live Reactive Trip Total Counter + Global Tier Switcher (Sprint 5 #4) */}
+            {/* Live Reactive Trip Total Counter + Per-Person Breakdown + Global Tier Switcher */}
             <span
               data-testid="trip-total-counter"
               data-trip-total={tripTotalInfo.total}
+              data-per-person-total={perPersonTotal}
               data-active-global-tier={tripTotalInfo.dominantTier}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono-tabular font-bold border transition-all duration-300 ${
                 pricePulseActive ? 'scale-105 ring-2 ring-amber-500/50' : 'scale-100'
@@ -788,7 +1094,10 @@ export const TripWorkspacePage: React.FC = () => {
               }`}
             >
               <Wallet className="w-3.5 h-3.5 text-[#D97706] shrink-0" aria-hidden="true" />
-              <span>{t('trip.tripTotalLive', { amount: tripTotalInfo.total })}</span>
+              <span>
+                {t('trip.tripTotalLive', { amount: tripTotalInfo.total })} (~€{perPersonTotal}
+                {perPersonSuffix})
+              </span>
             </span>
 
             <div
@@ -830,17 +1139,17 @@ export const TripWorkspacePage: React.FC = () => {
           </h1>
         </div>
 
-        {/* Sub-route Navigation Tabs + Guided Tour + Export Dropdown + Assistant */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {undoStack.length > 0 && (
-            <button
-              type="button"
-              onClick={() => undoLastChange(bundle.trip.id)}
-              className="px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 rounded-lg whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              ↶ {t('trip.undoLast')}
-            </button>
-          )}
+        {/* Sub-route Navigation Tabs + Undo + Guided Tour + Export Dropdown + Assistant */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="undo-last-action-btn"
+            disabled={tripHistory.length === 0}
+            onClick={handleUndo}
+            className="px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 rounded-lg whitespace-nowrap cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed transition-opacity focus:outline-none focus:ring-2 focus:ring-amber-500"
+          >
+            ↶ {t('trip.undoLast')}
+          </button>
 
           {/* Workspace Tabs (Target #4 of Guided Tour) */}
           <div
@@ -1108,13 +1417,11 @@ export const TripWorkspacePage: React.FC = () => {
                       message: 'Suggest a verified local afternoon highlight',
                       currentDay,
                       travelers: bundle.travelers,
+                      language,
+                      uiLanguage: language === 'pt' ? 'pt-PT' : 'en',
                     });
                     addProposals(bundle.trip.id, res.proposals);
-                    showToast(
-                      language === 'pt'
-                        ? 'Proposta de alteração pronta acima — clique em Aceitar ou Rejeitar!'
-                        : 'Visual Diff Proposal ready above — click Accept or Reject!'
-                    );
+                    showToast(t('toast.diffProposalReady'));
                   }}
                   className="px-3 py-2 text-xs font-semibold text-amber-900 dark:text-amber-200 bg-amber-100/90 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 hover:bg-amber-200/80 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
                 >
@@ -1125,7 +1432,7 @@ export const TripWorkspacePage: React.FC = () => {
                   type="button"
                   data-tour="plan-b"
                   aria-pressed={currentDay.activePlan === 'B'}
-                  onClick={() => togglePlanB(bundle.trip.id, currentDay.id)}
+                  onClick={handleTogglePlanB}
                   className={`px-3.5 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1 ${
                     currentDay.activePlan === 'B'
                       ? 'bg-teal-700 text-white border-teal-700'
@@ -1214,6 +1521,7 @@ export const TripWorkspacePage: React.FC = () => {
                 <span
                   data-testid="day-header-daily-total"
                   data-daily-total={daySubtotal.total}
+                  data-daily-per-person={daySubtotal.perPersonTotal}
                   className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-mono-tabular text-xs sm:text-sm font-bold border transition-all duration-300 self-start sm:self-center ${
                     daySubtotal.dominantTier === 'premium'
                       ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-950 dark:text-amber-200 border-amber-400 dark:border-amber-700'
@@ -1221,7 +1529,11 @@ export const TripWorkspacePage: React.FC = () => {
                   }`}
                 >
                   <Wallet className="w-3.5 h-3.5 text-[#D97706] shrink-0" aria-hidden="true" />
-                  <span>{t('logistics.dailyTotal', { amount: daySubtotal.total })}</span>
+                  <span>
+                    {t('logistics.dailyTotal', { amount: daySubtotal.total })} (~€
+                    {daySubtotal.perPersonTotal}
+                    {perPersonSuffix})
+                  </span>
                 </span>
               </div>
 
@@ -1386,6 +1698,7 @@ export const TripWorkspacePage: React.FC = () => {
                   intercityTransit={currentDay.intercity_transit}
                   meals={currentDay.meals}
                   activities={activeActivities}
+                  travelers={travelers}
                   selectedActivityId={selectedActivityId}
                   activeTravelerId={activeTravelerId}
                   askingAccommodationAlt={askingAccommodationAlt}
@@ -1464,12 +1777,12 @@ export const TripWorkspacePage: React.FC = () => {
             {[
               {
                 label: t('chat.chipPlaceDetails'),
-                prompt: 'What are the opening hours, rating, and reviews for Time Out Market in Lisbon?',
+                prompt: t('chat.promptPlaceDetails'),
               },
-              { label: t('chat.chipCheaper'), prompt: 'Make today cheaper with local budget spots' },
-              { label: t('chat.chipLessWalking'), prompt: 'Less walking and shorter transit legs' },
-              { label: t('chat.chipMoreLocal'), prompt: 'Replace touristy stops with authentic local taverns' },
-              { label: t('chat.chipRainy'), prompt: 'Propose rainy day indoor alternatives' },
+              { label: t('chat.chipCheaper'), prompt: t('chat.promptCheaper') },
+              { label: t('chat.chipLessWalking'), prompt: t('chat.promptLessWalking') },
+              { label: t('chat.chipMoreLocal'), prompt: t('chat.promptMoreLocal') },
+              { label: t('chat.chipRainy'), prompt: t('chat.promptRainy') },
             ].map((chip) => (
               <button
                 key={chip.label}
@@ -1486,9 +1799,7 @@ export const TripWorkspacePage: React.FC = () => {
           <div className="p-4 flex-1 overflow-y-auto space-y-3 text-xs max-h-64">
             {chatHistory.length === 0 && (
               <div className="p-3 rounded-xl bg-[#FAF6F0] dark:bg-slate-800 text-slate-800 dark:text-slate-200 mr-6">
-                {language === 'pt'
-                  ? `Bem-vindo ao seu Atlas de ${bundle.trip.destination}! Faça perguntas sobre qualquer local (horários, avaliação, preços) ou toque num botão acima — cada sugestão aparece na barra de revisão para manter o controlo.`
-                  : `Welcome to your ${bundle.trip.destination} Atlas! Ask about any place (rating, hours, reviews) or tap a quick action above—every itinerary change appears as an Accept/Reject diff so you stay in control.`}
+                {t('chat.welcomeMessage', { destination: bundle.trip.destination })}
               </div>
             )}
             {chatHistory
@@ -1639,6 +1950,70 @@ export const TripWorkspacePage: React.FC = () => {
             onEscapeCrowds={handleEscapeCrowds}
           />
         </Suspense>
+      )}
+      {/* Non-Blocking Budget Guard Confirmation Modal (Sprint 21) */}
+      {budgetGuardModal && (
+        <div
+          data-testid="budget-guard-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="budget-guard-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 font-bold text-sm">
+                  !
+                </span>
+                <h2
+                  id="budget-guard-modal-title"
+                  className="font-serif-atlas text-lg font-bold text-slate-900 dark:text-white"
+                >
+                  {t('budget.guardTitle')}
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label={t('support.closeAria')}
+                onClick={() => setBudgetGuardModal(null)}
+                className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            <p
+              data-testid="budget-guard-modal-message"
+              className="text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-medium"
+            >
+              {budgetGuardModal.warningMessage}
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                data-testid="budget-guard-cancel-btn"
+                onClick={() => setBudgetGuardModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                {t('budget.guardCancelBtn')}
+              </button>
+              <button
+                type="button"
+                data-testid="budget-guard-confirm-btn"
+                onClick={async () => {
+                  const action = budgetGuardModal.onConfirm;
+                  setBudgetGuardModal(null);
+                  await action();
+                }}
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#D97706] hover:bg-amber-600 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                {t('budget.guardContinueBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

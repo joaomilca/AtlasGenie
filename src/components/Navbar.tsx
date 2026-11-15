@@ -97,6 +97,7 @@ export const Navbar: React.FC = () => {
           </Link>
           <button
             type="button"
+            data-testid="language-toggle-btn"
             onClick={() => setLanguage(language === 'en' ? 'pt' : 'en')}
             aria-label={t('nav.switchLangAria')}
             className="hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 font-mono-tabular text-xs uppercase cursor-pointer"

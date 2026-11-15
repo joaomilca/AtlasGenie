@@ -6,6 +6,7 @@
 import React, { Suspense, lazy, useCallback, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { I18nProvider } from './i18n/I18nContext';
+import { AuthProvider } from './context/AuthContext';
 import { AtlasProvider } from './context/AtlasContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
@@ -40,53 +41,55 @@ export default function App() {
 
   return (
     <I18nProvider>
-      <AtlasProvider>
-        <BrowserRouter>
-          <div className="min-h-screen flex flex-col bg-[#FAF6F0] text-[#0F172A] dark:bg-[#0B1120] dark:text-[#F8FAFC] overflow-x-hidden">
-            <Navbar />
-            <div
-              data-testid="main-scrollable-content"
-              className="flex-1 w-full px-4 md:px-0 pb-24 md:pb-0"
-            >
-              <Suspense
-                fallback={
-                  <div className="max-w-7xl mx-auto px-0 md:px-8 py-8">
-                    <TabViewSuspenseFallback />
-                  </div>
-                }
+      <AuthProvider>
+        <AtlasProvider>
+          <BrowserRouter>
+            <div className="min-h-screen flex flex-col bg-[#FAF6F0] text-[#0F172A] dark:bg-[#0B1120] dark:text-[#F8FAFC] overflow-x-hidden">
+              <Navbar />
+              <div
+                data-testid="main-scrollable-content"
+                className="flex-1 w-full px-4 md:px-0 pb-24 md:pb-0"
               >
-                <Routes>
-                  <Route
-                    path="/"
-                    element={<LandingPage onOpenSupport={handleOpenSupport} />}
+                <Suspense
+                  fallback={
+                    <div className="max-w-7xl mx-auto px-0 md:px-8 py-8">
+                      <TabViewSuspenseFallback />
+                    </div>
+                  }
+                >
+                  <Routes>
+                    <Route
+                      path="/"
+                      element={<LandingPage onOpenSupport={handleOpenSupport} />}
+                    />
+                    <Route path="/demo" element={<DemoHubPage />} />
+                    <Route path="/login" element={<AuthPage />} />
+                    <Route path="/signup" element={<AuthPage />} />
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="/trips/new" element={<TripWizardPage />} />
+                    <Route path="/trips/:id" element={<TripWorkspacePage />} />
+                    <Route path="/trips/:id/budget" element={<TripWorkspacePage />} />
+                    <Route path="/trips/:id/group" element={<TripWorkspacePage />} />
+                    <Route path="/trips/:id/expenses" element={<TripWorkspacePage />} />
+                    <Route path="/join/:inviteCode" element={<JoinTripPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </Suspense>
+              </div>
+              <Footer onOpenSupport={handleOpenSupport} />
+              {supportModalOpen && (
+                <Suspense fallback={<ModalSuspenseFallback />}>
+                  <SupportModal
+                    isOpen={supportModalOpen}
+                    onClose={handleCloseSupport}
                   />
-                  <Route path="/demo" element={<DemoHubPage />} />
-                  <Route path="/login" element={<AuthPage />} />
-                  <Route path="/signup" element={<AuthPage />} />
-                  <Route path="/dashboard" element={<DashboardPage />} />
-                  <Route path="/trips/new" element={<TripWizardPage />} />
-                  <Route path="/trips/:id" element={<TripWorkspacePage />} />
-                  <Route path="/trips/:id/budget" element={<TripWorkspacePage />} />
-                  <Route path="/trips/:id/group" element={<TripWorkspacePage />} />
-                  <Route path="/trips/:id/expenses" element={<TripWorkspacePage />} />
-                  <Route path="/join/:inviteCode" element={<JoinTripPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </Suspense>
+                </Suspense>
+              )}
             </div>
-            <Footer onOpenSupport={handleOpenSupport} />
-            {supportModalOpen && (
-              <Suspense fallback={<ModalSuspenseFallback />}>
-                <SupportModal
-                  isOpen={supportModalOpen}
-                  onClose={handleCloseSupport}
-                />
-              </Suspense>
-            )}
-          </div>
-        </BrowserRouter>
-      </AtlasProvider>
+          </BrowserRouter>
+        </AtlasProvider>
+      </AuthProvider>
     </I18nProvider>
   );
 }

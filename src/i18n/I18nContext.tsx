@@ -43,6 +43,7 @@ if (!i18n.isInitialized) {
 
 interface I18nContextValue {
   language: Language;
+  activeLanguage: 'en' | 'pt-PT';
   setLanguage: (lang: Language) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
   theme: 'light' | 'dark';
@@ -55,6 +56,8 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [language, setLanguageState] = useState<Language>(detectInitialLanguage);
   const [theme, setThemeState] = useState<'light' | 'dark'>(detectInitialTheme);
   const { t: i18nextT } = useTranslation();
+
+  const activeLanguage: 'en' | 'pt-PT' = language === 'en' ? 'en' : 'pt-PT';
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
@@ -93,7 +96,9 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <I18nContext.Provider value={{ language, setLanguage, t, theme, setTheme }}>
+    <I18nContext.Provider
+      value={{ language, activeLanguage, setLanguage, t, theme, setTheme }}
+    >
       {children}
     </I18nContext.Provider>
   );

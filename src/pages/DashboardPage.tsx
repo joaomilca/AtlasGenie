@@ -4,7 +4,11 @@ import { Sparkles, Plus, Copy, Trash2, Users, Calendar, Compass, ShieldCheck } f
 import { useTranslation } from 'react-i18next';
 import { useAtlas } from '../context/AtlasContext';
 import { getUserTrips } from '../firebase';
-import { computeReliabilitySummary } from '../utils/domainLogic';
+import {
+  computeReliabilitySummary,
+  hasValidItineraryData,
+  readActiveTripFromLocalStorage,
+} from '../utils/domainLogic';
 import { FullTripBundle } from '../types/models';
 
 export const DashboardPage: React.FC = () => {
@@ -21,27 +25,49 @@ export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [joinCodeInput, setJoinCodeInput] = useState('');
-  const [userTrips, setUserTrips] = useState<FullTripBundle[]>([]);
+  // Synchronous lazy initialization from localStorage (`atlasgenie_active_trip`)
+  const [userTrips, setUserTrips] = useState<FullTripBundle[]>(() => {
+    const active = readActiveTripFromLocalStorage();
+    return active && !active.trip.isDemo ? [active] : [];
+  });
   const [loadingTrips, setLoadingTrips] = useState<boolean>(true);
 
   const loadTripsFromFirestore = useCallback(async () => {
     if (!authReady) return;
     setLoadingTrips(true);
+    const activeLocal = readActiveTripFromLocalStorage();
+    const activeGeneratedList =
+      activeLocal && hasValidItineraryData(activeLocal) && !activeLocal.trip.isDemo
+        ? [activeLocal]
+        : [];
     try {
-      if (currentUser?.uid) {
-        const fetched = await getUserTrips(currentUser.uid);
-        setUserTrips(fetched);
-        registerFetchedTrips(fetched);
-      } else {
-        const fetchedGuest = await getUserTrips('');
-        setUserTrips(fetchedGuest);
+      const fetched = currentUser?.uid
+        ? await getUserTrips(currentUser.uid)
+        : await getUserTrips('');
+      const mergedMap = new Map<string, FullTripBundle>();
+      for (const b of activeGeneratedList) {
+        mergedMap.set(b.trip.id, b);
+      }
+      for (const b of fetched) {
+        if (hasValidItineraryData(b)) {
+          mergedMap.set(b.trip.id, b);
+        }
+      }
+      const merged = Array.from(mergedMap.values());
+      setUserTrips(merged);
+      if (merged.length > 0) {
+        registerFetchedTrips(merged);
       }
     } catch (err) {
       console.error('Failed to fetch user trips:', err);
-      setUserTrips([]);
+      setUserTrips(activeGeneratedList);
+      if (activeGeneratedList.length > 0) {
+        registerFetchedTrips(activeGeneratedList);
+      }
     } finally {
       setLoadingTrips(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authReady, currentUser?.uid]);
 
   useEffect(() => {

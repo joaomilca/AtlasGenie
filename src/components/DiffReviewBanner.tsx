@@ -1,6 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Info } from 'lucide-react';
+import { useI18n } from '../i18n/I18nContext';
 import { ProposalChange } from '../types/models';
 
 interface DiffReviewBannerProps {
@@ -21,6 +22,7 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
   onOpenDetails,
 }) => {
   const { t } = useTranslation();
+  useI18n();
 
   if (proposals.length === 0) return null;
 
@@ -54,8 +56,15 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
         </div>
       </div>
 
-      <div className="mt-3 space-y-2.5">
-        {proposals.map((prop) => {
+      <div
+        data-testid="diff-proposals-grid"
+        className={`mt-3 ${
+          proposals.length > 1
+            ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 items-stretch'
+            : 'space-y-2.5'
+        }`}
+      >
+        {proposals.map((prop, index) => {
           const isAdd = prop.type === 'add';
           const isRemove = prop.type === 'remove';
           const isReplaceAccommodation = prop.type === 'replace_accommodation';
@@ -72,6 +81,12 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
             : isReplaceAccommodation
             ? t('logistics.swapStayBadge')
             : t('diff.replaceBadge');
+
+          const activeTier = prop.payload?.selectedTier || 'mid';
+          const optionEstimatedCost =
+            prop.payload?.costOptions?.[activeTier]?.estimatedCost ??
+            prop.payload?.costOptions?.mid?.estimatedCost ??
+            prop.accommodationPayload?.price;
 
           const displayTitle =
             isReplaceAccommodation && prop.accommodationPayload
@@ -93,21 +108,36 @@ export const DiffReviewBanner: React.FC<DiffReviewBannerProps> = ({
             <div
               key={prop.id}
               data-testid={`proposal-row-${prop.id}`}
-              className={`rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${toneClasses}`}
+              className={`rounded-lg border p-3.5 flex flex-col justify-between gap-3 h-full ${toneClasses}`}
             >
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 text-xs font-mono-tabular font-semibold">
-                  <span>{badgeLabel}</span>
-                  <span>·</span>
-                  <span>
-                    {t('trip.dayWord')} {prop.dayNumber}
-                  </span>
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono-tabular font-semibold">
+                  <div className="flex items-center gap-1.5">
+                    {proposals.length > 1 && (
+                      <span className="px-1.5 py-0.5 rounded bg-slate-900/10 dark:bg-white/10 text-[10px] font-bold">
+                        #{index + 1}
+                      </span>
+                    )}
+                    <span>{badgeLabel}</span>
+                    <span>·</span>
+                    <span>
+                      {t('trip.dayWord')} {prop.dayNumber}
+                    </span>
+                  </div>
+                  {typeof optionEstimatedCost === 'number' && (
+                    <span
+                      data-testid={`proposal-price-${prop.id}`}
+                      className="px-2 py-0.5 rounded-md bg-white/85 dark:bg-slate-900/80 border border-amber-300/80 dark:border-amber-700/80 text-xs font-mono-tabular font-bold"
+                    >
+                      {optionEstimatedCost}€
+                    </span>
+                  )}
                 </div>
-                <h3 className="text-sm font-semibold">{displayTitle}</h3>
-                <p className="text-xs opacity-90">{prop.reason}</p>
+                <h3 className="text-sm font-semibold break-words leading-snug">{displayTitle}</h3>
+                <p className="text-xs opacity-90 break-words leading-relaxed">{prop.reason}</p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0 pt-1">
                 {onOpenDetails && (
                   <button
                     type="button"

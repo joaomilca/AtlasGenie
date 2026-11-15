@@ -456,7 +456,9 @@ export const ExpensesTabView: React.FC<ExpensesTabViewProps> = ({
                           <button
                             type="button"
                             data-testid={`delete-expense-${exp.id}`}
-                            aria-label={`Delete expense ${exp.description}`}
+                            aria-label={t('expenses.deleteExpenseAria', {
+                              description: exp.description,
+                            })}
                             onClick={() => deleteExpense(exp.id)}
                             className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-500 hover:text-rose-600 hover:border-rose-300 dark:hover:text-rose-400 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-rose-500"
                           >

@@ -5,7 +5,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
     trip: {
       id: 'demo-lisbon-4d',
       ownerId: 'demo-user',
-      destination: 'Lisbon',
+      destination: 'Lisboa',
       country: 'Portugal',
       startDate: '2026-11-18',
       endDate: '2026-11-21',
@@ -18,10 +18,10 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
       memberIds: ['demo-user', 'traveler-rui', 'traveler-sofia'],
       inviteCode: 'LISBOA26',
       assumptions: [
-        '3 adult friends travelling together',
-        'Moderate daily walking pace with scenic viewpoints (miradouros)',
-        'Mix of verified museums and authentic neighbourhood tascas',
-        'Walking + historic tram/metro for hills over 2 km',
+        '3 amigos adultos a viajar juntos',
+        'Ritmo diário moderado a pé com miradouros panorâmicos',
+        'Mistura de museus verificados e tascas autênticas de bairro',
+        'Caminhada + elétrico histórico/metro para subidas superiores a 2 km',
       ],
       groupEnabled: true,
       isDemo: true,
@@ -74,7 +74,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-18',
         dayNumber: 1,
-        theme: 'Alfama Soul, Azulejos & Tagus Sunset',
+        theme: 'Alma de Alfama, Azulejos e Pôr do Sol no Tejo',
         paceLevel: 3,
         paceScore: 58,
         activePlan: 'A',
@@ -271,7 +271,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-19',
         dayNumber: 2,
-        theme: 'Belém Maritime Discovery & Príncipe Real Gardens',
+        theme: 'Descobertas em Belém e Jardins do Príncipe Real',
         paceLevel: 3,
         paceScore: 60,
         activePlan: 'A',
@@ -411,7 +411,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-20',
         dayNumber: 3,
-        theme: 'LX Factory Creative Hub, Gulbenkian & Bairro Alto',
+        theme: 'LX Factory, Museu Gulbenkian e Bairro Alto',
         paceLevel: 3,
         paceScore: 54,
         activePlan: 'A',
@@ -472,7 +472,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-21',
         dayNumber: 4,
-        theme: 'Cacilhas Ferry Crossing & Miradouro Farewell',
+        theme: 'Travessia de Cacilhas e Despedida nos Miradouros',
         paceLevel: 2,
         paceScore: 40,
         activePlan: 'A',
@@ -615,7 +615,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-12-04',
         dayNumber: 1,
-        theme: 'São Bento Tiles, Clérigos & Gaia Port Cellars',
+        theme: 'Azulejos de São Bento, Clérigos e Caves de Gaia',
         paceLevel: 3,
         paceScore: 56,
         activePlan: 'A',
@@ -714,7 +714,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-12-05',
         dayNumber: 2,
-        theme: 'Serralves Contemporary Art & Matosinhos Atlantic Grill',
+        theme: 'Arte Contemporânea em Serralves e Peixe Grelhado em Matosinhos',
         paceLevel: 3,
         paceScore: 52,
         activePlan: 'A',
@@ -775,7 +775,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-12-06',
         dayNumber: 3,
-        theme: 'Bolhão Market & Jardim do Morro Golden Hour',
+        theme: 'Mercado do Bolhão e Hora Dourada no Jardim do Morro',
         paceLevel: 2,
         paceScore: 44,
         activePlan: 'A',
@@ -831,8 +831,8 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
     trip: {
       id: 'demo-rome-5d',
       ownerId: 'demo-user',
-      destination: 'Rome',
-      country: 'Italy',
+      destination: 'Roma',
+      country: 'Itália',
       startDate: '2026-11-24',
       endDate: '2026-11-28',
       currency: 'EUR',
@@ -844,9 +844,9 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
       memberIds: ['demo-user', 'traveler-lucas'],
       inviteCode: 'ROMA2026',
       assumptions: [
-        '2 travellers over 5 days in Rome',
-        'Pre-booked timed entries for major archaeological sites',
-        'Neighbourhood trattorias in Testaccio & Trastevere over tourist piazza menus',
+        '2 viajantes durante 5 dias em Roma',
+        'Entradas com horário marcado pré-reservadas nos principais locais arqueológicos',
+        'Trattorias de bairro em Testaccio e Trastevere em vez de menus turísticos',
       ],
       groupEnabled: true,
       isDemo: true,
@@ -886,7 +886,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-24',
         dayNumber: 1,
-        theme: 'Colosseum, Roman Forum & Monti Backstreets',
+        theme: 'Coliseu, Fórum Romano e Ruas de Monti',
         paceLevel: 3,
         paceScore: 62,
         activePlan: 'A',
@@ -985,7 +985,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-25',
         dayNumber: 2,
-        theme: 'Galleria Borghese Bernini Sculptures & Trastevere Evening',
+        theme: 'Esculturas de Bernini na Galeria Borghese e Noite em Trastevere',
         paceLevel: 3,
         paceScore: 55,
         activePlan: 'A',
@@ -1022,7 +1022,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-26',
         dayNumber: 3,
-        theme: 'Pantheon Oculus, San Luigi dei Francesi & Jewish Ghetto',
+        theme: 'Panteão, San Luigi dei Francesi e Bairro Judeu',
         paceLevel: 3,
         paceScore: 50,
         activePlan: 'A',
@@ -1059,7 +1059,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-27',
         dayNumber: 4,
-        theme: 'Vatican Pinacoteca & Prati Wine Bars',
+        theme: 'Museus do Vaticano e Bares de Vinho em Prati',
         paceLevel: 3,
         paceScore: 58,
         activePlan: 'A',
@@ -1109,7 +1109,7 @@ export const DEMO_TRIPS: Record<string, FullTripBundle> = {
         ownerId: 'demo-user',
         date: '2026-11-28',
         dayNumber: 5,
-        theme: 'Via Appia Antica Pines & Aqueduct Park',
+        theme: 'Pinheiros da Via Ápia Antiga e Parque dos Aquedutos',
         paceLevel: 2,
         paceScore: 42,
         activePlan: 'A',
@@ -1177,7 +1177,7 @@ const DEMO_LOGISTICS_BY_TRIP: Record<
   }
 > = {
   'demo-lisbon-4d': {
-    cityByDay: ['Lisbon', 'Lisbon', 'Lisbon', 'Almada & Cacilhas'],
+    cityByDay: ['Lisboa', 'Lisboa', 'Lisboa', 'Almada e Cacilhas'],
     accommodations: [
       { name: 'Hotel da Baixa & Azulejo Courtyard', type: 'hotel', price: 138, lat: 38.7118, lng: -9.1376 },
       { name: 'Solar do Castelo Heritage Stay', type: 'hotel', price: 145, lat: 38.7136, lng: -9.1338 },
@@ -1189,8 +1189,8 @@ const DEMO_LOGISTICS_BY_TRIP: Record<
         method: 'Transtejo River Ferry & Rede Expressos Connection (Cais do Sodré → Cacilhas)',
         duration: '15m',
         price: 3,
-        fromCity: 'Lisbon',
-        toCity: 'Almada & Cacilhas',
+        fromCity: 'Lisboa',
+        toCity: 'Almada e Cacilhas',
       },
     },
     mealsByDay: [
@@ -1251,7 +1251,7 @@ const DEMO_LOGISTICS_BY_TRIP: Record<
     ],
   },
   'demo-rome-5d': {
-    cityByDay: ['Rome', 'Rome', 'Rome', 'Rome', 'Rome'],
+    cityByDay: ['Roma', 'Roma', 'Roma', 'Roma', 'Roma'],
     accommodations: [
       { name: 'Hotel Palazzo Manfredi & Monti Suites', type: 'hotel', price: 165, lat: 41.8901, lng: 12.4956 },
       { name: 'Donna Camilla Savelli Trastevere Cloister Hotel', type: 'hotel', price: 158, lat: 41.8884, lng: 12.4669 },
@@ -1493,13 +1493,13 @@ export function buildInstantMiniPreview(
   day1: MiniPreviewStop[];
   day2: MiniPreviewStop[];
 } {
-  const clean = destinationRaw.trim() || 'Lisbon';
+  const clean = destinationRaw.trim() || (lang === 'pt' ? 'Lisboa' : 'Lisbon');
   const lower = clean.toLowerCase();
   const isPt = lang === 'pt';
 
   if (lower.includes('lisbo')) {
     return {
-      city: 'Lisbon',
+      city: isPt ? 'Lisboa' : 'Lisbon',
       tagline: isPt
         ? 'Amostra Verificada de 2 Dias · Belém, Claustros de Azulejo e Miradouros'
         : '2-Day Verified Preview · Belém Limestone, Tile Cloisters & Miradouros',
@@ -1627,14 +1627,14 @@ export function buildInstantMiniPreview(
 
   if (lower.includes('rom') || lower.includes('ital')) {
     return {
-      city: 'Rome',
+      city: isPt ? 'Roma' : 'Rome',
       tagline: isPt
         ? 'Amostra Verificada de 2 Dias · Fórum Imperial, Bernini e Mercado de Testaccio'
         : '2-Day Verified Preview · Imperial Vaults, Bernini & Testaccio Stalls',
       day1: [
         {
           time: '09:00',
-          title: 'Colosseum & Roman Forum',
+          title: isPt ? 'Coliseu e Fórum Romano' : 'Colosseum & Roman Forum',
           whyThis: isPt
             ? 'Entrada com horário marcado no coração da Roma Antiga'
             : 'Timed entry to the civic heart of Ancient Rome',
@@ -1692,7 +1692,7 @@ export function buildInstantMiniPreview(
     day1: [
       {
         time: '09:30',
-        title: `${clean} — Centro Histórico`,
+        title: isPt ? `${clean} — Centro Histórico` : `${clean} — Historic Quarter`,
         whyThis: isPt
           ? `Passeio matinal antes da chegada das excursões em ${clean}`
           : `Morning light walk before tour groups arrive in ${clean}`,
@@ -1705,7 +1705,7 @@ export function buildInstantMiniPreview(
       },
       {
         time: '13:00',
-        title: `Mercado Municipal de ${clean}`,
+        title: isPt ? `Mercado Municipal de ${clean}` : `Municipal Market of ${clean}`,
         whyThis: isPt
           ? 'Petiscos regionais autênticos e bancas de produtores locais'
           : 'Authentic regional tapas & seasonal produce stalls',
@@ -1718,7 +1718,9 @@ export function buildInstantMiniPreview(
     day2: [
       {
         time: '10:30',
-        title: `Museu de Belas-Artes e Design (${clean})`,
+        title: isPt
+          ? `Museu de Belas-Artes e Design (${clean})`
+          : `Fine Arts & Design Museum (${clean})`,
         whyThis: isPt
           ? 'Destaque cultural com alternativa interior Plano B pronta'
           : 'Curated cultural highlight with indoor Plan B readiness',
@@ -1729,7 +1731,7 @@ export function buildInstantMiniPreview(
       },
       {
         time: '18:00',
-        title: `Miradouro ao Pôr do Sol (${clean})`,
+        title: isPt ? `Miradouro ao Pôr do Sol (${clean})` : `Sunset Viewpoint (${clean})`,
         whyThis: isPt
           ? 'Vista panorâmica ao final da tarde com vinho regional'
           : 'Golden-hour viewpoint paired with local small-batch wine',
@@ -1741,3 +1743,36 @@ export function buildInstantMiniPreview(
     ],
   };
 }
+
+export interface LocalizedDemoTripMeta {
+  city: string;
+  country: string;
+  locationTitle: string;
+  theme: string;
+  openBtnLabel: string;
+}
+
+export function getLocalizedDemoTripMeta(
+  bundle: FullTripBundle,
+  t: (key: string, opts?: Record<string, any>) => string
+): LocalizedDemoTripMeta {
+  const tripId = bundle.trip.id;
+  const fallbackCity = bundle.trip.destination;
+  const fallbackCountry = bundle.trip.country || '';
+  const fallbackTheme = bundle.days[0]?.theme || bundle.trip.destination;
+
+  const city = t(`demoTrip.${tripId}.city`, { defaultValue: fallbackCity });
+  const country = t(`demoTrip.${tripId}.country`, { defaultValue: fallbackCountry });
+  const theme = t(`demoTrip.${tripId}.theme`, { defaultValue: fallbackTheme });
+  const locationTitle = country ? `${city}, ${country}` : city;
+  const openBtnLabel = t('hero.openDemoBtn', { city });
+
+  return {
+    city,
+    country,
+    locationTitle,
+    theme,
+    openBtnLabel,
+  };
+}
+

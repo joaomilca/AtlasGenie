@@ -8,6 +8,8 @@ import {
   useMap,
   useMapsLibrary,
 } from '@vis.gl/react-google-maps';
+import { useTranslation } from 'react-i18next';
+import { useI18n } from '../i18n/I18nContext';
 import { Activity, DayAccommodation } from '../types/models';
 import { computeActivityBounds, getActiveActivityLocation } from '../utils/worldDestinations';
 
@@ -140,6 +142,8 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
   selectedActivityId,
   onSelectActivity,
 }) => {
+  const { t } = useTranslation();
+  useI18n();
   const [activeInfoId, setActiveInfoId] = useState<string | null>(selectedActivityId || null);
   const rawApiKey = String((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || '').trim();
   const hasValidLiveMapsKey =
@@ -220,14 +224,18 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
         <div className="flex items-center justify-between z-10 gap-2">
           <div>
             <span className="text-xs font-mono-tabular text-amber-400">
-              City Bounding Box Focus · {bounds.centerLat.toFixed(4)}°, {bounds.centerLng.toFixed(4)}° (Zoom {bounds.recommendedZoom}x)
+              {t('map.boundingBoxFocus', {
+                lat: bounds.centerLat.toFixed(4),
+                lng: bounds.centerLng.toFixed(4),
+                zoom: bounds.recommendedZoom,
+              })}
             </span>
             <h3 className="font-serif-atlas text-base font-semibold text-white">
-              {activeActivityLocation?.name || activities[0]?.location.name || 'City Route Overview'}
+              {activeActivityLocation?.name || activities[0]?.location.name || t('map.cityRouteOverview')}
             </h3>
           </div>
           <span className="text-xs text-slate-300 font-mono-tabular shrink-0">
-            {activities.length} numbered stops
+            {t('map.numberedStops', { count: activities.length })}
           </span>
         </div>
 
@@ -236,7 +244,7 @@ export const AtlasMap: React.FC<AtlasMapProps> = ({
           viewBox="0 0 500 280"
           className="w-full h-56 my-auto"
           role="img"
-          aria-label="Interactive itinerary route map with numbered pins"
+          aria-label={t('map.svgAriaLabel')}
         >
           <defs>
             <pattern id="atlasGrid" width="40" height="40" patternUnits="userSpaceOnUse">

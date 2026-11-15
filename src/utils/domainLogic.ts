@@ -11,15 +11,67 @@ import type {
   TravelLeg,
   TravelMode,
   Traveler,
+  TravelerProfilePreferences,
+  UserProfile,
 } from '../types/models';
 
 export interface DaySubtotalBreakdown {
   total: number;
+  perPersonTotal: number;
   accommodationCost: number;
   transitCost: number;
   mealsCost: number;
   activitiesCost: number;
   dominantTier: BudgetTier;
+}
+
+export interface NormalizedInputBudget {
+  inputTotalBudget: number;
+  travelers: number;
+  perPersonBudget: number;
+  budgetTier: BudgetTier;
+}
+
+/**
+ * Evaluates the budget tier ('budget' | 'mid' | 'premium') strictly from the
+ * individual `perPersonBudget` (not the group total).
+ */
+export function evaluateBudgetTierFromPerPersonBudget(perPersonBudget: number): BudgetTier {
+  const raw = Number(perPersonBudget ?? 0);
+  const safePerPerson = Math.max(0, Number.isFinite(raw) ? raw : 0);
+  if (safePerPerson < 350) {
+    return 'budget';
+  }
+  if (safePerPerson >= 800) {
+    return 'premium';
+  }
+  return 'mid';
+}
+
+/**
+ * Input Budget Normalization:
+ * Calculates the true individual budget by explicitly dividing the input total budget
+ * by the travelers count: `perPersonBudget = inputTotalBudget / travelers`.
+ * Uses `perPersonBudget` (not the group total) when evaluating the budget tier
+ * ('budget' | 'mid' | 'premium') and generating AI prompt instructions.
+ */
+export function normalizeInputBudget(
+  inputTotalBudget: number,
+  travelers: number = 1
+): NormalizedInputBudget {
+  const safeTravelers = Math.max(1, Math.round(Number(travelers) || 1));
+  const rawTotal = Number(inputTotalBudget ?? 0);
+  const safeInputTotalBudget = Math.max(0, Number.isFinite(rawTotal) ? rawTotal : 0);
+  const perPersonBudget = safeInputTotalBudget / safeTravelers;
+  const roundedPerPerson = Math.round(perPersonBudget);
+  const budgetTier = evaluateBudgetTierFromPerPersonBudget(perPersonBudget);
+
+  return {
+    inputTotalBudget: Math.round(safeInputTotalBudget),
+    travelers: safeTravelers,
+    perPersonBudget: roundedPerPerson,
+    budgetTier,
+  };
 }
 
 /**
@@ -79,47 +131,68 @@ export function resolveActiveDayAccommodation(
  * sums:
  * 1. The current global/day tier price for Accommodation (`day.accommodation?.selectedTier || 'mid'`).
  * 2. Intercity transit (if any).
- * 3. The current global/day tier price for Meals (`day.accommodation?.selectedTier || 'mid'`).
- * 4. The sum of the SPECIFICALLY SELECTED tier prices (`act.selectedTier || 'mid'`) for each individual activity.
+ * 3. Strictly per-person costs (Meals + Activity tickets) multiplied by the travelers count:
+ *    `(sumOfPerPersonCosts * travelers)`.
+ * Applies defensive math (fallback undefined prices to 0 and Math.round() on final returns).
  */
-export function computeDaySubtotal(day: {
-  accommodation?: DayAccommodation;
-  intercity_transit?: IntercityTransit;
-  meals?: DayMeals;
-  activities: Activity[];
-  planB?: Activity[];
-  activePlan?: 'A' | 'B';
-}): DaySubtotalBreakdown {
+export function computeDaySubtotal(
+  day: {
+    accommodation?: DayAccommodation;
+    intercity_transit?: IntercityTransit;
+    meals?: DayMeals;
+    activities: Activity[];
+    planB?: Activity[];
+    activePlan?: 'A' | 'B';
+  },
+  travelers: number = 1
+): DaySubtotalBreakdown {
+  const safeTravelers = Math.max(1, Math.round(Number(travelers) || 1));
   const activeList =
     day.activePlan === 'B' && day.planB && day.planB.length > 0 ? day.planB : day.activities || [];
   const dominantTier: BudgetTier = day.accommodation?.selectedTier || 'mid';
   const activeAcc = resolveActiveDayAccommodation(day.accommodation, dominantTier);
 
-  const accommodationCost = Math.max(0, Math.round(Number(activeAcc?.price || 0)));
-  const transitCost = Math.max(0, Math.round(Number(day.intercity_transit?.price || 0)));
+  const rawAccPrice = Number(activeAcc?.price ?? 0);
+  const accommodationCost = Math.max(
+    0,
+    Math.round(Number.isFinite(rawAccPrice) ? rawAccPrice : 0)
+  );
+  const rawTransitPrice = Number(day.intercity_transit?.price ?? 0);
+  const transitCost = Math.max(
+    0,
+    Math.round(Number.isFinite(rawTransitPrice) ? rawTransitPrice : 0)
+  );
 
-  let mealsCost = 0;
+  let perPersonMealsCost = 0;
   if (day.meals) {
     for (const slotKey of ['breakfast', 'lunch', 'dinner'] as const) {
       const meal = day.meals[slotKey];
       if (!meal) continue;
       const tierMeal = meal.tierVenues?.[dominantTier];
-      const price = tierMeal?.estimatedPrice ?? meal.estimatedPrice ?? 0;
-      mealsCost += Math.max(0, Math.round(Number(price)));
+      const rawPrice = Number(tierMeal?.estimatedPrice ?? meal.estimatedPrice ?? 0);
+      perPersonMealsCost += Math.max(0, Number.isFinite(rawPrice) ? rawPrice : 0);
     }
   }
 
-  let activitiesCost = 0;
+  let perPersonActivitiesCost = 0;
   for (const act of activeList) {
     const tier = act.selectedTier || 'mid';
     const opt = act.costOptions?.[tier] || act.costOptions?.mid;
-    activitiesCost += Math.max(0, Math.round(Number(opt?.estimatedCost || 0)));
+    const rawCost = Number(opt?.estimatedCost ?? 0);
+    perPersonActivitiesCost += Math.max(0, Number.isFinite(rawCost) ? rawCost : 0);
   }
 
-  const total = accommodationCost + transitCost + mealsCost + activitiesCost;
+  const mealsCost = Math.round(perPersonMealsCost * safeTravelers);
+  const activitiesCost = Math.round(perPersonActivitiesCost * safeTravelers);
+  const sumOfPerPersonCosts = perPersonMealsCost + perPersonActivitiesCost;
+  const total = Math.round(
+    accommodationCost + transitCost + sumOfPerPersonCosts * safeTravelers
+  );
+  const perPersonTotal = Math.round(total / safeTravelers);
 
   return {
     total,
+    perPersonTotal,
     accommodationCost,
     transitCost,
     mealsCost,
@@ -128,23 +201,30 @@ export function computeDaySubtotal(day: {
   };
 }
 
+export const calculateDaySubtotals = computeDaySubtotal;
+
 /**
- * Dynamically calculates the global Trip Total across all days (summing each day's active subtotal)
- * and identifies the active trip-wide tier ('budget' | 'mid' | 'premium') for visual feedback.
+ * Dynamically calculates the global Trip Total across all days (summing each day's active subtotal
+ * with per-person costs multiplied by `travelers`) and identifies the active trip-wide tier.
  */
-export function computeTripTotalCost(days: Day[]): {
+export function computeTripTotalCost(
+  days: Day[],
+  travelers: number = 1
+): {
   total: number;
+  perPersonTotal: number;
   dominantTier: BudgetTier;
   hasPremiumSelection: boolean;
   perDayTotals: Record<number, number>;
 } {
+  const safeTravelers = Math.max(1, Math.round(Number(travelers) || 1));
   let total = 0;
   const perDayTotals: Record<number, number> = {};
   const tierCounts: Record<BudgetTier, number> = { budget: 0, mid: 0, premium: 0 };
   let hasPremiumSelection = false;
 
   for (const day of days || []) {
-    const sub = computeDaySubtotal(day);
+    const sub = computeDaySubtotal(day, safeTravelers);
     perDayTotals[day.dayNumber] = sub.total;
     total += sub.total;
     tierCounts[sub.dominantTier] += 1;
@@ -160,19 +240,33 @@ export function computeTripTotalCost(days: Day[]): {
   }
 
   let dominantTier: BudgetTier = 'mid';
-  if (tierCounts.premium > 0 && tierCounts.premium >= tierCounts.mid && tierCounts.premium >= tierCounts.budget) {
+  if (
+    tierCounts.premium > 0 &&
+    tierCounts.premium >= tierCounts.mid &&
+    tierCounts.premium >= tierCounts.budget
+  ) {
     dominantTier = 'premium';
-  } else if (tierCounts.budget > 0 && tierCounts.budget >= tierCounts.mid && tierCounts.budget > tierCounts.premium) {
+  } else if (
+    tierCounts.budget > 0 &&
+    tierCounts.budget >= tierCounts.mid &&
+    tierCounts.budget > tierCounts.premium
+  ) {
     dominantTier = 'budget';
   }
 
+  const roundedTotal = Math.round(total);
+  const perPersonTotal = Math.round(roundedTotal / safeTravelers);
+
   return {
-    total,
+    total: roundedTotal,
+    perPersonTotal,
     dominantTier,
     hasPremiumSelection,
     perDayTotals,
   };
 }
+
+export const calculateTripTotal = computeTripTotalCost;
 
 /**
  * Haversine distance and travel duration estimator (used when Maps API is offline/fallback).
@@ -756,6 +850,12 @@ export function getProposalTargetKey(prop: ProposalChange): string {
     normalizeActivityTitleKey(prop.payload?.title) ||
     prop.payload?.id ||
     prop.id;
+  if (prop.type === 'replace' && prop.payload?.title) {
+    const payloadTitleKey = normalizeActivityTitleKey(prop.payload.title);
+    if (payloadTitleKey) {
+      return `${dayKey}:replace:${targetKey}:${payloadTitleKey}`;
+    }
+  }
   return `${dayKey}:${prop.type}:${targetKey}`;
 }
 
@@ -2155,6 +2255,11 @@ export function formatGroundedPlaceReply(
 }
 
 export const TRIP_DRAFT_STORAGE_KEY = 'atlasGenie_tripDraft';
+export const NEW_TRIP_DRAFT_STORAGE_KEY = 'new_trip_draft';
+
+export function getTodayIsoDateString(now: Date = new Date()): string {
+  return now.toISOString().split('T')[0];
+}
 
 export interface TripWizardDraftState {
   country: string;
@@ -2175,13 +2280,22 @@ export interface TripWizardDraftState {
 export function createDefaultTripWizardDraft(
   inferred?: { country: string; initialCities: string[] } | null
 ): TripWizardDraftState {
+  const todayIso = getTodayIsoDateString();
+  const defaultStart = '2026-11-18' >= todayIso ? '2026-11-18' : todayIso;
+  const defaultEnd =
+    '2026-11-21' >= defaultStart
+      ? '2026-11-21'
+      : new Date(new Date(`${defaultStart}T00:00:00Z`).getTime() + 3 * 86400000)
+          .toISOString()
+          .split('T')[0];
+
   return {
     country: inferred ? inferred.country : '',
     cities: inferred ? [...inferred.initialCities] : [],
     cityInput: '',
     letAiDecideCities: false,
-    startDate: '2026-11-18',
-    endDate: '2026-11-21',
+    startDate: defaultStart,
+    endDate: defaultEnd,
     travelersCount: 2,
     totalBudget: 900,
     selectedInterests: ['food', 'history', 'viewpoints'],
@@ -2278,3 +2392,2227 @@ export function parseTripWizardDraft(
     return null;
   }
 }
+
+export const CHAT_ASSISTANT_PT_DIRECTIVE =
+  'ALL conversational outputs, reasoning strings, and UI text MUST be strictly in European Portuguese (PT-PT). You are FORBIDDEN from using English fallback phrases.';
+
+export const PROPER_NOUN_PRESERVATION_DIRECTIVE =
+  'You are STRICTLY FORBIDDEN from translating proper nouns. Names of venues, streets, and restaurants MUST remain in their original local language or international English.';
+
+export const NON_LATIN_SCRIPT_DIRECTIVE =
+  "If the original local name uses a non-Latin alphabet (e.g., Hangul, Hanzi, Cyrillic), output the original native name, followed immediately by its PT-PT translation in parentheses (e.g., '景福宫 (Palácio Gyeongbokgung)').";
+
+export const MULTI_OPTION_PROPOSALS_DIRECTIVE =
+  'When the user asks for a swap, alternative, or addition, you MUST NOT return just a single proposal. You MUST generate an array of 2 to 3 distinct, verified alternatives (e.g., different price points or themes).';
+
+export interface SanitizedActivityForAI {
+  id: string;
+  title: string;
+  category: string;
+  startTime: string;
+  durationMin: number;
+  locationName: string;
+  selectedTier: BudgetTier;
+  estimatedCost: number;
+}
+
+export interface SanitizedDayForAI {
+  dayNumber: number;
+  date: string;
+  city?: string;
+  theme?: string;
+  accommodation?: {
+    name: string;
+    type: string;
+    price: number;
+    selectedTier?: BudgetTier;
+  };
+  meals?: {
+    breakfast: string;
+    lunch: string;
+    dinner: string;
+  };
+  activities: SanitizedActivityForAI[];
+}
+
+export interface SanitizedItineraryForAI {
+  destination?: string;
+  country?: string;
+  totalBudget?: number;
+  travelersCount?: number;
+  perPersonBudget?: number;
+  budgetTier?: BudgetTier;
+  days: SanitizedDayForAI[];
+}
+
+/**
+ * Strips out all UI-specific or redundant properties (e.g. layout coordinates, lat/lng,
+ * verification flags, confidence objects, votes, tierOptions, planB) to produce a
+ * lightweight JSON context for the AI Chat Assistant without token bloat.
+ */
+export function sanitizeItineraryForAI(itinerary: any): SanitizedItineraryForAI {
+  if (!itinerary) {
+    return { days: [] };
+  }
+
+  const sanitizeDay = (rawDay: any): SanitizedDayForAI => {
+    const activeList: any[] = Array.isArray(rawDay?.activities) ? rawDay.activities : [];
+    const activities: SanitizedActivityForAI[] = activeList.map((act: any) => {
+      const tier: BudgetTier =
+        act?.selectedTier === 'budget' || act?.selectedTier === 'premium'
+          ? act.selectedTier
+          : 'mid';
+      const cost =
+        typeof act?.costOptions?.[tier]?.estimatedCost === 'number'
+          ? act.costOptions[tier].estimatedCost
+          : 0;
+      return {
+        id: String(act?.id || ''),
+        title: String(act?.title || ''),
+        category: String(act?.category || 'culture'),
+        startTime: String(act?.startTime || '10:00'),
+        durationMin: Number(act?.durationMin || 60),
+        locationName: String(act?.location?.name || ''),
+        selectedTier: tier,
+        estimatedCost: cost,
+      };
+    });
+
+    const sanitized: SanitizedDayForAI = {
+      dayNumber: Number(rawDay?.dayNumber || 1),
+      date: String(rawDay?.date || ''),
+      ...(rawDay?.city ? { city: String(rawDay.city) } : {}),
+      ...(rawDay?.theme ? { theme: String(rawDay.theme) } : {}),
+      activities,
+    };
+
+    if (rawDay?.accommodation && typeof rawDay.accommodation.name === 'string') {
+      sanitized.accommodation = {
+        name: rawDay.accommodation.name,
+        type: String(rawDay.accommodation.type || 'hotel'),
+        price: Number(rawDay.accommodation.price || 0),
+        ...(rawDay.accommodation.selectedTier
+          ? { selectedTier: rawDay.accommodation.selectedTier }
+          : {}),
+      };
+    }
+
+    if (rawDay?.meals && rawDay.meals.breakfast && rawDay.meals.lunch && rawDay.meals.dinner) {
+      sanitized.meals = {
+        breakfast: String(rawDay.meals.breakfast.name || ''),
+        lunch: String(rawDay.meals.lunch.name || ''),
+        dinner: String(rawDay.meals.dinner.name || ''),
+      };
+    }
+
+    return sanitized;
+  };
+
+  if (Array.isArray(itinerary)) {
+    return {
+      days: itinerary.map(sanitizeDay),
+    };
+  }
+
+  if (Array.isArray(itinerary.days)) {
+    const trip = itinerary.trip || itinerary;
+    const hasTotalBudget = typeof trip?.totalBudget === 'number';
+    const hasTravelersCount = typeof trip?.travelersCount === 'number';
+    const normalizedBudget = hasTotalBudget
+      ? normalizeInputBudget(trip.totalBudget, hasTravelersCount ? trip.travelersCount : 1)
+      : null;
+    return {
+      ...(trip?.destination ? { destination: String(trip.destination) } : {}),
+      ...(trip?.country ? { country: String(trip.country) } : {}),
+      ...(hasTotalBudget ? { totalBudget: trip.totalBudget } : {}),
+      ...(hasTravelersCount ? { travelersCount: trip.travelersCount } : {}),
+      ...(normalizedBudget
+        ? {
+            perPersonBudget: normalizedBudget.perPersonBudget,
+            budgetTier: normalizedBudget.budgetTier,
+          }
+        : {}),
+      days: itinerary.days.map(sanitizeDay),
+    };
+  }
+
+  if (typeof itinerary === 'object' && Array.isArray(itinerary.activities)) {
+    return {
+      ...(itinerary.city ? { destination: String(itinerary.city) } : {}),
+      days: [sanitizeDay(itinerary)],
+    };
+  }
+
+  return { days: [] };
+}
+
+export const NUCLEAR_LANGUAGE_PREFIX_EN =
+  'SYSTEM LANGUAGE: ENGLISH. You are strictly forbidden from generating any Portuguese text.';
+
+export const NUCLEAR_LANGUAGE_PREFIX_PT =
+  'SYSTEM LANGUAGE: PORTUGUESE. You are strictly forbidden from generating any English text.';
+
+export function normalizeTargetUiLanguage(uiLanguage?: string): 'en' | 'pt-PT' {
+  if (!uiLanguage) return 'pt-PT';
+  const clean = uiLanguage.trim().toLowerCase();
+  if (clean === 'en' || clean.startsWith('en-')) return 'en';
+  return 'pt-PT';
+}
+
+export function buildNuclearLanguagePrefix(activeLanguage?: string): string {
+  const normalized = normalizeTargetUiLanguage(activeLanguage);
+  if (normalized === 'en') {
+    return NUCLEAR_LANGUAGE_PREFIX_EN;
+  }
+  return NUCLEAR_LANGUAGE_PREFIX_PT;
+}
+
+export function buildGlobalLanguageDirective(uiLanguage: string = 'pt-PT'): string {
+  const resolved = normalizeTargetUiLanguage(uiLanguage);
+  const nuclearPrefix = buildNuclearLanguagePrefix(resolved);
+  return `${nuclearPrefix} You MUST generate all conversational text, descriptions, reasoning strings, and tips strictly in the provided target language: ${resolved}. Do NOT mix languages.`;
+}
+
+export function buildUniversalProperNounDirective(uiLanguage: string = 'pt-PT'): string {
+  const resolved = normalizeTargetUiLanguage(uiLanguage);
+  return `You are STRICTLY FORBIDDEN from translating proper nouns. Names of specific venues, museums, restaurants, neighborhoods, and streets MUST remain in their original local language or international English, regardless of the ${resolved}.`;
+}
+
+export function buildChatAssistantSystemPrompt(
+  itinerary?: unknown,
+  uiLanguage: string = 'pt-PT'
+): string {
+  const sanitized = itinerary ? sanitizeItineraryForAI(itinerary) : null;
+  const contextBlock =
+    sanitized && sanitized.days.length > 0
+      ? `CURRENT SANITIZED ITINERARY CONTEXT (JSON): ${JSON.stringify(sanitized)}`
+      : '';
+  const budgetScalingDirective =
+    sanitized && typeof sanitized.perPersonBudget === 'number'
+      ? `PER-PERSON BUDGET SCALING DIRECTIVE: The group total budget is €${sanitized.totalBudget} for ${sanitized.travelersCount || 1} travelers, which equals an individual budget of €${sanitized.perPersonBudget}/person (evaluated tier: "${sanitized.budgetTier || 'mid'}"). Always scale venue prices and tier recommendations to the per-person budget (€${sanitized.perPersonBudget}/person), NOT the group total.`
+      : '';
+
+  const nuclearPrefix = buildNuclearLanguagePrefix(uiLanguage);
+  const globalLangDirective = buildGlobalLanguageDirective(uiLanguage);
+  const universalProperNounDirective = buildUniversalProperNounDirective(uiLanguage);
+  const isEnglish = normalizeTargetUiLanguage(uiLanguage) === 'en';
+
+  return [
+    nuclearPrefix,
+    'You are the AtlasGenie Interactive Travel Assistant.',
+    `GLOBAL TARGET LANGUAGE DIRECTIVE: ${globalLangDirective}`,
+    `UNIVERSAL PROPER NOUN DIRECTIVE: ${universalProperNounDirective}`,
+    !isEnglish ? `CRITICAL LANGUAGE DIRECTIVE: ${CHAT_ASSISTANT_PT_DIRECTIVE}` : '',
+    `PROPER NOUN EXCEPTION: ${PROPER_NOUN_PRESERVATION_DIRECTIVE}`,
+    `NON-LATIN SCRIPT RULE: ${NON_LATIN_SCRIPT_DIRECTIVE}`,
+    `MULTI-OPTION PROPOSALS DIRECTIVE: ${MULTI_OPTION_PROPOSALS_DIRECTIVE}`,
+    budgetScalingDirective,
+    contextBlock,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+export interface BudgetGuardCheckResult {
+  exceedsBudget: boolean;
+  currentTotal: number;
+  priceDifference: number;
+  prospectiveTotal: number;
+  targetBudget: number;
+  warningMessage: string;
+}
+
+export function evaluateBudgetGuard(
+  params: {
+    currentTotal: number;
+    priceDifference: number;
+    targetBudget: number;
+    language?: 'en' | 'pt' | string;
+  },
+  languageArg?: 'en' | 'pt' | string
+): BudgetGuardCheckResult {
+  const currentTotal = Math.round(params.currentTotal * 100) / 100;
+  const priceDifference = Math.round(params.priceDifference * 100) / 100;
+  const prospectiveTotal = Math.round((currentTotal + priceDifference) * 100) / 100;
+  const targetBudget = Math.round(params.targetBudget * 100) / 100;
+  const exceedsBudget = priceDifference > 0 && prospectiveTotal > targetBudget;
+  const resolvedLang = String(params.language || languageArg || '').toLowerCase();
+  const isEn = resolvedLang === 'en' || resolvedLang.startsWith('en-');
+  const warningMessage = isEn
+    ? `Warning: This change will raise the total cost (${prospectiveTotal}€) above your budget limit (${targetBudget}€). Do you want to continue?`
+    : `Atenção: Esta alteração vai colocar o custo total (${prospectiveTotal}€) acima do seu limite (${targetBudget}€). Deseja continuar?`;
+
+  return {
+    exceedsBudget,
+    currentTotal,
+    priceDifference,
+    prospectiveTotal,
+    targetBudget,
+    warningMessage,
+  };
+}
+
+export function computeProposalPriceDifference(
+  days: Day[],
+  proposal: ProposalChange,
+  travelers: number = 1
+): number {
+  const safeTravelers = Math.max(1, Math.round(Number(travelers) || 1));
+  const currentTotal = computeTripTotalCost(days, safeTravelers).total;
+  const nextDays = applySingleProposalChange(days, proposal);
+  const nextTotal = computeTripTotalCost(nextDays, safeTravelers).total;
+  return Math.round(nextTotal - currentTotal);
+}
+
+export function extractFirebaseAuthErrorCode(error: unknown): string {
+  if (!error) return '';
+  if (typeof error === 'string') {
+    const match = error.match(/auth\/[a-z0-9-]+/i);
+    return match ? match[0].toLowerCase() : error.trim().toLowerCase();
+  }
+  if (typeof error === 'object') {
+    const anyErr = error as { code?: unknown; message?: unknown };
+    if (typeof anyErr.code === 'string' && anyErr.code.trim()) {
+      return anyErr.code.trim().toLowerCase();
+    }
+    if (typeof anyErr.message === 'string') {
+      const match = anyErr.message.match(/auth\/[a-z0-9-]+/i);
+      if (match) return match[0].toLowerCase();
+    }
+  }
+  return '';
+}
+
+export function mapFirebaseAuthErrorToPt(error: unknown): string {
+  const code = extractFirebaseAuthErrorCode(error);
+
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-login-credentials':
+      return 'Email ou palavra-passe incorretos.';
+    case 'auth/email-already-in-use':
+    case 'auth/account-exists-with-different-credential':
+      return 'Já existe uma conta com este email.';
+    case 'auth/invalid-email':
+      return 'O endereço de email introduzido não é válido.';
+    case 'auth/weak-password':
+      return 'A palavra-passe é demasiado fraca (mínimo de 6 caracteres).';
+    case 'auth/missing-password':
+      return 'Por favor, introduza a sua palavra-passe.';
+    case 'auth/too-many-requests':
+      return 'Demasiadas tentativas falhadas. Por favor, aguarde uns minutos e tente novamente.';
+    case 'auth/user-disabled':
+      return 'Esta conta de utilizador foi desativada.';
+    case 'auth/network-request-failed':
+      return 'Erro de ligação à rede. Verifique a sua internet e tente novamente.';
+    case 'auth/operation-not-allowed':
+      return 'O método de autenticação por email/palavra-passe não está ativo na consola Firebase.';
+    default:
+      return 'Email ou palavra-passe incorretos.';
+  }
+}
+
+export function mapFirebaseAuthError(error: unknown, language: 'en' | 'pt' | string = 'pt'): string {
+  const isEn = language === 'en' || String(language).toLowerCase().startsWith('en');
+  if (!isEn) {
+    return mapFirebaseAuthErrorToPt(error);
+  }
+
+  const code = extractFirebaseAuthErrorCode(error);
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-login-credentials':
+      return 'Incorrect email or password.';
+    case 'auth/email-already-in-use':
+    case 'auth/account-exists-with-different-credential':
+      return 'An account with this email already exists.';
+    case 'auth/invalid-email':
+      return 'The email address entered is not valid.';
+    case 'auth/weak-password':
+      return 'Password is too weak (minimum 6 characters).';
+    case 'auth/missing-password':
+      return 'Please enter your password.';
+    case 'auth/too-many-requests':
+      return 'Too many failed attempts. Please wait a few minutes and try again.';
+    case 'auth/user-disabled':
+      return 'This user account has been disabled.';
+    case 'auth/network-request-failed':
+      return 'Network connection error. Check your internet and try again.';
+    case 'auth/operation-not-allowed':
+      return 'Email/password sign-in is not enabled in the Firebase console.';
+    default:
+      return 'Incorrect email or password.';
+  }
+}
+
+export const INTEREST_OPTION_ITEMS = [
+  { id: 'food', icon: '🍲' },
+  { id: 'history', icon: '🏛️' },
+  { id: 'architecture', icon: '🧱' },
+  { id: 'viewpoints', icon: '🌅' },
+  { id: 'art', icon: '🎨' },
+  { id: 'wine', icon: '🍷' },
+  { id: 'music', icon: '🎸' },
+  { id: 'nature', icon: '🌿' },
+] as const;
+
+export const DEFAULT_TRAVELER_PROFILE_PREFERENCES: TravelerProfilePreferences = {
+  defaultGroupSize: 2,
+  defaultPaceLevel: 3,
+  savedInterests: ['food', 'history', 'viewpoints'],
+  savedRestrictions: [],
+};
+
+export interface BuildUserProfileDocumentInput {
+  uid: string;
+  name?: string;
+  email?: string;
+  language?: 'pt' | 'en';
+  notificationEnabled?: boolean;
+  reminderDaysBefore?: number;
+  defaultGroupSize?: number;
+  defaultPaceLevel?: number;
+  savedInterests?: string[];
+  savedRestrictions?: string[];
+}
+
+export function sanitizeStringArray(
+  arr: unknown,
+  maxItems: number = 10,
+  maxItemLength: number = 100
+): string[] {
+  if (!Array.isArray(arr)) return [];
+  const result: string[] = [];
+  for (const item of arr) {
+    if (typeof item === 'string') {
+      const clean = item.trim().slice(0, maxItemLength);
+      if (clean && !result.some((existing) => existing.toLowerCase() === clean.toLowerCase())) {
+        result.push(clean);
+        if (result.length >= maxItems) break;
+      }
+    }
+  }
+  return result;
+}
+
+export function buildInitialUserProfileDocument(input: BuildUserProfileDocumentInput): Omit<UserProfile, 'notificationPrefs'> & {
+  notificationEnabled: boolean;
+  reminderDaysBefore: number;
+} {
+  const cleanUid = String(input.uid || 'user-default')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 128) || 'user-default';
+  const rawName = String(input.name || input.email?.split('@')[0] || 'Viajante').trim();
+  const cleanName = (rawName || 'Viajante').slice(0, 100);
+  const rawEmail = String(input.email || 'traveller@atlasgenie.eu').trim();
+  const cleanEmail = (rawEmail.length >= 3 ? rawEmail : 'traveller@atlasgenie.eu').slice(0, 254);
+  const cleanLang: 'pt' | 'en' = input.language === 'en' ? 'en' : 'pt';
+  const notificationEnabled =
+    typeof input.notificationEnabled === 'boolean' ? input.notificationEnabled : true;
+  const reminderDaysBefore = Number.isFinite(Number(input.reminderDaysBefore))
+    ? Math.min(30, Math.max(1, Math.round(Number(input.reminderDaysBefore))))
+    : 3;
+  const defaultGroupSize = Number.isFinite(Number(input.defaultGroupSize))
+    ? Math.min(50, Math.max(1, Math.round(Number(input.defaultGroupSize))))
+    : DEFAULT_TRAVELER_PROFILE_PREFERENCES.defaultGroupSize;
+  const defaultPaceLevel = Number.isFinite(Number(input.defaultPaceLevel))
+    ? Math.min(5, Math.max(1, Math.round(Number(input.defaultPaceLevel))))
+    : DEFAULT_TRAVELER_PROFILE_PREFERENCES.defaultPaceLevel;
+  const savedInterests = Array.isArray(input.savedInterests)
+    ? sanitizeStringArray(input.savedInterests, 10, 50)
+    : [...DEFAULT_TRAVELER_PROFILE_PREFERENCES.savedInterests];
+  const savedRestrictions = Array.isArray(input.savedRestrictions)
+    ? sanitizeStringArray(input.savedRestrictions, 10, 100)
+    : [...DEFAULT_TRAVELER_PROFILE_PREFERENCES.savedRestrictions];
+
+  return {
+    id: cleanUid,
+    name: cleanName,
+    email: cleanEmail,
+    language: cleanLang,
+    notificationEnabled,
+    reminderDaysBefore,
+    defaultGroupSize,
+    defaultPaceLevel,
+    savedInterests,
+    savedRestrictions,
+  };
+}
+
+export function normalizeUserProfileSnapshot(
+  uid: string,
+  raw?: Record<string, unknown> | null,
+  fallbackEmail?: string,
+  fallbackName?: string
+): UserProfile {
+  const data = raw && typeof raw === 'object' ? raw : {};
+  const built = buildInitialUserProfileDocument({
+    uid: typeof data.id === 'string' && data.id.trim() ? data.id : uid,
+    name: typeof data.name === 'string' && data.name.trim() ? data.name : fallbackName,
+    email: typeof data.email === 'string' && data.email.trim() ? data.email : fallbackEmail,
+    language: data.language === 'en' ? 'en' : 'pt',
+    notificationEnabled:
+      typeof data.notificationEnabled === 'boolean' ? data.notificationEnabled : true,
+    reminderDaysBefore:
+      typeof data.reminderDaysBefore === 'number' ? data.reminderDaysBefore : 3,
+    defaultGroupSize:
+      typeof data.defaultGroupSize === 'number'
+        ? data.defaultGroupSize
+        : DEFAULT_TRAVELER_PROFILE_PREFERENCES.defaultGroupSize,
+    defaultPaceLevel:
+      typeof data.defaultPaceLevel === 'number'
+        ? data.defaultPaceLevel
+        : DEFAULT_TRAVELER_PROFILE_PREFERENCES.defaultPaceLevel,
+    savedInterests: Array.isArray(data.savedInterests)
+      ? (data.savedInterests as string[])
+      : [...DEFAULT_TRAVELER_PROFILE_PREFERENCES.savedInterests],
+    savedRestrictions: Array.isArray(data.savedRestrictions)
+      ? (data.savedRestrictions as string[])
+      : [...DEFAULT_TRAVELER_PROFILE_PREFERENCES.savedRestrictions],
+  });
+
+  return {
+    ...built,
+    notificationPrefs: {
+      enabled: built.notificationEnabled,
+      daysBefore: built.reminderDaysBefore,
+    },
+  };
+}
+
+export function doesRestrictionMatchChip(
+  restrictions: string[],
+  chip: { id: string; labelPt: string; labelEn: string }
+): boolean {
+  if (!Array.isArray(restrictions) || restrictions.length === 0) return false;
+  const targets = [chip.id, chip.labelPt, chip.labelEn].map((s) => s.trim().toLowerCase());
+  const chipKeywords: Record<string, string[]> = {
+    diet_veg: ['vegan', 'vegetarian', 'vegetariana', 'vegetariano', 'dieta vegetariana / vegan'],
+    reduced_mobility: ['reduced mobility', 'mobilidade reduzida'],
+    kids_family: ['travelling with children', 'traveling with children', 'viagem com crianças', 'children', 'crianças'],
+    avoid_crowds: ['avoid crowds', 'evitar multidões'],
+    prefer_taxi_uber: ['prefer taxi/uber rides', 'preferir deslocações de táxi/uber', 'taxi/uber', 'táxi/uber'],
+    gluten_free_allergies: ['gluten-free', 'sem glúten', 'food allergies', 'alergias alimentares'],
+  };
+  const aliases = chipKeywords[chip.id] || [];
+
+  return restrictions.some((entry) => {
+    const clean = String(entry || '').trim().toLowerCase();
+    if (!clean) return false;
+    if (targets.includes(clean)) return true;
+    return aliases.some((alias) => clean === alias || clean.includes(alias));
+  });
+}
+
+export function toggleRestrictionInList(
+  restrictions: string[],
+  chip: { id: string; labelPt: string; labelEn: string }
+): string[] {
+  const current = Array.isArray(restrictions) ? [...restrictions] : [];
+  if (doesRestrictionMatchChip(current, chip)) {
+    return current.filter((entry) => !doesRestrictionMatchChip([entry], chip));
+  }
+  return [...current, chip.labelPt];
+}
+
+export function applyUserProfileToTripDraft(
+  draft: TripWizardDraftState,
+  profile?: Partial<TravelerProfilePreferences> | null
+): TripWizardDraftState {
+  if (!profile) {
+    return {
+      ...draft,
+      cities: [...draft.cities],
+      selectedInterests: [...draft.selectedInterests],
+      specialPreferences: [...draft.specialPreferences],
+    };
+  }
+
+  const nextGroupSize =
+    typeof profile.defaultGroupSize === 'number' && Number.isFinite(profile.defaultGroupSize)
+      ? Math.min(50, Math.max(1, Math.round(profile.defaultGroupSize)))
+      : draft.travelersCount;
+
+  const nextPace =
+    typeof profile.defaultPaceLevel === 'number' && Number.isFinite(profile.defaultPaceLevel)
+      ? Math.min(5, Math.max(1, Math.round(profile.defaultPaceLevel)))
+      : draft.defaultPace;
+
+  const nextInterests =
+    Array.isArray(profile.savedInterests) && profile.savedInterests.length > 0
+      ? sanitizeStringArray(profile.savedInterests, 10, 50)
+      : [...draft.selectedInterests];
+
+  const nextRestrictions = Array.isArray(profile.savedRestrictions)
+    ? sanitizeStringArray(profile.savedRestrictions, 10, 100)
+    : [...draft.specialPreferences];
+
+  return {
+    ...draft,
+    cities: [...draft.cities],
+    travelersCount: nextGroupSize,
+    groupEnabled: nextGroupSize > 1 ? true : draft.groupEnabled,
+    defaultPace: nextPace,
+    selectedInterests: nextInterests,
+    specialPreferences: nextRestrictions,
+  };
+}
+
+const BILINGUAL_ITINERARY_PAIRS: [string, string][] = [
+  // Demo Lisbon themes & assumptions
+  [
+    'Alma de Alfama, Azulejos e Pôr do Sol no Tejo',
+    'Soul of Alfama, Azulejos & Tagus Sunset',
+  ],
+  [
+    'Descobertas em Belém e Jardins do Príncipe Real',
+    'Belém Discoveries & Príncipe Real Gardens',
+  ],
+  [
+    'LX Factory, Museu Gulbenkian e Bairro Alto',
+    'LX Factory, Gulbenkian Museum & Bairro Alto',
+  ],
+  [
+    'Travessia de Cacilhas e Despedida nos Miradouros',
+    'Cacilhas Ferry Crossing & Miradouro Farewell',
+  ],
+  [
+    '3 amigos adultos a viajar juntos',
+    '3 adult friends travelling together',
+  ],
+  [
+    'Ritmo diário moderado a pé com miradouros panorâmicos',
+    'Moderate daily walking pace with panoramic viewpoints',
+  ],
+  [
+    'Mistura de museus verificados e tascas autênticas de bairro',
+    'Mix of verified museums and authentic neighbourhood tascas',
+  ],
+  [
+    'Caminhada + elétrico histórico/metro para subidas superiores a 2 km',
+    'Walking + historic tram/metro for climbs over 2 km',
+  ],
+  // Demo Lisbon activities
+  [
+    'Castelo de São Jorge e Sítio Arqueológico',
+    'Castelo de São Jorge & Archaeological Site',
+  ],
+  [
+    'Cidadela mourisca no topo da colina com vistas panorâmicas sobre os telhados de terracota e o estuário do Tejo.',
+    'Moorish hilltop citadel with sweeping panoramas over terracotta rooftops and the Tagus estuary.',
+  ],
+  [
+    '09:00 – 18:00 (Horário de inverno)',
+    '09:00 – 18:00 (Winter hours)',
+  ],
+  [
+    'Passeio Exterior pelo Miradouro de Santa Luzia',
+    'Exterior Miradouro & Santa Luzia Walk',
+  ],
+  [
+    'Terraços panorâmicos gratuitos em redor das muralhas do castelo',
+    'Free panoramic terraces around the castle walls',
+  ],
+  [
+    'Bilhete Normal de Entrada no Castelo',
+    'Standard Castle Entry Ticket',
+  ],
+  [
+    'Bilhete oficial incluindo câmara escura e muralhas',
+    'Official ticket including camera obscura & ramparts',
+  ],
+  [
+    'Visita Privada à Cidadela com Historiador',
+    'Historian-Led Private Citadel Tour',
+  ],
+  [
+    'Entrada sem filas com guia historiador medieval',
+    'Skip-the-line entry with medieval historian guide',
+  ],
+  [
+    'Sugerido para Rui (história e arquitetura) e Ana (miradouros panorâmicos).',
+    'Suggested for Rui (history & architecture) and Ana (panoramic viewpoints).',
+  ],
+  [
+    'Mercado gastronómico famoso que reúne bancas de chefs de renome sob o mesmo teto histórico no Cais do Sodré.',
+    'Famous food hall gathering chef-driven stalls under one historic market roof in Cais do Sodré.',
+  ],
+  [
+    'Petisco e Croquete Artesanal',
+    'Petisco & Craft Croquete Bite',
+  ],
+  [
+    'Dois petiscos tradicionais salgados + bebida',
+    'Two traditional savory snacks + drink',
+  ],
+  [
+    'Prato Principal de Chef + Copo de Vinho',
+    'Chef Stall Main + Wine Glass',
+  ],
+  [
+    'Arroz de polvo ou bacalhau à brás numa banca de assinatura',
+    'Octopus rice or bacalhau à brás from a signature stall',
+  ],
+  [
+    'Degustação em Várias Bancas e Vinho Reserva',
+    'Multi-Stall Curated Tasting & Reserve Wine',
+  ],
+  [
+    '4 pratos em balcões de chefs de topo + sobremesa',
+    '4 courses across top chef counters + dessert',
+  ],
+  [
+    'Sugerido para Ana e Sofia porque ambas escolheram mercados gastronómicos.',
+    'Suggested for Ana and Sofia because both selected food markets.',
+  ],
+  [
+    'Mercado autêntico de bairro onde os lisboetas comem marisco fresco, bifanas e petiscos sem multidões de cruzeiros.',
+    'Authentic neighbourhood market where Lisbon locals actually eat fresh seafood, bifanas, and petiscos without cruise crowds.',
+  ],
+  [
+    'Os habitantes locais vêm aqui porque os preços são 30% mais justos, há lugares sentados tranquilos e bancas tradicionais ao lado de mercearias familiares.',
+    'Locals actually go here because prices are 30% fairer, seating is relaxed, and traditional stalls sit beside family grocers.',
+  ],
+  [
+    'Museu Nacional do Azulejo',
+    'Museu Nacional do Azulejo (National Tile Museum)',
+  ],
+  [
+    'Instalado no Convento da Madre de Deus de 1509, apresenta cinco séculos de arte cerâmica portuguesa e uma capela barroca dourada.',
+    'Set inside the 1509 Madre de Deus Convent, showcasing five centuries of Portuguese ceramic art and ailded baroque chapel.',
+  ],
+  [
+    '10:00 – 18:00 (Encerrado à segunda-feira)',
+    '10:00 – 18:00 (Closed Mondays)',
+  ],
+  [
+    'Entrada Normal no Museu',
+    'Standard Museum Entry',
+  ],
+  [
+    'Acesso completo aos claustros do convento e painel panorâmico de azulejos',
+    'Full access to convent cloisters & tile panorama',
+  ],
+  [
+    'Entrada + Audioguia e Doce Conventual',
+    'Entry + Audio Guide & Convent Pastry',
+  ],
+  [
+    'Inclui guia multimédia e café na cafetaria do claustro',
+    'Includes multimedia guide & coffee in the cloister café',
+  ],
+  [
+    'Oficina de Pintura de Azulejo + Visita Guiada',
+    'Tile Painting Workshop + Curated Visit',
+  ],
+  [
+    'Pinte o seu próprio azulejo tradicional português',
+    'Paint and fire your own traditional azulejo tile',
+  ],
+  [
+    'Sugerido para Rui e Sofia (arquitetura e património cultural).',
+    'Suggested for Rui and Sofia (architecture & cultural heritage).',
+  ],
+  [
+    'Noite Íntima de Fado Vadio na Mouraria',
+    'Intimate Fado Vadio Evening in Mouraria',
+  ],
+  [
+    'Pequena tasca de bairro no berço do Fado onde fadistas locais cantam à guitarra entre pratos de petiscos.',
+    'Small neighbourhood tasca in the birthplace of Fado where local singers perform acoustic sets between petisco courses.',
+  ],
+  [
+    '19:30 – 23:30 (Confirmar reserva de mesa)',
+    '19:30 – 23:30 (Confirm table reservation)',
+  ],
+  [
+    'Vinho da Tasca e Chouriço Assado',
+    'Tasca Wine & Chouriço Assado',
+  ],
+  [
+    'Consumo mínimo num bar de fado local autêntico',
+    'Minimum consumption at authentic local fado bar',
+  ],
+  [
+    'Jantar de Petiscos Tradicionais e Fado ao Vivo',
+    'Traditional Petiscos Dinner & Live Fado',
+  ],
+  [
+    'Pratos partilhados, vinho regional e 3 momentos acústicos de fado',
+    'Shared plates, regional wine & 3 acoustic sets',
+  ],
+  [
+    'Menu de Degustação em Casa de Fado Histórica',
+    'Historic Casa de Fado Tasting Menu',
+  ],
+  [
+    'Mesa reservada na primeira fila com menu português completo de 3 pratos',
+    'Reserved front table with full 3-course Portuguese menu',
+  ],
+  [
+    'Sugerido para Sofia (música ao vivo e vida noturna) e Ana (cozinha regional).',
+    'Suggested for Sofia (live music & nightlife) and Ana (regional cuisine).',
+  ],
+  [
+    'Claustros do Mosteiro dos Jerónimos',
+    'Mosteiro dos Jerónimos Cloisters',
+  ],
+  [
+    'Obra-prima manuelina em calcário classificada pela UNESCO, construída para celebrar a viagem de Vasco da Gama.',
+    'UNESCO Manueline limestone masterpiece built to commemorate Vasco da Gama’s voyage.',
+  ],
+  [
+    '09:30 – 17:30 (Encerrado à segunda-feira)',
+    '09:30 – 17:30 (Closed Mondays)',
+  ],
+  [
+    'Entrada na Igreja de Santa Maria (Gratuita)',
+    'Church of Santa Maria Entry (Free)',
+  ],
+  [
+    'Visite gratuitamente a nave abobadada e o túmulo de Vasco da Gama',
+    'Visit the vaulted nave and Vasco da Gama tomb for free',
+  ],
+  [
+    'Bilhete Oficial com Horário para os Claustros',
+    'Cloisters Official Timed Ticket',
+  ],
+  [
+    'Acesso completo ao claustro manuelino esculpido de dois pisos',
+    'Full access to the two-story carved Manueline cloister',
+  ],
+  [
+    'Visita Arquitetónica com Acesso Antecipado',
+    'Early-Access Architectural Tour',
+  ],
+  [
+    'Visita guiada em pequeno grupo antes das horas de maior afluência',
+    'Small group guided visit before peak crowds',
+  ],
+  [
+    'Sugerido pela paixão do Rui por arquitetura monumental.',
+    'Suggested for Rui’s passion for landmark architecture.',
+  ],
+  [
+    'Prova de Pastéis de Nata Quentes e Café de Torrefação',
+    'Warm Pastel de Nata Tasting & Roastery Coffee',
+  ],
+  [
+    'Pastéis de nata estaladiços polvilhados com canela acabados de sair do forno.',
+    'Crisp puff pastry custard tarts dusted with cinnamon right out of the oven.',
+  ],
+  [
+    '2 Pastéis Quentes + Bica ao Balcão',
+    '2 Warm Tarts + Espresso at Counter',
+  ],
+  [
+    'Serviço clássico tradicional ao balcão',
+    'Classic standing counter service',
+  ],
+  [
+    'Caixa de 6 + Ginjinha e Bica na Sala de Azulejos',
+    'Box of 6 + Ginjinha & Bica Seated',
+  ],
+  [
+    'Mesa nos salões históricos revestidos a azulejo',
+    'Seated inside the tiled salon rooms',
+  ],
+  [
+    'Masterclass de Pastelaria e Caixa de Degustação',
+    'Pastry Masterclass & Tasting Box',
+  ],
+  [
+    'Aprenda os segredos da massa folhada com um chefe pasteleiro',
+    'Learn laminated dough secrets with a pastry chef',
+  ],
+  [
+    'Sugerido para Ana, Rui e Sofia — ritual gastronómico essencial de Lisboa.',
+    'Suggested for Ana, Rui, and Sofia — essential Lisbon culinary ritual.',
+  ],
+  [
+    'Jardim do Príncipe Real e Lojas Conceptuais Independentes',
+    'Jardim do Príncipe Real & Independent Concept Stores',
+  ],
+  [
+    'Passeie sob o cedro-do-Buçaco centenário, o reservatório histórico e o palacete neo-árabe da Embaixada.',
+    'Stroll beneath the giant 150-year-old cedar umbrella tree, historic reservoir, and Moorish-revival Embaixada gallery.',
+  ],
+  [
+    'Café no Quiosque do Jardim e Passeio pelas Galerias',
+    'Garden Kiosk Coffee & Gallery Walk',
+  ],
+  [
+    'Relaxe no tradicional quiosque ao ar livre',
+    'Relax at the traditional open-air quiosque',
+  ],
+  [
+    'Bilhete para o Reservatório da Patriarcal + Petiscos',
+    'Underground Patriarcal Reservoir Ticket + Tapas',
+  ],
+  [
+    'Visite a cisterna subterrânea de 1860 + copo de vinho',
+    'Visit the 1860s cistern + wine glass',
+  ],
+  [
+    'Design Português e Prova de Vinhos com Sommelier',
+    'Curated Portuguese Design & Wine Flight',
+  ],
+  [
+    'Prova comentada de vinhos naturais de pequenos produtores',
+    'Sommelier tasting of small-batch natural wines',
+  ],
+  [
+    'Sugerido para Sofia e Ana (tarde tranquila de cultura e miradouros).',
+    'Suggested for Sofia and Ana (relaxed afternoon culture & viewpoints).',
+  ],
+  [
+    'Museu Calouste Gulbenkian e Jardins Modernistas',
+    'Museu Calouste Gulbenkian & Modernist Gardens',
+  ],
+  [
+    'Coleção de arte de nível mundial abrangendo obras-primas egípcias, greco-romanas, islâmicas e de René Lalique.',
+    'World-class private art collection spanning Egyptian, Greco-Roman, Islamic, and René Lalique masterpieces.',
+  ],
+  [
+    '10:00 – 18:00 (Encerrado à terça-feira)',
+    '10:00 – 18:00 (Closed Tuesdays)',
+  ],
+  [
+    'Sugerido para o dia de museus do Rui — equilibrado com o jantar de marisco da Ana.',
+    'Suggested for Rui’s museum day — balanced by Ana’s seafood feast tonight.',
+  ],
+  [
+    'Cervejaria Tradicional Ramiro e Mariscada',
+    'Ramiro Traditional Cervejaria & Seafood Feast',
+  ],
+  [
+    'Marisqueira icónica de Lisboa famosa pelas gambas ao alho, amêijoas à Bulhão Pato e prego no pão.',
+    'Iconic Lisbon marisqueira serving garlic prawns, clams à Bulhão Pato, and prego steak sandwich.',
+  ],
+  [
+    'Sugerido pelo foco gastronómico da Ana e pelo ambiente noturno da Sofia.',
+    'Suggested for Ana’s pescatarian food focus and Sofia’s evening vibe.',
+  ],
+  [
+    'Cacilheiro no Rio Tejo até Cacilhas e Cais do Ponto Final',
+    'Tagus River Ferry to Cacilhas & Ponto Final Pier',
+  ],
+  [
+    'Atravesse o rio de barco e caminhe pelo antigo cais ribeirinho com vista para as Sete Colinas de Lisboa e a Ponte 25 de Abril.',
+    'Cross the river on the commuter ferry and walk the old riverside quay looking back at Lisbon’s Seven Hills and 25 de Abril Bridge.',
+  ],
+  [
+    'Sugerido para Ana e Rui — último dia descontraído junto ao rio.',
+    'Suggested for Ana & Rui — relaxed final day with waterfront views.',
+  ],
+  // Demo Porto themes & activities
+  [
+    'Azulejos de São Bento, Clérigos e Caves de Gaia',
+    'São Bento Azulejos, Clérigos & Gaia Port Cellars',
+  ],
+  [
+    'Arte Contemporânea em Serralves e Peixe Grelhado em Matosinhos',
+    'Serralves Contemporary Art & Matosinhos Grilled Fish',
+  ],
+  [
+    'Mercado do Bolhão e Hora Dourada no Jardim do Morro',
+    'Mercado do Bolhão & Golden Hour at Jardim do Morro',
+  ],
+  [
+    'Casal numa escapadinha de 3 dias pelo norte de Portugal',
+    'Couple on a 3-day northern Portugal escape',
+  ],
+  [
+    'Foco nas caves de Vinho do Porto em Vila Nova de Gaia, igrejas de azulejos e arquitetura Art Déco',
+    'Focus on Port wine cellars in Vila Nova de Gaia, Azulejo churches & Art Deco architecture',
+  ],
+  [
+    'Centro histórico maioritariamente a pé + Metro sobre a Ponte Luís I',
+    'Mostly walkable historic centre + Metro over Dom Luís I Bridge',
+  ],
+  [
+    ' átrio de Azulejos da Estação de São Bento',
+    'São Bento Railway Station Azulejo Vestibule',
+  ],
+  [
+    'Átrio de Azulejos da Estação de São Bento',
+    'São Bento Railway Station Azulejo Vestibule',
+  ],
+  [
+    '20.000 azulejos azuis e brancos de Jorge Colaço retratando batalhas históricas e a vida no Douro.',
+    '20,000 tin-glazed blue and white tiles by Jorge Colaço depicting royal battles and rural Douro life.',
+  ],
+  [
+    'Sugerido para Clara (azulejaria histórica e arquitetura).',
+    'Suggested for Clara (historic tilework & architecture).',
+  ],
+  [
+    'Livraria Lello Neo-Gótica',
+    'Livraria Lello Neo-Gothic Bookshop',
+  ],
+  [
+    'Livraria histórica de 1906 com a icónica escadaria carmesim no coração de Cedofeita.',
+    '1906 crimson-staircase bookshop in the heart of Cedofeita.',
+  ],
+  [
+    'Sugerido para Clara (livros e interiores neogóticos).',
+    'Suggested for Clara (books & Neo-Gothic interiors).',
+  ],
+  [
+    'Visita e Prova nas Caves Graham’s 1890 Port Lodge',
+    'Graham’s 1890 Port Lodge Cellar Tour & Tasting',
+  ],
+  [
+    'Cave histórica de granito em Vila Nova de Gaia com vista sobre o Rio Douro e a Ribeira do Porto.',
+    'Historic granite cellar in Vila Nova de Gaia overlooking the Douro River and Porto skyline.',
+  ],
+  [
+    'Sugerido para Miguel (Vinho do Porto e miradouros sobre o rio).',
+    'Suggested for Miguel (Port wine & river viewpoints).',
+  ],
+  [
+    'Museu da Fundação de Serralves e Casa de Serralves Art Déco',
+    'Fundação de Serralves Museum & Pink Art Deco Villa',
+  ],
+  [
+    'Museu minimalista de Álvaro Siza Vieira, Casa de Serralves Art Déco cor-de-rosa dos anos 1930 e passadiço nas copas das árvores.',
+    'Álvaro Siza Vieira’s minimalist museum, 1930s pink Art Deco Casa de Serralves, and treetop walkway.',
+  ],
+  [
+    'Sugerido pela paixão da Clara por arquitetura modernista e Art Déco.',
+    'Suggested for Clara’s love of modernist and Art Deco architecture.',
+  ],
+  [
+    'Peixe Grelhado no Carvão na Rua Heróis de França em Matosinhos',
+    'Matosinhos Charcoal-Grilled Fish on Rua Heróis de França',
+  ],
+  [
+    'Bairro piscatório onde o pregado, as sardinhas e o robalo acabados de chegar da lota são grelhados na brasa.',
+    'Fishermen’s quarter where freshly landed turbot, sardines, and sea bream are grilled over open street coals.',
+  ],
+  [
+    'Sugerido para Miguel e Clara — gastronomia costeira autêntica do Norte.',
+    'Suggested for Miguel & Clara — authentic northern coastal dining.',
+  ],
+  [
+    'Degustação Matinal no Restaurado Mercado do Bolhão',
+    'Restored Mercado do Bolhão Morning Tasting',
+  ],
+  [
+    'Mercado neoclássico de dois pisos reaberto após restauro minucioso, repleto de bancas de queijos, enchidos e vinhos.',
+    'Neoclassical two-tier fresh market reopened after meticulous restoration, filled with cheese, cured meats, and wine counters.',
+  ],
+  [
+    'Sugerido para Miguel (gastronomia e vinho) e Clara (arquitetura neoclássica em ferro).',
+    'Suggested for Miguel (food & wine) and Clara (neoclassical iron architecture).',
+  ],
+  // Demo Rome themes & activities
+  [
+    'Coliseu, Fórum Romano e Ruas de Monti',
+    'Colosseum, Roman Forum & Monti Backstreets',
+  ],
+  [
+    'Esculturas de Bernini na Galeria Borghese e Noite em Trastevere',
+    'Bernini Sculptures at Galleria Borghese & Trastevere Evening',
+  ],
+  [
+    'Panteão, San Luigi dei Francesi e Bairro Judeu',
+    'Pantheon, San Luigi dei Francesi & Jewish Ghetto',
+  ],
+  [
+    'Museus do Vaticano e Bares de Vinho em Prati',
+    'Vatican Museums & Prati Wine Bars',
+  ],
+  [
+    'Pinheiros da Via Ápia Antiga e Parque dos Aquedutos',
+    'Ancient Appian Way Pines & Aqueduct Park',
+  ],
+  [
+    '2 viajantes durante 5 dias em Roma',
+    '2 travellers over 5 days in Rome',
+  ],
+  [
+    'Entradas com horário marcado pré-reservadas nos principais locais arqueológicos',
+    'Pre-booked timed-entry tickets at major archaeological sites',
+  ],
+  [
+    'Trattorias de bairro em Testaccio e Trastevere em vez de menus turísticos',
+    'Neighbourhood trattorias in Testaccio and Trastevere instead of tourist menus',
+  ],
+  [
+    'Coliseu, Fórum Romano e Monte Palatino',
+    'Colosseum, Roman Forum & Palatine Hill',
+  ],
+  [
+    'Anfiteatro Flaviano e o coração cívico da Roma Antiga.',
+    'Flavian Amphitheatre and the civic heart of Ancient Rome.',
+  ],
+  [
+    'Sugerido para Elena e Lucas (história antiga e engenharia romana).',
+    'Suggested for Elena & Lucas (ancient history & Roman engineering).',
+  ],
+  [
+    'Mercato di Testaccio e Almoço de Supplì Romano',
+    'Mercato di Testaccio & Roman Supplì Lunch',
+  ],
+  [
+    'Mercado de bairro luminoso famoso pelos supplì al telefono estaladiços, alcachofras e sanduíches tradicionais.',
+    'Bright neighbourhood food market famous for crispy supplì al telefono, artichokes, and slow-simmered sandwiches.',
+  ],
+  [
+    'Sugerido para Elena e Lucas — almoço autêntico de mercado romano sem turistas.',
+    'Suggested for Elena & Lucas — zero-tourist authentic Roman market lunch.',
+  ],
+  [
+    'Vagas estritamente limitadas de 2 horas na villa do Cardeal Scipione Borghese com Apolo e Dafne.',
+    'Strictly capped 2-hour slots inside Cardinal Scipione Borghese’s villa housing Apollo and Daphne.',
+  ],
+  [
+    'Sugerido pelo foco da Elena em arte renascentista e barroca.',
+    'Suggested for Elena’s focus on Renaissance & Baroque art.',
+  ],
+  [
+    'Panteão e Capela Contarelli de Caravaggio',
+    'Pantheon & Caravaggio’s Contarelli Chapel',
+  ],
+  [
+    'A cúpula de betão não armado de Adriano combinada com três obras-primas gratuitas de Caravaggio a dois quarteirões.',
+    'Hadrian’s unreinforced concrete dome paired with three free Caravaggio masterpieces two blocks away.',
+  ],
+  [
+    'Sugerido para Lucas (engenharia clássica) e Elena (Caravaggio).',
+    'Suggested for Lucas (classical engineering) and Elena (Caravaggio).',
+  ],
+  [
+    'Museus do Vaticano, Salas de Rafael e Capela Sistina',
+    'Vatican Museums, Raphael Rooms & Sistine Chapel',
+  ],
+  [
+    'Coleções papais que culminam no teto pintado a fresco por Miguel Ângelo.',
+    'Papal collections culminating in Michelangelo’s frescoed ceiling.',
+  ],
+  [
+    'Sugerido para Elena e Lucas (obras-primas do Renascimento).',
+    'Suggested for Elena & Lucas (Renaissance masterpieces).',
+  ],
+  [
+    'Passeio pelo Parco degli Acquedotti e Via Ápia Antiga',
+    'Parco degli Acquedotti & Appian Way Walk',
+  ],
+  [
+    'Caminhe sobre as antigas pedras de basalto romanas emolduradas por pinheiros-mansos e pelos arcos do Aqua Claudia.',
+    'Walk along ancient basalt Roman stones framed by umbrella pines and towering Aqua Claudia arches.',
+  ],
+  [
+    'Sugerido para Lucas e Elena — último dia tranquilo longe do trânsito da cidade.',
+    'Suggested for Lucas & Elena — peaceful final day away from city traffic.',
+  ],
+  // Country seed stops (Rome, Florence, Tokyo, Kyoto, Paris, Barcelona, Athens)
+  [
+    'Passeio Arqueológico pelo Coliseu e Fórum Romano',
+    'Colosseum & Roman Forum Archaeological Walk',
+  ],
+  [
+    'Percorra as galerias do antigo Anfiteatro Flaviano e as ruínas históricas da Via Sacra.',
+    'Walk through the galleries of the ancient Flavian Amphitheatre and the historic ruins of the Via Sacra.',
+  ],
+  [
+    'Trattoria Artesanal e Praças de Trastevere',
+    'Artisanal Trattoria & Trastevere Piazzas',
+  ],
+  [
+    'Prove o clássico cacio e pepe romano e alcachofras da época pelas ruelas empedradas.',
+    'Taste classic Roman cacio e pepe and seasonal artichokes along cobbled backstreets.',
+  ],
+  [
+    'Panteão e Esculturas da Galleria Borghese',
+    'Pantheon & Galleria Borghese Sculptures',
+  ],
+  [
+    'Admire a cúpula histórica com o óculo aberto e as obras-primas em mármore de Bernini.',
+    'Admire the historic open-oculus dome and Bernini’s marble masterpieces.',
+  ],
+  [
+    'Galeria Uffizi e Piazza della Signoria',
+    'Uffizi Gallery & Piazza della Signoria',
+  ],
+  [
+    'Obras-primas do Renascimento de Botticelli e Leonardo da Vinci com vista sobre o rio Arno.',
+    'Renaissance masterpieces by Botticelli and Leonardo da Vinci overlooking the Arno River.',
+  ],
+  [
+    'Oficinas Artesanais de Oltrarno e Enoteca em Santo Spirito',
+    'Oltrarno Artisan Workshops & Santo Spirito Enoteca',
+  ],
+  [
+    'Ateliês tradicionais de couro florentino seguidos de prova de Chianti Classico e crostini.',
+    'Traditional Florentine leather ateliers followed by Chianti Classico and crostini tasting.',
+  ],
+  [
+    'Miradouro Panorâmico da Piazzale Michelangelo ao Pôr do Sol',
+    'Piazzale Michelangelo Panoramic Sunset Viewpoint',
+  ],
+  [
+    'Vista panorâmica ao final da tarde sobre a cúpula de Brunelleschi e a Ponte Vecchio.',
+    'Late-afternoon panoramic view over Brunelleschi’s Dome and Ponte Vecchio.',
+  ],
+  [
+    'Templo Senso-ji e Ruelas Históricas de Yanaka',
+    'Senso-ji Temple & Historic Yanaka Backstreets',
+  ],
+  [
+    'Lojas tradicionais de artesanato em madeira, pátios de incenso e ruas tranquilas da era Edo.',
+    'Traditional woodcraft shops, incense courtyards, and quiet Edo-era lanes.',
+  ],
+  [
+    'Mercado Exterior de Tsukiji e Degustação em Izakaya',
+    'Tsukiji Outer Market & Izakaya Tasting',
+  ],
+  [
+    'Balcão de sushi sazonal fresco e espetadas yakitori grelhadas no carvão.',
+    'Fresh seasonal sushi counter and charcoal-grilled yakitori skewers.',
+  ],
+  [
+    'Santuário Florestal Meiji Jingu e Miradouro de Shibuya',
+    'Meiji Jingu Forest Shrine & Shibuya Sky Viewpoint',
+  ],
+  [
+    'Portais torii entre cedros centenários seguidos de vista panorâmica de 360 graus.',
+    'Torii gates among century-old cedars followed by a 360-degree skyline panorama.',
+  ],
+  [
+    'Trilho de Montanha de Fushimi Inari Taisha',
+    'Fushimi Inari Taisha Mountain Trail',
+  ],
+  [
+    'Milhares de portais torii vermelhos serpenteando por santuários de bambu e cedro.',
+    'Thousands of vermilion torii gates winding through bamboo and cedar shrines.',
+  ],
+  [
+    'Mercado Nishiki e Casa de Chá Matcha em Gion',
+    'Nishiki Market & Gion Matcha Tea House',
+  ],
+  [
+    'Especialidades obanzai de Quioto, tofu artesanal e cerimónia de chá matcha Uji.',
+    'Kyoto obanzai specialties, artisanal tofu, and Uji matcha tea ceremony.',
+  ],
+  [
+    'Bosque de Bambu de Arashiyama e Passeio no Rio Katsura',
+    'Arashiyama Bamboo Grove & Katsura River Walk',
+  ],
+  [
+    'Caminhada matinal entre bambuzais imponentes e jardins zen junto ao rio.',
+    'Morning walk through towering bamboo groves and riverside Zen gardens.',
+  ],
+  [
+    'Museu d’Orsay e Passeio Ribeirinho na Margem Esquerda do Sena',
+    'Musée d’Orsay & Left Bank Seine Riverside Walk',
+  ],
+  [
+    'Obras-primas do Impressionismo instaladas numa antiga estação ferroviária Beaux-Arts.',
+    'Impressionist masterpieces housed inside a former Beaux-Arts railway station.',
+  ],
+  [
+    'Mercado Coberto do Marais e Bistrô de Bairro',
+    'Le Marais Covered Market & Neighbourhood Bistro',
+  ],
+  [
+    'Bancas históricas do Marché des Enfants Rouges e almoço tradicional de bistrô.',
+    'Historic Marché des Enfants Rouges stalls and traditional bistro lunch.',
+  ],
+  [
+    'Vinhas de Montmartre e Terraço Panorâmico do Sacré-Cœur',
+    'Montmartre Vineyards & Sacré-Cœur Panoramic Terrace',
+  ],
+  [
+    'Praça histórica dos artistas, vinha escondida de Montmartre e escadaria panorâmica.',
+    'Historic artists’ square, hidden Montmartre vineyard, and panoramic steps.',
+  ],
+  [
+    'Sagrada Família e Roteiro Modernista pelo Eixample',
+    'Sagrada Família & Eixample Modernist Route',
+  ],
+  [
+    'A nave iluminada pelos vitrais de Gaudí e os quarteirões modernistas históricos.',
+    'Gaudí’s stained-glass nave and historic modernist city blocks.',
+  ],
+  [
+    'Mercado de Santa Caterina em El Born e Bar de Tapas',
+    'Santa Caterina Market in El Born & Tapas Bar',
+  ],
+  [
+    'Mercado gastronómico de bairro com cobertura ondulada, vermute catalão e petiscos.',
+    'Wave-roofed neighbourhood food market, Catalan vermouth, and tapas.',
+  ],
+  [
+    'Miradouro dos Bunkers del Carmel e Terraços do Park Güell',
+    'Bunkers del Carmel Viewpoint & Park Güell Terraces',
+  ],
+  [
+    'Vista ampla sobre o Mediterrâneo e a malha urbana de Barcelona ao pôr do sol.',
+    'Sweeping sunset view over the Mediterranean and Barcelona’s urban grid.',
+  ],
+  [
+    'Cidadela da Acrópole e Museu da Acrópole',
+    'Acropolis Citadel & Acropolis Museum',
+  ],
+  [
+    'Frisos de mármore do Pártenon e galerias arqueológicas com piso de vidro.',
+    'Parthenon marble friezes and glass-floored archaeological galleries.',
+  ],
+  [
+    'Taberna Tradicional com Pátio em Plaka e Psyri',
+    'Traditional Courtyard Taverna in Plaka & Psyri',
+  ],
+  [
+    'Meze grego tradicional, queijo grelhado e vinhos do Peloponeso sob limoeiros.',
+    'Traditional Greek meze, grilled halloumi/saganaki, and Peloponnese wines under lemon trees.',
+  ],
+  [
+    'Pôr do Sol na Colina de Filopapo e Monte Licabeto',
+    'Philopappos Hill & Mount Lycabettus Sunset',
+  ],
+  [
+    'Trilho sombreado por pinheiros com vista para o Mar Egeu e a antiga Pnyx.',
+    'Pine-shaded trail overlooking the Aegean Sea and the ancient Pnyx.',
+  ],
+  // Confidence & Tier strings
+  [
+    'Preço 2026 verificado via Google Search',
+    '2026 price verified via Google Search',
+  ],
+  [
+    'Custo estimado pela IA (~) — confirmar no site oficial do local',
+    'AI estimated cost (~) — confirm on official venue website',
+  ],
+  [
+    'Horário habitual estimado',
+    'Estimated typical opening hours',
+  ],
+  [
+    'Visita autónoma autêntica de bairro ou balcão tradicional local',
+    'Authentic self-guided neighbourhood visit or traditional local counter',
+  ],
+  [
+    'Experiência selecionada no recinto central',
+    'Curated experience at the main venue',
+  ],
+  [
+    'Acesso exclusivo privado ou prova comentada com especialista local',
+    'Exclusive private access or guided tasting with a local specialist',
+  ],
+  [
+    'Pastelaria Artesanal e Café',
+    'Artisanal Bakery & Coffee',
+  ],
+  [
+    'Cozinha Regional de Mercado',
+    'Regional Market Kitchen',
+  ],
+  [
+    'Gastronomia Tradicional ao Jantar',
+    'Traditional Evening Gastronomy',
+  ],
+];
+
+/**
+ * Translates a single itinerary text string to the target language ('en' or 'pt-PT')
+ * while strictly preserving proper nouns (names of venues, museums, restaurants, streets).
+ */
+export function translateItineraryText(
+  text: string | undefined,
+  targetLang: 'en' | 'pt-PT'
+): string {
+  if (!text || typeof text !== 'string') return text || '';
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+
+  const isTargetEn = targetLang === 'en';
+
+  // 1. Exact match in bilingual pairs
+  for (const [ptText, enText] of BILINGUAL_ITINERARY_PAIRS) {
+    if (isTargetEn && trimmed === ptText) return enText;
+    if (!isTargetEn && trimmed === enText) return ptText;
+  }
+
+  let out = text;
+
+  // 2. Substring replacements for known bilingual pairs
+  for (const [ptText, enText] of BILINGUAL_ITINERARY_PAIRS) {
+    if (isTargetEn && out.includes(ptText)) {
+      out = out.split(ptText).join(enText);
+    } else if (!isTargetEn && out.includes(enText)) {
+      out = out.split(enText).join(ptText);
+    }
+  }
+
+  // 3. Parameterized pattern replacements (preserving proper nouns like city/venue names)
+  if (isTargetEn) {
+    out = out
+      .replace(/^Dia (\d+):\s*À descoberta de\s+(.+)$/i, 'Day $1: Exploring $2')
+      .replace(/^Dia (\d+):\s*(.+)$/i, 'Day $1: $2')
+      .replace(
+        /^Passeio pelo Centro Histórico e Património de\s+(.+)$/i,
+        'Historic Center & Heritage Walk in $1'
+      )
+      .replace(
+        /^Exploração pelas praças históricas, arquitetura tradicional e ruas de comércio local em\s+(.+)\.$/i,
+        'Exploration of historic squares, traditional architecture, and local shopping streets in $1.'
+      )
+      .replace(
+        /^Mercado Regional e Cozinha Tradicional de\s+(.+)$/i,
+        'Regional Market & Traditional Cuisine in $1'
+      )
+      .replace(
+        /^Degustação de pratos regionais autênticos, café local e produtos frescos do mercado em\s+(.+)\.$/i,
+        'Tasting of authentic regional dishes, local coffee, and fresh market produce in $1.'
+      )
+      .replace(
+        /^Trilho Natural e Miradouro Panorâmico de\s+(.+)$/i,
+        'Nature Trail & Panoramic Viewpoint in $1'
+      )
+      .replace(
+        /^Caminhada pela natureza e miradouro ao final da tarde com vista panorâmica sobre\s+(.+)\.$/i,
+        'Nature walk and late-afternoon viewpoint with a panoramic view over $1.'
+      )
+      .replace(
+        /^Museu de Arte e Arquitetura Clássica de\s+(.+)$/i,
+        'Art Museum & Classical Architecture in $1'
+      )
+      .replace(
+        /^Visita às coleções de arte, claustros históricos e galerias patrimoniais de\s+(.+)\.$/i,
+        'Visit to art collections, historic cloisters, and heritage galleries in $1.'
+      )
+      .replace(
+        /^Roteiro de Petiscos e Adega Histórica em\s+(.+)$/i,
+        'Tapas Route & Historic Wine Cellar in $1'
+      )
+      .replace(
+        /^Prova de especialidades gastronómicas locais acompanhadas por vinhos da região em\s+(.+)\.$/i,
+        'Tasting of local culinary specialties paired with regional wines in $1.'
+      )
+      .replace(
+        /^Jardins Botânicos e Passeio Ribeirinho de\s+(.+)$/i,
+        'Botanical Gardens & Riverside Walk in $1'
+      )
+      .replace(
+        /^Percurso relaxante pelos jardins históricos e frente ribeirinha ou marítima de\s+(.+)\.$/i,
+        'Relaxing walk through historic gardens and the waterfront of $1.'
+      )
+      .replace(
+        /^Oficinas de Artesanato e Bairro Criativo de\s+(.+)$/i,
+        'Artisan Workshops & Creative Quarter in $1'
+      )
+      .replace(
+        /^Descoberta de ateliês independentes, livrarias históricas e design local em\s+(.+)\.$/i,
+        'Discovery of independent ateliers, historic bookshops, and local design in $1.'
+      )
+      .replace(
+        /^Taberna de Autor e Doçaria Conventual em\s+(.+)$/i,
+        'Chef Tavern & Convent Pastries in $1'
+      )
+      .replace(
+        /^Almoço prolongado com receitas tradicionais reinventadas e pastelaria típica de\s+(.+)\.$/i,
+        'Leisurely lunch with reinvented traditional recipes and signature pastries of $1.'
+      )
+      .replace(
+        /^Noite Cultural, Música ao Vivo e Terraço em\s+(.+)$/i,
+        'Cultural Evening, Live Music & Rooftop in $1'
+      )
+      .replace(
+        /^Sessão acústica ao entardecer seguida de convívio num terraço emblemático de\s+(.+)\.$/i,
+        'Sunset acoustic session followed by drinks on an iconic terrace in $1.'
+      )
+      .replace(
+        /^Palácio Histórico e Pátios Secretos de\s+(.+)$/i,
+        'Historic Palace & Secret Courtyards of $1'
+      )
+      .replace(
+        /^Percurso guiado pelos salões nobres, azulejaria e jardins murados de\s+(.+)\.$/i,
+        'Guided route through noble halls, tilework, and walled gardens of $1.'
+      )
+      .replace(
+        /^Confeitaria Histórica e Torrefação Artesanal de\s+(.+)$/i,
+        'Historic Patisserie & Artisanal Roastery in $1'
+      )
+      .replace(
+        /^Pausa gastronómica dedicada aos doces regionais e cafés de especialidade em\s+(.+)\.$/i,
+        'Culinary pause dedicated to regional sweets and specialty coffee in $1.'
+      )
+      .replace(
+        /^Miradouro do Pôr do Sol e Encosta Panorâmica de\s+(.+)$/i,
+        'Sunset Viewpoint & Panoramic Hillside of $1'
+      )
+      .replace(
+        /^Despedida ao final da tarde num ponto alto com vista de 360 graus sobre\s+(.+)\.$/i,
+        'Late-afternoon farewell at a high vantage point with 360-degree views over $1.'
+      )
+      .replace(
+        /^Museu Municipal e Galeria Coberta de\s+(.+?)\s*—\s*Dia\s*(\d+)\s*\(Plano B Interior\)$/i,
+        'Municipal Museum & Covered Gallery of $1 — Day $2 (Indoor Plan B)'
+      )
+      .replace(
+        /^Alternativa cultural interior em\s+(.+?)\s+ideal para dias de chuva\.$/i,
+        'Indoor cultural alternative in $1 ideal for rainy days.'
+      )
+      .replace(
+        /^Escolhido à medida para o seu roteiro em\s+(.+?)\s+\((.+?)\),\s*privilegiando autenticidade local e ritmo equilibrado\.$/i,
+        'Tailored for your itinerary in $1 ($2), prioritizing local authenticity and a balanced pace.'
+      )
+      .replace(
+        /^Selecionado pelo seu interesse cultural e gastronómico em\s+(.+)\.$/i,
+        'Selected for your cultural and culinary interest in $1.'
+      )
+      .replace(
+        /^Café & Pastelaria Artesanal\s+(.+?)\s*\(Dia\s*(\d+)\)$/i,
+        'Artisanal Café & Bakery $1 (Day $2)'
+      )
+      .replace(
+        /^Tasca & Cozinha de Mercado Regional\s+(.+?)\s*\(Dia\s*(\d+)\)$/i,
+        'Regional Market Kitchen & Bistro $1 (Day $2)'
+      )
+      .replace(
+        /^Restaurante Tradicional & Adega\s+(.+?)\s*\(Dia\s*(\d+)\)$/i,
+        'Traditional Restaurant & Wine Cellar $1 (Day $2)'
+      )
+      .replace(/\(Opção Económica Local\)/g, '(Local Budget Option)')
+      .replace(/\(Espaço Principal\)/g, '(Main Venue)')
+      .replace(/\(Experiência Privada Premium\)/g, '(Premium Private Experience)')
+      .replace(/— Entrada de Bairro Local/g, '— Local Quarter Entry')
+      .replace(/— Acesso Privado com Curador/g, '— Private Curator Access')
+      .replace(/— Balcão$/g, '— Counter')
+      .replace(/— Degustação$/g, '— Tasting')
+      .replace(/— Menu do Dia$/g, '— Daily Menu')
+      .replace(/— Reserva Especial$/g, '— Special Reserve')
+      .replace(/— Menu de Autor$/g, '— Chef Menu');
+  } else {
+    out = out
+      .replace(/^Day (\d+):\s*Exploring\s+(.+)$/i, 'Dia $1: À descoberta de $2')
+      .replace(/^Day (\d+):\s*(.+)$/i, 'Dia $1: $2')
+      .replace(
+        /^Historic Center & Heritage Walk in\s+(.+)$/i,
+        'Passeio pelo Centro Histórico e Património de $1'
+      )
+      .replace(
+        /^Exploration of historic squares, traditional architecture, and local shopping streets in\s+(.+)\.$/i,
+        'Exploração pelas praças históricas, arquitetura tradicional e ruas de comércio local em $1.'
+      )
+      .replace(
+        /^Regional Market & Traditional Cuisine in\s+(.+)$/i,
+        'Mercado Regional e Cozinha Tradicional de $1'
+      )
+      .replace(
+        /^Tasting of authentic regional dishes, local coffee, and fresh market produce in\s+(.+)\.$/i,
+        'Degustação de pratos regionais autênticos, café local e produtos frescos do mercado em $1.'
+      )
+      .replace(
+        /^Nature Trail & Panoramic Viewpoint in\s+(.+)$/i,
+        'Trilho Natural e Miradouro Panorâmico de $1'
+      )
+      .replace(
+        /^Nature walk and late-afternoon viewpoint with a panoramic view over\s+(.+)\.$/i,
+        'Caminhada pela natureza e miradouro ao final da tarde com vista panorâmica sobre $1.'
+      )
+      .replace(
+        /^Art Museum & Classical Architecture in\s+(.+)$/i,
+        'Museu de Arte e Arquitetura Clássica de $1'
+      )
+      .replace(
+        /^Visit to art collections, historic cloisters, and heritage galleries in\s+(.+)\.$/i,
+        'Visita às coleções de arte, claustros históricos e galerias patrimoniais de $1.'
+      )
+      .replace(
+        /^Tapas Route & Historic Wine Cellar in\s+(.+)$/i,
+        'Roteiro de Petiscos e Adega Histórica em $1'
+      )
+      .replace(
+        /^Tasting of local culinary specialties paired with regional wines in\s+(.+)\.$/i,
+        'Prova de especialidades gastronómicas locais acompanhadas por vinhos da região em $1.'
+      )
+      .replace(
+        /^Botanical Gardens & Riverside Walk in\s+(.+)$/i,
+        'Jardins Botânicos e Passeio Ribeirinho de $1'
+      )
+      .replace(
+        /^Relaxing walk through historic gardens and the waterfront of\s+(.+)\.$/i,
+        'Percurso relaxante pelos jardins históricos e frente ribeirinha ou marítima de $1.'
+      )
+      .replace(
+        /^Artisan Workshops & Creative Quarter in\s+(.+)$/i,
+        'Oficinas de Artesanato e Bairro Criativo de $1'
+      )
+      .replace(
+        /^Discovery of independent ateliers, historic bookshops, and local design in\s+(.+)\.$/i,
+        'Descoberta de ateliês independentes, livrarias históricas e design local em $1.'
+      )
+      .replace(
+        /^Chef Tavern & Convent Pastries in\s+(.+)$/i,
+        'Taberna de Autor e Doçaria Conventual em $1'
+      )
+      .replace(
+        /^Leisurely lunch with reinvented traditional recipes and signature pastries of\s+(.+)\.$/i,
+        'Almoço prolongado com receitas tradicionais reinventadas e pastelaria típica de $1.'
+      )
+      .replace(
+        /^Cultural Evening, Live Music & Rooftop in\s+(.+)$/i,
+        'Noite Cultural, Música ao Vivo e Terraço em $1'
+      )
+      .replace(
+        /^Sunset acoustic session followed by drinks on an iconic terrace in\s+(.+)\.$/i,
+        'Sessão acústica ao entardecer seguida de convívio num terraço emblemático de $1.'
+      )
+      .replace(
+        /^Historic Palace & Secret Courtyards of\s+(.+)$/i,
+        'Palácio Histórico e Pátios Secretos de $1'
+      )
+      .replace(
+        /^Guided route through noble halls, tilework, and walled gardens of\s+(.+)\.$/i,
+        'Percurso guiado pelos salões nobres, azulejaria e jardins murados de $1.'
+      )
+      .replace(
+        /^Historic Patisserie & Artisanal Roastery in\s+(.+)$/i,
+        'Confeitaria Histórica e Torrefação Artesanal de $1'
+      )
+      .replace(
+        /^Culinary pause dedicated to regional sweets and specialty coffee in\s+(.+)\.$/i,
+        'Pausa gastronómica dedicada aos doces regionais e cafés de especialidade em $1.'
+      )
+      .replace(
+        /^Sunset Viewpoint & Panoramic Hillside of\s+(.+)$/i,
+        'Miradouro do Pôr do Sol e Encosta Panorâmica de $1'
+      )
+      .replace(
+        /^Late-afternoon farewell at a high vantage point with 360-degree views over\s+(.+)\.$/i,
+        'Despedida ao final da tarde num ponto alto com vista de 360 graus sobre $1.'
+      )
+      .replace(
+        /^Municipal Museum & Covered Gallery of\s+(.+?)\s*—\s*Day\s*(\d+)\s*\(Indoor Plan B\)$/i,
+        'Museu Municipal e Galeria Coberta de $1 — Dia $2 (Plano B Interior)'
+      )
+      .replace(
+        /^Indoor cultural alternative in\s+(.+?)\s+ideal for rainy days\.$/i,
+        'Alternativa cultural interior em $1 ideal para dias de chuva.'
+      )
+      .replace(
+        /^Tailored for your itinerary in\s+(.+?)\s+\((.+?)\),\s*prioritizing local authenticity and a balanced pace\.$/i,
+        'Escolhido à medida para o seu roteiro em $1 ($2), privilegiando autenticidade local e ritmo equilibrado.'
+      )
+      .replace(
+        /^Selected for your cultural and culinary interest in\s+(.+)\.$/i,
+        'Selecionado pelo seu interesse cultural e gastronómico em $1.'
+      )
+      .replace(
+        /^Artisanal Café & Bakery\s+(.+?)\s*\(Day\s*(\d+)\)$/i,
+        'Café & Pastelaria Artesanal $1 (Dia $2)'
+      )
+      .replace(
+        /^Regional Market Kitchen & Bistro\s+(.+?)\s*\(Day\s*(\d+)\)$/i,
+        'Tasca & Cozinha de Mercado Regional $1 (Dia $2)'
+      )
+      .replace(
+        /^Traditional Restaurant & Wine Cellar\s+(.+?)\s*\(Day\s*(\d+)\)$/i,
+        'Restaurante Tradicional & Adega $1 (Dia $2)'
+      )
+      .replace(/^Suggested for\s+(.+)$/i, 'Sugerido para $1')
+      .replace(/\(Local Budget Option\)/g, '(Opção Económica Local)')
+      .replace(/\(Main Venue\)/g, '(Espaço Principal)')
+      .replace(/\(Premium Private Experience\)/g, '(Experiência Privada Premium)')
+      .replace(/— Local Quarter Entry/g, '— Entrada de Bairro Local')
+      .replace(/— Private Curator Access/g, '— Acesso Privado com Curador')
+      .replace(/— Counter$/g, '— Balcão')
+      .replace(/— Tasting$/g, '— Degustação')
+      .replace(/— Daily Menu$/g, '— Menu do Dia')
+      .replace(/— Special Reserve$/g, '— Reserva Especial')
+      .replace(/— Chef Menu$/g, '— Menu de Autor');
+  }
+
+  return out;
+}
+
+function translateActivityDeterministic(act: Activity, targetLang: 'en' | 'pt-PT'): Activity {
+  const translateCostOpt = (opt: Activity['costOptions']['mid']) => ({
+    ...opt,
+    title: translateItineraryText(opt.title, targetLang),
+    description: translateItineraryText(opt.description, targetLang),
+    ...(opt.venueName ? { venueName: translateItineraryText(opt.venueName, targetLang) } : {}),
+  });
+
+  return {
+    ...act,
+    title: translateItineraryText(act.title, targetLang),
+    description: translateItineraryText(act.description, targetLang),
+    ...(act.openingHoursText
+      ? { openingHoursText: translateItineraryText(act.openingHoursText, targetLang) }
+      : {}),
+    whyThis: translateItineraryText(act.whyThis, targetLang),
+    costOptions: {
+      budget: translateCostOpt(act.costOptions.budget),
+      mid: translateCostOpt(act.costOptions.mid),
+      premium: translateCostOpt(act.costOptions.premium),
+    },
+    priceConfidence: {
+      ...act.priceConfidence,
+      ...(act.priceConfidence.notes
+        ? { notes: translateItineraryText(act.priceConfidence.notes, targetLang) }
+        : {}),
+    },
+    hoursConfidence: {
+      ...act.hoursConfidence,
+      ...(act.hoursConfidence.notes
+        ? { notes: translateItineraryText(act.hoursConfidence.notes, targetLang) }
+        : {}),
+    },
+    ...(act.localAlternative
+      ? {
+          localAlternative: {
+            ...act.localAlternative,
+            title: translateItineraryText(act.localAlternative.title, targetLang),
+            description: translateItineraryText(act.localAlternative.description, targetLang),
+            reason: translateItineraryText(act.localAlternative.reason, targetLang),
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * Translates an entire FullTripBundle to the target language ('en' or 'pt-PT')
+ * while preserving all IDs, coordinates, prices, votes, and proper nouns.
+ */
+export function translateItineraryBundleDeterministic(
+  bundle: FullTripBundle,
+  activeLanguage: 'en' | 'pt-PT' | string = 'pt-PT'
+): FullTripBundle {
+  const targetLang = normalizeTargetUiLanguage(activeLanguage);
+
+  const translatedDays: Day[] = (bundle.days || []).map((day) => ({
+    ...day,
+    theme: translateItineraryText(day.theme, targetLang),
+    ...(day.planBDescription
+      ? { planBDescription: translateItineraryText(day.planBDescription, targetLang) }
+      : {}),
+    ...(day.accommodation
+      ? {
+          accommodation: {
+            ...day.accommodation,
+            ...(day.accommodation.whyThis
+              ? { whyThis: translateItineraryText(day.accommodation.whyThis, targetLang) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(day.meals
+      ? {
+          meals: {
+            breakfast: {
+              ...day.meals.breakfast,
+              name: translateItineraryText(day.meals.breakfast.name, targetLang),
+              ...(day.meals.breakfast.cuisine
+                ? { cuisine: translateItineraryText(day.meals.breakfast.cuisine, targetLang) }
+                : {}),
+            },
+            lunch: {
+              ...day.meals.lunch,
+              name: translateItineraryText(day.meals.lunch.name, targetLang),
+              ...(day.meals.lunch.cuisine
+                ? { cuisine: translateItineraryText(day.meals.lunch.cuisine, targetLang) }
+                : {}),
+            },
+            dinner: {
+              ...day.meals.dinner,
+              name: translateItineraryText(day.meals.dinner.name, targetLang),
+              ...(day.meals.dinner.cuisine
+                ? { cuisine: translateItineraryText(day.meals.dinner.cuisine, targetLang) }
+                : {}),
+            },
+          },
+        }
+      : {}),
+    activities: (day.activities || []).map((act) =>
+      translateActivityDeterministic(act, targetLang)
+    ),
+    planB: (day.planB || []).map((act) => translateActivityDeterministic(act, targetLang)),
+  }));
+
+  return {
+    ...bundle,
+    trip: {
+      ...bundle.trip,
+      assumptions: (bundle.trip.assumptions || []).map((a) =>
+        translateItineraryText(a, targetLang)
+      ),
+    },
+    days: translatedDays,
+  };
+}
+
+/**
+ * Sprint 30: Strict 15-second (15000ms) timeout constant for AI translation requests.
+ */
+export const TRANSLATION_TIMEOUT_MS = 15000;
+
+/**
+ * Sprint 30: Executes a fetch request with an AbortController timeout guard (default 15000ms).
+ * If the AI takes longer than timeoutMs to translate, aborts the request and rejects so the
+ * caller's catch/finally blocks handle the failure and recover loading state gracefully.
+ */
+export async function fetchWithTranslationTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = TRANSLATION_TIMEOUT_MS,
+  fetchImpl: typeof fetch = fetch
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutError = new Error(`Translation request timed out after ${timeoutMs}ms`);
+  timeoutError.name = 'AbortError';
+
+  const timeoutId = setTimeout(() => {
+    controller.abort(timeoutError);
+  }, timeoutMs);
+
+  try {
+    const response = await fetchImpl(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (err: any) {
+    if (controller.signal.aborted) {
+      throw timeoutError;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export interface AutoTranslateRecoveryParams {
+  bundle: FullTripBundle;
+  activeLanguage: 'en' | 'pt-PT' | string;
+  translateFn: (
+    bundle: FullTripBundle,
+    activeLanguage: 'en' | 'pt-PT' | string
+  ) => Promise<FullTripBundle>;
+  onSuccess: (translatedBundle: FullTripBundle) => Promise<void> | void;
+  setIsTranslating: (loading: boolean) => void;
+  onErrorToast?: (message: string) => void;
+  errorMessage?: string;
+}
+
+/**
+ * Sprint 30: Wraps background itinerary translation in a strict try...catch...finally block.
+ * - Sets loading state true on start and ALWAYS resets setIsTranslating(false) inside finally.
+ * - Logs console.error("Translation API failed:", error) inside catch.
+ * - Triggers the error toast ("Erro ao traduzir. Tente novamente.") on failure while applying
+ *   deterministic translation fallback so the UI never hangs or stays stuck in loading.
+ */
+export async function runAutoTranslateWithRecovery({
+  bundle,
+  activeLanguage,
+  translateFn,
+  onSuccess,
+  setIsTranslating,
+  onErrorToast,
+  errorMessage,
+}: AutoTranslateRecoveryParams): Promise<{
+  ok: boolean;
+  bundle: FullTripBundle;
+  error?: unknown;
+}> {
+  const resolvedLang = normalizeTargetUiLanguage(activeLanguage);
+  setIsTranslating(true);
+  try {
+    const translatedBundle = await translateFn(bundle, resolvedLang);
+    await onSuccess(translatedBundle);
+    return { ok: true, bundle: translatedBundle };
+  } catch (error) {
+    console.error('Translation API failed:', error);
+    const fallbackBundle = translateItineraryBundleDeterministic(bundle, resolvedLang);
+    try {
+      await onSuccess(fallbackBundle);
+    } catch {
+      // ignore secondary state persistence error
+    }
+    const toastMsg =
+      errorMessage ||
+      (resolvedLang === 'en'
+        ? 'Error translating. Try again.'
+        : 'Erro ao traduzir. Tente novamente.');
+    if (onErrorToast) {
+      onErrorToast(toastMsg);
+    }
+    return { ok: false, bundle: fallbackBundle, error };
+  } finally {
+    setIsTranslating(false);
+  }
+}
+
+/**
+ * Storage key used to persist the active generated/modified trip bundle in localStorage.
+ */
+export const ACTIVE_TRIP_STORAGE_KEY = 'atlasgenie_active_trip';
+
+/**
+ * Distinct storage key used to persist the "New Trip" wizard form draft (`atlasgenie_form_draft`)
+ * so form draft persistence/clearing never collides with or overwrites `atlasgenie_active_trip`.
+ */
+export const FORM_DRAFT_STORAGE_KEY = 'atlasgenie_form_draft';
+
+/**
+ * Maximum number of historical trip states retained in the Undo stack.
+ */
+export const MAX_TRIP_HISTORY_LENGTH = 10;
+
+/**
+ * Guard helper that verifies an itinerary/trip bundle actually has valid, non-empty data
+ * (valid trip ID, non-empty days array, and at least one activity).
+ */
+export function hasValidItineraryData(candidate: unknown): candidate is FullTripBundle {
+  if (!candidate || typeof candidate !== 'object') return false;
+  const obj = candidate as Record<string, any>;
+  if (Array.isArray(obj.activities)) {
+    return obj.activities.length > 0;
+  }
+  if (
+    !obj.trip ||
+    typeof obj.trip !== 'object' ||
+    typeof obj.trip.id !== 'string' ||
+    obj.trip.id.trim().length === 0 ||
+    !Array.isArray(obj.days) ||
+    obj.days.length === 0
+  ) {
+    return false;
+  }
+  return obj.days.some(
+    (day: any) =>
+      day &&
+      typeof day === 'object' &&
+      ((Array.isArray(day.activities) && day.activities.length > 0) ||
+        (Array.isArray(day.planB) && day.planB.length > 0))
+  );
+}
+
+/**
+ * Creates a deep clone of a FullTripBundle so mutations never corrupt historical snapshots.
+ */
+export function cloneTripBundleState(bundle: FullTripBundle): FullTripBundle {
+  return JSON.parse(JSON.stringify(bundle)) as FullTripBundle;
+}
+
+/**
+ * Pushes a deep clone of the current trip state onto the tripHistory stack,
+ * capping the history at the last `maxLimit` (default 10) actions.
+ */
+export function pushTripHistoryState(
+  history: FullTripBundle[],
+  currentState: FullTripBundle,
+  maxLimit: number = MAX_TRIP_HISTORY_LENGTH
+): FullTripBundle[] {
+  const limit = Math.max(1, Math.round(Number(maxLimit) || MAX_TRIP_HISTORY_LENGTH));
+  const snapshot = cloneTripBundleState(currentState);
+  const next = [...history, snapshot];
+  return next.length > limit ? next.slice(next.length - limit) : next;
+}
+
+/**
+ * Pops the most recent state from the tripHistory stack (LIFO) for the Undo action.
+ */
+export function popTripHistoryState(history: FullTripBundle[]): {
+  restoredState: FullTripBundle | null;
+  nextHistory: FullTripBundle[];
+} {
+  if (!Array.isArray(history) || history.length === 0) {
+    return { restoredState: null, nextHistory: [] };
+  }
+  const lastItem = history[history.length - 1];
+  const nextHistory = history.slice(0, history.length - 1);
+  return {
+    restoredState: cloneTripBundleState(lastItem),
+    nextHistory,
+  };
+}
+
+/**
+ * Serializes the active FullTripBundle into a JSON string for localStorage persistence.
+ */
+export function serializeActiveTripToStorage(bundle: FullTripBundle): string {
+  return JSON.stringify(bundle);
+}
+
+/**
+ * Safely parses and validates a persisted FullTripBundle from localStorage (`atlasgenie_active_trip`).
+ */
+export function parseActiveTripFromStorage(raw: string | null | undefined): FullTripBundle | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!hasValidItineraryData(parsed)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Synchronous reader for lazy `useState(() => ...)` initialization from `atlasgenie_active_trip`.
+ */
+export function readActiveTripFromLocalStorage(
+  storage?: Pick<Storage, 'getItem'> | null
+): FullTripBundle | null {
+  const targetStorage =
+    storage !== undefined
+      ? storage
+      : typeof window !== 'undefined' && window.localStorage
+      ? window.localStorage
+      : typeof localStorage !== 'undefined'
+      ? localStorage
+      : null;
+  if (!targetStorage) return null;
+  try {
+    const saved = targetStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
+    return saved ? parseActiveTripFromStorage(saved) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Guarded writer for `atlasgenie_active_trip`:
+ * - Only writes to `localStorage` if `bundle` passes `hasValidItineraryData(bundle)`.
+ * - Never overwrites a user-generated trip (`isDemo === false`) with a static demo trip (`isDemo === true`)
+ *   unless explicitly requested.
+ * - Removes `atlasgenie_active_trip` only when `explicitClear === true`.
+ */
+export function writeActiveTripToLocalStorageGuarded(
+  bundle: FullTripBundle | null | undefined,
+  options?: {
+    storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
+    explicitClear?: boolean;
+    allowDemoOverwrite?: boolean;
+  }
+): boolean {
+  const targetStorage =
+    options?.storage !== undefined
+      ? options.storage
+      : typeof window !== 'undefined' && window.localStorage
+      ? window.localStorage
+      : typeof localStorage !== 'undefined'
+      ? localStorage
+      : null;
+  if (!targetStorage) return false;
+
+  try {
+    if (options?.explicitClear) {
+      targetStorage.removeItem(ACTIVE_TRIP_STORAGE_KEY);
+      return true;
+    }
+    if (!hasValidItineraryData(bundle)) {
+      return false;
+    }
+    if (bundle.trip.isDemo && !options?.allowDemoOverwrite) {
+      const existing = readActiveTripFromLocalStorage(targetStorage);
+      if (existing && !existing.trip.isDemo && existing.trip.id !== bundle.trip.id) {
+        // Protect user's generated active trip from being overwritten by a demo preview
+        return false;
+      }
+    }
+    targetStorage.setItem(ACTIVE_TRIP_STORAGE_KEY, serializeActiveTripToStorage(bundle));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds the CRITICAL SYSTEM INSTRUCTION enforcing the hard per-person budget limit.
+ */
+export function buildStrictBudgetConstraintDirective(perPersonBudget: number): string {
+  const safePerPerson = Math.max(0, Math.round(Number(perPersonBudget) || 0));
+  return `You MUST STRICTLY adhere to the per-person budget of ${safePerPerson}. The sum of all daily activities, meals, and accommodations MUST NOT exceed this exact number. This is a hard limit.`;
+}
+
+/**
+ * Enforces a hard mathematical cap on all daily accommodations, intercity transit, meals, and activities
+ * so that the sum of all daily costs across the entire trip never exceeds `totalBudget` (`perPersonBudget * travelersCount`).
+ */
+export function enforceStrictBudgetCapOnDays(
+  days: Day[],
+  totalBudget: number,
+  travelersCount: number
+): Day[] {
+  if (!Array.isArray(days) || days.length === 0) return days;
+  const { inputTotalBudget: safeTotalBudget, travelers: safeTravelers } = normalizeInputBudget(
+    totalBudget,
+    travelersCount
+  );
+  if (safeTotalBudget <= 0) {
+    return days.map((day) => ({
+      ...day,
+      accommodation: day.accommodation ? { ...day.accommodation, price: 0 } : undefined,
+      intercity_transit: day.intercity_transit ? { ...day.intercity_transit, price: 0 } : undefined,
+      meals: day.meals
+        ? {
+            breakfast: { ...day.meals.breakfast, estimatedPrice: 0 },
+            lunch: { ...day.meals.lunch, estimatedPrice: 0 },
+            dinner: { ...day.meals.dinner, estimatedPrice: 0 },
+          }
+        : undefined,
+      activities: (day.activities || []).map((act) => ({
+        ...act,
+        selectedTier: 'budget' as BudgetTier,
+        costOptions: {
+          budget: { ...act.costOptions.budget, estimatedCost: 0 },
+          mid: { ...act.costOptions.mid, estimatedCost: 0 },
+          premium: { ...act.costOptions.premium, estimatedCost: 0 },
+        },
+      })),
+    }));
+  }
+
+  const initialTotals = computeTripTotalCost(days, safeTravelers);
+  if (initialTotals.total <= safeTotalBudget) {
+    return days;
+  }
+
+  // Step 1: Switch accommodation and activities to 'budget' tier first if total exceeds budget
+  const budgetTierDays: Day[] = days.map((day) => ({
+    ...day,
+    accommodation: day.accommodation
+      ? {
+          ...day.accommodation,
+          selectedTier: 'budget' as BudgetTier,
+          price:
+            day.accommodation.tierOptions?.budget?.price !== undefined
+              ? day.accommodation.tierOptions.budget.price
+              : day.accommodation.price,
+        }
+      : undefined,
+    activities: (day.activities || []).map((act) => ({
+      ...act,
+      selectedTier: 'budget' as BudgetTier,
+    })),
+  }));
+
+  const afterTierTotals = computeTripTotalCost(budgetTierDays, safeTravelers);
+  if (afterTierTotals.total <= safeTotalBudget) {
+    return budgetTierDays;
+  }
+
+  // Step 2: Scale down individual venue, meal, transit, and accommodation costs proportionally so the hard limit is respected
+  const scaleRatio = safeTotalBudget / afterTierTotals.total;
+  const scalePrice = (val: number | undefined): number => {
+    const safeVal = Number.isFinite(Number(val)) ? Math.max(0, Number(val)) : 0;
+    return Math.max(0, Math.floor(safeVal * scaleRatio));
+  };
+
+  const scaleMealSlot = (meal: DayMeals['breakfast'] | undefined) => {
+    if (!meal) return undefined;
+    const scaledEst = scalePrice(meal.estimatedPrice);
+    const scaledTierVenues = meal.tierVenues
+      ? {
+          budget: meal.tierVenues.budget
+            ? {
+                ...meal.tierVenues.budget,
+                estimatedPrice: scalePrice(meal.tierVenues.budget.estimatedPrice),
+              }
+            : meal.tierVenues.budget,
+          mid: meal.tierVenues.mid
+            ? {
+                ...meal.tierVenues.mid,
+                estimatedPrice: scalePrice(meal.tierVenues.mid.estimatedPrice),
+              }
+            : meal.tierVenues.mid,
+          premium: meal.tierVenues.premium
+            ? {
+                ...meal.tierVenues.premium,
+                estimatedPrice: scalePrice(meal.tierVenues.premium.estimatedPrice),
+              }
+            : meal.tierVenues.premium,
+        }
+      : undefined;
+    return {
+      ...meal,
+      estimatedPrice: scaledTierVenues?.budget?.estimatedPrice ?? scaledEst,
+      ...(scaledTierVenues ? { tierVenues: scaledTierVenues } : {}),
+    };
+  };
+
+  return budgetTierDays.map((day) => {
+    const scaledTierOptions = day.accommodation?.tierOptions
+      ? {
+          budget: day.accommodation.tierOptions.budget
+            ? {
+                ...day.accommodation.tierOptions.budget,
+                price: scalePrice(day.accommodation.tierOptions.budget.price),
+              }
+            : day.accommodation.tierOptions.budget,
+          mid: day.accommodation.tierOptions.mid
+            ? {
+                ...day.accommodation.tierOptions.mid,
+                price: scalePrice(day.accommodation.tierOptions.mid.price),
+              }
+            : day.accommodation.tierOptions.mid,
+          premium: day.accommodation.tierOptions.premium
+            ? {
+                ...day.accommodation.tierOptions.premium,
+                price: scalePrice(day.accommodation.tierOptions.premium.price),
+              }
+            : day.accommodation.tierOptions.premium,
+        }
+      : undefined;
+
+    return {
+      ...day,
+      accommodation: day.accommodation
+        ? {
+            ...day.accommodation,
+            selectedTier: 'budget' as BudgetTier,
+            price:
+              scaledTierOptions?.budget?.price !== undefined
+                ? scaledTierOptions.budget.price
+                : scalePrice(day.accommodation.price),
+            ...(scaledTierOptions ? { tierOptions: scaledTierOptions } : {}),
+          }
+        : undefined,
+      intercity_transit: day.intercity_transit
+        ? {
+            ...day.intercity_transit,
+            price: scalePrice(day.intercity_transit.price),
+          }
+        : undefined,
+      meals: day.meals
+        ? {
+            breakfast: scaleMealSlot(day.meals.breakfast)!,
+            lunch: scaleMealSlot(day.meals.lunch)!,
+            dinner: scaleMealSlot(day.meals.dinner)!,
+          }
+        : undefined,
+      activities: (day.activities || []).map((act) => {
+        const scaledBudget = scalePrice(act.costOptions?.budget?.estimatedCost);
+        const scaledMid = Math.max(scaledBudget, scalePrice(act.costOptions?.mid?.estimatedCost));
+        const scaledPremium = Math.max(
+          scaledMid,
+          scalePrice(act.costOptions?.premium?.estimatedCost)
+        );
+        return {
+          ...act,
+          costOptions: {
+            budget: { ...act.costOptions.budget, estimatedCost: scaledBudget },
+            mid: { ...act.costOptions.mid, estimatedCost: scaledMid },
+            premium: { ...act.costOptions.premium, estimatedCost: scaledPremium },
+          },
+        };
+      }),
+    };
+  });
+}
+
+
+

@@ -80,7 +80,7 @@ export const JoinTripPage: React.FC = () => {
             id="join-name"
             type="text"
             required
-            placeholder="e.g. Joana"
+            placeholder={t('join.namePlaceholder')}
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800"

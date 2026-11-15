@@ -5,12 +5,25 @@ import { z } from 'zod';
 import dotenv from 'dotenv';
 import {
   type GooglePlaceDetailsResult,
+  CHAT_ASSISTANT_PT_DIRECTIVE,
+  MULTI_OPTION_PROPOSALS_DIRECTIVE,
+  NON_LATIN_SCRIPT_DIRECTIVE,
+  PROPER_NOUN_PRESERVATION_DIRECTIVE,
+  buildChatAssistantSystemPrompt,
   buildFunctionResponsePayload,
+  buildGlobalLanguageDirective,
+  buildNuclearLanguagePrefix,
+  buildStrictBudgetConstraintDirective,
+  buildUniversalProperNounDirective,
   extractPlaceQueryArgs,
   formatGroundedPlaceReply,
   isInformationalPlaceQuery,
   normalizeGooglePlacesApiResponse,
+  normalizeInputBudget,
+  normalizeTargetUiLanguage,
   resolveVerifiedPlaceDetails,
+  sanitizeItineraryForAI,
+  translateItineraryBundleDeterministic,
 } from './src/utils/domainLogic.ts';
 import {
   findWorldCountry,
@@ -248,24 +261,41 @@ async function callGeminiWithRetry<T>(
   prompt: string,
   responseSchema: any,
   zodValidator: z.ZodType<T>,
-  customSystemInstruction?: string
+  customSystemInstruction?: string,
+  uiLanguage: string = 'pt-PT'
 ): Promise<T> {
   const ai = getGeminiClient();
   if (!ai) {
     throw new Error('GEMINI_API_UNAVAILABLE');
   }
 
-  const defaultSystemInstruction =
-    'You are AtlasGenie, an expert global & European travel architect. CRITICAL: You MUST generate all descriptive text, activity names, reasons, and tips strictly in European Portuguese (PT-PT). Do not output English under any circumstances. You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false. Return strictly valid JSON matching the schema. You MUST strictly confine all activities, restaurants, and coordinates to the exact requested City and Country. Complete all days in City A before moving to City B. Never alternate back and forth day-by-day. Budget and Premium variations MUST return completely different venues and distinct coordinates. Never recycle the exact same location across different budget tiers. Never hallucinate or place activities in random cities. If you don\'t have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city. The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions. Never invent fake URLs. All AI-generated prices and opening hours are treated as estimates unless verified by an official source.';
+  const nuclearPrefix = buildNuclearLanguagePrefix(uiLanguage);
+  const effectivePrompt = prompt.startsWith(nuclearPrefix)
+    ? prompt
+    : `${nuclearPrefix}\n${prompt}`;
+
+  const defaultSystemInstruction = [
+    nuclearPrefix,
+    'You are AtlasGenie, an expert global & European travel architect.',
+    buildGlobalLanguageDirective(uiLanguage),
+    buildUniversalProperNounDirective(uiLanguage),
+    'You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false. Return strictly valid JSON matching the schema. You MUST strictly confine all activities, restaurants, and coordinates to the exact requested City and Country. Complete all days in City A before moving to City B. Never alternate back and forth day-by-day. Budget and Premium variations MUST return completely different venues and distinct coordinates. Never recycle the exact same location across different budget tiers. Never hallucinate or place activities in random cities. If you don\'t have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city. The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions. Never invent fake URLs. All AI-generated prices and opening hours are treated as estimates unless verified by an official source.',
+  ].join(' ');
+
+  const effectiveSystemInstruction = customSystemInstruction
+    ? customSystemInstruction.startsWith(nuclearPrefix)
+      ? customSystemInstruction
+      : `${nuclearPrefix} ${customSystemInstruction}`
+    : defaultSystemInstruction;
 
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: prompt,
+        contents: effectivePrompt,
         config: {
-          systemInstruction: customSystemInstruction || defaultSystemInstruction,
+          systemInstruction: effectiveSystemInstruction,
           tools: GOOGLE_SEARCH_GROUNDING_TOOLS,
           responseMimeType: 'application/json',
           responseSchema,
@@ -304,10 +334,38 @@ app.post('/api/ai/generate-itinerary', async (req, res) => {
     pace = 3,
     totalBudget = 800,
     travelersCount = 2,
+    perPersonBudget: clientPerPersonBudget,
     assumptions = [],
     specialPreferences = [],
     customRequest = '',
+    language = 'pt',
+    uiLanguage = '',
+    activeLanguage = '',
   } = req.body;
+
+  const {
+    inputTotalBudget: normalizedTotalBudget,
+    travelers: normalizedTravelers,
+    perPersonBudget: computedPerPersonBudget,
+    budgetTier: evaluatedBudgetTier,
+  } = normalizeInputBudget(totalBudget, travelersCount);
+  const perPersonBudget =
+    typeof clientPerPersonBudget === 'number' && Number.isFinite(clientPerPersonBudget)
+      ? Math.max(0, Math.round(clientPerPersonBudget))
+      : computedPerPersonBudget;
+  const strictBudgetDirective = buildStrictBudgetConstraintDirective(perPersonBudget);
+
+  const resolvedUiLanguage = normalizeTargetUiLanguage(
+    typeof activeLanguage === 'string' && activeLanguage.trim()
+      ? activeLanguage.trim()
+      : typeof uiLanguage === 'string' && uiLanguage.trim()
+      ? uiLanguage.trim()
+      : language === 'en'
+      ? 'en'
+      : 'pt-PT'
+  );
+  const isEn = resolvedUiLanguage === 'en';
+  const nuclearPrefix = buildNuclearLanguagePrefix(resolvedUiLanguage);
 
   const cleanCities: string[] = Array.isArray(cities)
     ? cities.map((c: unknown) => String(c).trim()).filter(Boolean)
@@ -337,7 +395,7 @@ app.post('/api/ai/generate-itinerary', async (req, res) => {
       ? `The user selected the country "${targetCountry}" and asked the AI to choose the best route of cities within ${targetCountry} across ${daysCount} days. Pick the most iconic, logical city or multi-city sequence strictly within ${targetCountry} and include the chosen cities in recommendedDestinationTitle. Complete all days in City A before moving to City B. Never alternate back and forth day-by-day. Strictly confine all activities, restaurants, and coordinates to the chosen city and ${targetCountry}. Never hallucinate or place activities in random cities. If you don't have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city.`
       : `The user selected the country "${targetCountry}" and specifically requested the destination(s): ${cleanCities.join(', ')}. Complete all days in City A before moving to City B. Never alternate back and forth day-by-day. You MUST strictly confine all activities, restaurants, and coordinates to the exact requested destination (${cleanCities.join(', ')}) and Country (${targetCountry}). The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions. Never hallucinate or place activities in random cities. If you don't have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city. Set recommendedDestinationTitle to "${cleanCities.join(', ')}, ${targetCountry}".`;
 
-  const cacheKey = `gen:v6:pt:${targetCountry}:${cleanCities.join('|')}:${Boolean(letAiDecideCities)}:${startDate}:${endDate}:${daysCount}:${interests.join(',')}:${pace}:${totalBudget}:${travelersCount}:${strictConstraintsList.join('|')}`;
+  const cacheKey = `gen:v7:${resolvedUiLanguage}:${targetCountry}:${cleanCities.join('|')}:${Boolean(letAiDecideCities)}:${startDate}:${endDate}:${daysCount}:${interests.join(',')}:${pace}:${totalBudget}:${travelersCount}:${strictConstraintsList.join('|')}`;
   const cached = getCached(cacheKey);
   if (cached) {
     return res.json(cached);
@@ -455,24 +513,39 @@ app.post('/api/ai/generate-itinerary', async (req, res) => {
         : 'No special dietary or mobility restrictions specified.';
 
     const generateItinerarySystemPrompt = [
+      nuclearPrefix,
       'You are AtlasGenie, an expert global & European travel architect.',
-      'CRITICAL: You MUST generate all descriptive text, activity names, reasons, and tips strictly in European Portuguese (PT-PT). Do not output English under any circumstances.',
+      buildGlobalLanguageDirective(resolvedUiLanguage),
+      buildUniversalProperNounDirective(resolvedUiLanguage),
+      !isEn
+        ? 'CRITICAL: You MUST generate all descriptive text, activity names, reasons, and tips strictly in European Portuguese (PT-PT). Do not output English under any circumstances.'
+        : '',
+      !isEn ? CHAT_ASSISTANT_PT_DIRECTIVE : '',
+      PROPER_NOUN_PRESERVATION_DIRECTIVE,
+      NON_LATIN_SCRIPT_DIRECTIVE,
       'You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false.',
       'You MUST maintain a global history of all generated venues. YOU ARE STRICTLY FORBIDDEN from repeating the same activity, museum, restaurant, or neighborhood walk on different days. Every single activity across the entire trip MUST be 100% unique.',
       "The user's preferences, age group, and custom requests (from the text area) are ABSOLUTE LAWS. If the user explicitly asks for 'discotecas', nightlife, or a specific niche, you MUST prioritize and include these over generic city highlights. Sacrifice standard attractions to guarantee the user's specific constraints are met on at least one of the days.",
       `Strictly confine all activities, restaurants, and coordinates to the exact requested City and Country (${requestedScopeLabel}).`,
       'Complete all days in City A before moving to City B. Never alternate back and forth day-by-day.',
       'Budget and Premium variations MUST return completely different venues and distinct coordinates. Never recycle the exact same location across different budget tiers.',
+      strictBudgetDirective,
+      `BUDGET NORMALIZATION & TIER SCALING: The total group budget is €${normalizedTotalBudget} across ${normalizedTravelers} travelers, which equals an individual per-person budget of €${perPersonBudget}/person (target budget tier: "${evaluatedBudgetTier}"). Scale all venue, meal, and activity recommendations strictly to the per-person budget of €${perPersonBudget}/person ("${evaluatedBudgetTier}" tier), NOT the group total.`,
       'Each day MUST explicitly include accommodation ({ name, type (hotel/hostel/apartment), price, isPriceVerified, coordinates }), meals ({ breakfast, lunch, dinner } with specific distinct restaurant names, estimated prices, isPriceVerified, and coordinates), and intercity_transit ({ method, duration, price, isPriceVerified }) ONLY on days where the user changes cities.',
       strictConstraintsInstruction,
       'Never hallucinate or place activities in random cities. If you don\'t have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city.',
       'The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions.',
       'Return strictly valid JSON matching the schema. Never invent fake URLs. All AI-generated prices and opening hours are treated as estimates unless verified by an official source.',
-    ].join(' ');
+    ]
+      .filter(Boolean)
+      .join(' ');
 
     const prompt = [
+      nuclearPrefix,
       `Generate a complete ${daysCount}-day travel itinerary (${startDate || 'upcoming'} to ${endDate || 'upcoming'}).`,
-      'CRITICAL: You MUST generate all descriptive text, activity names, reasons, and tips strictly in European Portuguese (PT-PT). Do not output English under any circumstances.',
+      buildGlobalLanguageDirective(resolvedUiLanguage),
+      buildUniversalProperNounDirective(resolvedUiLanguage),
+      strictBudgetDirective,
       'GOOGLE SEARCH 2026 PRICING REQUIREMENT: You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false.',
       'ZERO REPETITION REQUIREMENT: You MUST maintain a global history of all generated venues. YOU ARE STRICTLY FORBIDDEN from repeating the same activity, museum, restaurant, or neighborhood walk on different days. Every single activity across the entire trip MUST be 100% unique.',
       "CUSTOM REQUESTS ARE THE LAW: The user's preferences, age group, and custom requests (from the text area) are ABSOLUTE LAWS. If the user explicitly asks for 'discotecas', nightlife, or a specific niche, you MUST prioritize and include these over generic city highlights. Sacrifice standard attractions to guarantee the user's specific constraints are met on at least one of the days.",
@@ -480,7 +553,7 @@ app.post('/api/ai/generate-itinerary', async (req, res) => {
       `LOGISTICS & MEALS REQUIREMENT: Every single day MUST explicitly include: (1) accommodation: { name, type (hotel/hostel/apartment), price, isPriceVerified, coordinates }, (2) intercity_transit: { method (e.g., Rede Expressos, Alfa Pendular, Frecciarossa), duration, price, isPriceVerified } included ONLY on days where the user changes cities, and (3) meals: { breakfast, lunch, dinner } with specific distinct restaurant names, estimated prices, isPriceVerified, and coordinates.`,
       `TIER VARIATION REQUIREMENT: Budget and Premium variations MUST return completely different venues and distinct coordinates. Never recycle the exact same location across different budget tiers.`,
       `GEOGRAPHIC STRICTNESS & NICHE ADAPTABILITY: Strictly confine all activities, restaurants, and coordinates to ${requestedScopeLabel}. The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions. Never hallucinate or place activities in random cities. If you don't have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city.`,
-      `TRAVEL PARAMETERS: ${travelersCount} travelers, total trip budget €${totalBudget}, daily pace ${pace}/5, selected interests: ${interests.join(', ')}.`,
+      `TRAVEL PARAMETERS: ${normalizedTravelers} travelers, per-person budget €${perPersonBudget}/person (from total group budget €${normalizedTotalBudget}, target budget tier: "${evaluatedBudgetTier}"), daily pace ${pace}/5, selected interests: ${interests.join(', ')}. ${strictBudgetDirective} Scale all individual venue, meal, and activity costs to €${perPersonBudget}/person ("${evaluatedBudgetTier}" tier), NOT €${normalizedTotalBudget}.`,
       `STRICT RESTRICTIONS & SPECIAL REQUESTS (MUST FOLLOW FOR LOCATIONS, MEALS & LOGISTICS): ${strictConstraintsInstruction}`,
       `Include 3-4 activities per day in 'activities' and 1-2 indoor rainy-day backup activities per day in 'planB'.`,
     ].join('\n');
@@ -548,7 +621,8 @@ app.post('/api/ai/generate-itinerary', async (req, res) => {
         required: ['recommendedDestinationTitle', 'days'],
       },
       ItinerarySchema,
-      generateItinerarySystemPrompt
+      generateItinerarySystemPrompt,
+      resolvedUiLanguage
     );
 
     setCached(cacheKey, result);
@@ -573,11 +647,28 @@ app.post('/api/ai/propose-changes', async (req, res) => {
     destination,
     message,
     currentDay,
+    itinerary,
+    sanitizedItinerary: clientSanitizedItinerary,
     travelers,
-    language = 'en',
     clientPlaceData,
+    language = 'pt',
+    uiLanguage = '',
   } = req.body;
-  const cacheKey = `prop:${taskType}:${language}:${destination}:${message || ''}:${currentDay?.id || ''}`;
+  const resolvedUiLanguage =
+    typeof uiLanguage === 'string' && uiLanguage.trim()
+      ? uiLanguage.trim()
+      : language === 'en'
+      ? 'en'
+      : 'pt-PT';
+  const isEn = normalizeTargetUiLanguage(resolvedUiLanguage) === 'en';
+  const sanitizedContext =
+    clientSanitizedItinerary ||
+    sanitizeItineraryForAI(itinerary || (currentDay ? { destination, days: [currentDay] } : { destination, days: [] }));
+  const chatSystemInstruction = buildChatAssistantSystemPrompt(
+    itinerary || (currentDay ? { destination, days: [currentDay] } : { destination, days: [] }),
+    resolvedUiLanguage
+  );
+  const cacheKey = `prop:v24:${taskType}:${resolvedUiLanguage}:${destination}:${message || ''}:${currentDay?.id || ''}`;
   const cached = getCached(cacheKey);
   if (cached) {
     return res.json(cached);
@@ -595,21 +686,16 @@ app.post('/api/ai/propose-changes', async (req, res) => {
 
     if (ai) {
       try {
-        const userPrompt = `User question about their trip in ${destination}: "${message}". Current day activities: ${JSON.stringify(
-          (currentDay?.activities || []).map((a: any) => ({
-            title: a.title,
-            location: a.location?.name,
-            openingHoursText: a.openingHoursText,
-          }))
-        )}. Answer in ${language === 'pt' ? 'Portuguese (PT-PT)' : 'English'}. Use fetch_google_place_details whenever the user asks about a venue's opening hours, rating, price level, or reviews.`;
+        const userPrompt = `User question about their trip in ${destination}: "${message}". Lightweight Sanitized Itinerary Context: ${JSON.stringify(
+          sanitizedContext
+        )}. ${buildGlobalLanguageDirective(resolvedUiLanguage)} ${buildUniversalProperNounDirective(resolvedUiLanguage)} ${NON_LATIN_SCRIPT_DIRECTIVE} Use fetch_google_place_details whenever the user asks about a venue's opening hours, rating, price level, or reviews.`;
 
         // Step 1 & Step 2: Call Gemini with `tools` and intercept `functionCall`
         const response1 = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
           contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
           config: {
-            systemInstruction:
-              'You are the Atlas Genie Assistant. Always call the fetch_google_place_details tool when the user asks about a specific place, landmark, museum, or restaurant to retrieve real-time rating, price level, opening hours, and review summaries.',
+            systemInstruction: `${chatSystemInstruction} Always call the fetch_google_place_details tool when the user asks about a specific place, landmark, museum, or restaurant to retrieve real-time rating, price level, opening hours, and review summaries.`,
             tools: ATLAS_GENIE_TOOLS,
           },
         });
@@ -647,15 +733,14 @@ app.post('/api/ai/propose-changes', async (req, res) => {
               functionResponseContent as any,
             ],
             config: {
-              systemInstruction:
-                'You are the Atlas Genie Assistant. Use the functionResponse from fetch_google_place_details to give a clear, factually accurate answer citing the current rating, price level, opening hours, and review summary.',
+              systemInstruction: `${chatSystemInstruction} ${buildGlobalLanguageDirective(resolvedUiLanguage)} ${buildUniversalProperNounDirective(resolvedUiLanguage)} Use the functionResponse from fetch_google_place_details to give a clear, factually accurate answer citing the current rating, price level, opening hours, and review summary while preserving proper nouns.`,
               tools: ATLAS_GENIE_TOOLS,
             },
           });
 
           const groundedReply =
             (response2.text || '').trim() ||
-            formatGroundedPlaceReply(placeDetails, language === 'pt' ? 'pt' : 'en');
+            formatGroundedPlaceReply(placeDetails, isEn ? 'en' : 'pt');
 
           const payload = {
             reply: groundedReply,
@@ -684,7 +769,7 @@ app.post('/api/ai/propose-changes', async (req, res) => {
       );
       const groundedReply = formatGroundedPlaceReply(
         functionResponseContent.parts[0].functionResponse.response.result,
-        language === 'pt' ? 'pt' : 'en'
+        isEn ? 'en' : 'pt'
       );
       const payload = {
         reply: groundedReply,
@@ -698,11 +783,18 @@ app.post('/api/ai/propose-changes', async (req, res) => {
   }
 
   try {
-    const prompt = `Task: ${taskType} for trip in ${destination}. User request: "${message || taskType}". Current day: ${JSON.stringify(
-      currentDay || {}
-    )}. Travelers: ${JSON.stringify(
-      travelers || []
-    )}. Return a concise assistant reply and 1-2 concrete ProposalChange diff items (add, remove, replace, or move) with realistic coordinates in ${destination}.`;
+    const prompt = [
+      `Task: ${taskType} for trip in ${destination}. User request: "${message || taskType}".`,
+      buildGlobalLanguageDirective(resolvedUiLanguage),
+      buildUniversalProperNounDirective(resolvedUiLanguage),
+      NON_LATIN_SCRIPT_DIRECTIVE,
+      MULTI_OPTION_PROPOSALS_DIRECTIVE,
+      `OPTIMIZED SANITIZED ITINERARY CONTEXT: ${JSON.stringify(sanitizedContext)}`,
+      `Active Day ID: ${currentDay?.id || 'day-1'} (Day ${currentDay?.dayNumber || 1}). Travelers: ${JSON.stringify(
+        travelers || []
+      )}.`,
+      `Return a concise assistant reply in ${resolvedUiLanguage} and an array of 2 to 3 distinct, verified ProposalChange alternatives (e.g., different price points or themes) with realistic coordinates in ${destination}.`,
+    ].join('\n');
 
     const result = await callGeminiWithRetry(
       prompt,
@@ -724,11 +816,15 @@ app.post('/api/ai/propose-changes', async (req, res) => {
                 newStartTime: { type: Type.STRING },
                 reason: { type: Type.STRING },
               },
+              required: ['id', 'dayId', 'dayNumber', 'type', 'reason'],
             },
           },
         },
+        required: ['reply', 'proposals'],
       },
-      ChatDiffResponseSchema
+      ChatDiffResponseSchema,
+      chatSystemInstruction,
+      resolvedUiLanguage
     );
 
     setCached(cacheKey, result);
@@ -752,9 +848,28 @@ app.post('/api/ai/chat-stream', async (req, res) => {
     destination = 'Lisbon',
     message = '',
     currentDay,
-    language = 'en',
+    itinerary,
+    sanitizedItinerary: clientSanitizedItinerary,
     clientPlaceData,
+    language = 'pt',
+    uiLanguage = '',
   } = req.body;
+
+  const resolvedUiLanguage =
+    typeof uiLanguage === 'string' && uiLanguage.trim()
+      ? uiLanguage.trim()
+      : language === 'en'
+      ? 'en'
+      : 'pt-PT';
+  const isEn = normalizeTargetUiLanguage(resolvedUiLanguage) === 'en';
+
+  const sanitizedContext =
+    clientSanitizedItinerary ||
+    sanitizeItineraryForAI(itinerary || (currentDay ? { destination, days: [currentDay] } : { destination, days: [] }));
+  const chatSystemInstruction = buildChatAssistantSystemPrompt(
+    itinerary || (currentDay ? { destination, days: [currentDay] } : { destination, days: [] }),
+    resolvedUiLanguage
+  );
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -773,13 +888,9 @@ app.post('/api/ai/chat-stream', async (req, res) => {
     );
 
     if (ai) {
-      const userPrompt = `User message for trip in ${destination}: "${message}". Current day activities: ${JSON.stringify(
-        (currentDay?.activities || []).map((a: any) => ({
-          title: a.title,
-          location: a.location?.name,
-          openingHoursText: a.openingHoursText,
-        }))
-      )}. Respond in ${language === 'pt' ? 'Portuguese (PT-PT)' : 'English'}. Whenever the user asks about a specific place, venue, museum, restaurant, rating, price level, opening hours, or reviews, call fetch_google_place_details first.`;
+      const userPrompt = `User message for trip in ${destination}: "${message}". Lightweight Sanitized Itinerary Context: ${JSON.stringify(
+        sanitizedContext
+      )}. ${buildGlobalLanguageDirective(resolvedUiLanguage)} ${buildUniversalProperNounDirective(resolvedUiLanguage)} ${NON_LATIN_SCRIPT_DIRECTIVE} Whenever the user asks about a specific place, venue, museum, restaurant, rating, price level, opening hours, or reviews, call fetch_google_place_details first.`;
 
       // Step 1 & Step 2: Call Gemini with `fetch_google_place_details` tool and intercept any `functionCall`
       // (Never expose the raw functionCall JSON to the user)
@@ -787,8 +898,7 @@ app.post('/api/ai/chat-stream', async (req, res) => {
         model: 'gemini-3-flash-preview',
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
         config: {
-          systemInstruction:
-            'You are the Atlas Genie Assistant. Use the fetch_google_place_details tool to ground facts about any place (rating, price level, opening hours, and reviews summary) before answering.',
+          systemInstruction: chatSystemInstruction,
           tools: ATLAS_GENIE_TOOLS,
         },
       });
@@ -834,8 +944,7 @@ app.post('/api/ai/chat-stream', async (req, res) => {
             functionResponseContent as any,
           ],
           config: {
-            systemInstruction:
-              'You are the Atlas Genie Assistant. Read the functionResponse from fetch_google_place_details and stream a concise, factually accurate answer including the current rating, price level, opening hours, and review summary.',
+            systemInstruction: `${chatSystemInstruction} ${buildGlobalLanguageDirective(resolvedUiLanguage)} ${buildUniversalProperNounDirective(resolvedUiLanguage)} Read the functionResponse from fetch_google_place_details and stream a concise, factually accurate answer including the current rating, price level, opening hours, and review summary while preserving proper nouns.`,
             tools: ATLAS_GENIE_TOOLS,
           },
         });
@@ -850,10 +959,7 @@ app.post('/api/ai/chat-stream', async (req, res) => {
         }
 
         if (!accumulatedText.trim()) {
-          accumulatedText = formatGroundedPlaceReply(
-            placeDetails,
-            language === 'pt' ? 'pt' : 'en'
-          );
+          accumulatedText = formatGroundedPlaceReply(placeDetails, isEn ? 'en' : 'pt');
           sendEvent({ type: 'chunk', text: accumulatedText });
         }
 
@@ -898,7 +1004,7 @@ app.post('/api/ai/chat-stream', async (req, res) => {
       );
       const fullGroundedReply = formatGroundedPlaceReply(
         functionResponseContent.parts[0].functionResponse.response.result,
-        language === 'pt' ? 'pt' : 'en'
+        isEn ? 'en' : 'pt'
       );
 
       // Stream the grounded response in natural token chunks into the chat UI
@@ -1228,7 +1334,15 @@ const handleAccommodationAlternative = async (req: express.Request, res: express
     tier = 'mid',
     dayNumber = 1,
     language = 'en',
+    uiLanguage = '',
   } = req.body || {};
+
+  const resolvedUiLanguage =
+    typeof uiLanguage === 'string' && uiLanguage.trim()
+      ? uiLanguage.trim()
+      : language === 'pt'
+      ? 'pt-PT'
+      : 'en';
 
   const targetCity = String(city || 'Lisbon').trim();
   const targetCountry = String(country || 'Portugal').trim();
@@ -1241,7 +1355,7 @@ const handleAccommodationAlternative = async (req: express.Request, res: express
     ? String(tier)
     : 'mid';
 
-  const cacheKey = `acc-alt:v1:${targetCity}:${targetCountry}:${currentName}:${requestedTier}:${dayNumber}:${language}`;
+  const cacheKey = `acc-alt:v2:${targetCity}:${targetCountry}:${currentName}:${requestedTier}:${dayNumber}:${resolvedUiLanguage}`;
   const cached = getCached(cacheKey);
   if (cached) {
     return res.json(cached);
@@ -1259,11 +1373,12 @@ const handleAccommodationAlternative = async (req: express.Request, res: express
   try {
     const prompt = [
       `Return ONLY ONE alternative accommodation option (JSON) for Day ${dayNumber} in ${targetCity}, ${targetCountry} matching the "${requestedTier}" budget tier.`,
+      buildGlobalLanguageDirective(resolvedUiLanguage),
+      buildUniversalProperNounDirective(resolvedUiLanguage),
       `Do NOT return an itinerary or activities. Strictly return a single accommodation JSON object { name, type (hotel/hostel/apartment), price, isPriceVerified, coordinates: { lat, lng }, reason }.`,
       'You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false.',
       `The user is currently staying at "${currentName}" (${currentType}, ~€${currentPrice}/night at ${currentLat}, ${currentLng}) and clicked "Ask for Alternative".`,
       `You MUST propose a completely different, real or realistic ${requestedTier}-tier property strictly within ${targetCity}, ${targetCountry} with distinct coordinates and a realistic nightly EUR price for the "${requestedTier}" tier.`,
-      `Write the "reason" field in ${language === 'pt' ? 'Portuguese (PT-PT)' : 'English'}.`,
     ].join(' ');
 
     const result = await callGeminiWithRetry(
@@ -1288,7 +1403,8 @@ const handleAccommodationAlternative = async (req: express.Request, res: express
         required: ['name', 'type', 'price', 'isPriceVerified', 'coordinates', 'reason'],
       },
       ScopedAccommodationOptionSchema,
-      `You are AtlasGenie. You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false. Return ONLY a single JSON object representing a new accommodation option in ${targetCity}, ${targetCountry} for the "${requestedTier}" tier. Never return the same property as "${currentName}".`
+      `You are AtlasGenie. ${buildGlobalLanguageDirective(resolvedUiLanguage)} ${buildUniversalProperNounDirective(resolvedUiLanguage)} You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false. Return ONLY a single JSON object representing a new accommodation option in ${targetCity}, ${targetCountry} for the "${requestedTier}" tier. Never return the same property as "${currentName}".`,
+      resolvedUiLanguage
     );
 
     setCached(cacheKey, result);
@@ -1303,6 +1419,140 @@ const handleAccommodationAlternative = async (req: express.Request, res: express
 
 app.post('/api/gemini/accommodation-alternative', handleAccommodationAlternative);
 app.post('/api/ai/accommodation-alternative', handleAccommodationAlternative);
+
+// Sprint 28: Auto-Translate Existing Itinerary Endpoint
+app.post('/api/ai/translate-itinerary', async (req, res) => {
+  const { bundle, activeLanguage = 'pt-PT', uiLanguage = '', language = 'pt' } = req.body || {};
+  const resolvedLang = normalizeTargetUiLanguage(
+    typeof activeLanguage === 'string' && activeLanguage.trim()
+      ? activeLanguage.trim()
+      : typeof uiLanguage === 'string' && uiLanguage.trim()
+      ? uiLanguage.trim()
+      : language === 'en'
+      ? 'en'
+      : 'pt-PT'
+  );
+
+  if (!bundle || !Array.isArray(bundle.days)) {
+    return res.status(400).json({ error: 'Invalid itinerary bundle.' });
+  }
+
+  // First apply deterministic translation so known demo/fallback strings are translated immediately
+  const deterministicBundle = translateItineraryBundleDeterministic(bundle, resolvedLang);
+  const nuclearPrefix = buildNuclearLanguagePrefix(resolvedLang);
+
+  const ai = getGeminiClient();
+  if (!ai || bundle.trip?.isDemo) {
+    return res.json({ bundle: deterministicBundle, translatedBy: 'deterministic' });
+  }
+
+  try {
+    const cacheKey = `translate:v1:${resolvedLang}:${bundle.trip?.id || 'trip'}:${bundle.days.length}`;
+    const cached = getCached<any>(cacheKey);
+    if (cached) {
+      return res.json({ bundle: cached, translatedBy: 'cache' });
+    }
+
+    const compactDays = deterministicBundle.days.map((d: any) => ({
+      id: d.id,
+      theme: d.theme,
+      activities: (d.activities || []).map((a: any) => ({
+        id: a.id,
+        title: a.title,
+        description: a.description,
+        whyThis: a.whyThis,
+      })),
+    }));
+
+    const translatePrompt = [
+      nuclearPrefix,
+      `Translate the following itinerary day themes and activity titles, descriptions, and whyThis reasons into ${resolvedLang}.`,
+      buildGlobalLanguageDirective(resolvedLang),
+      buildUniversalProperNounDirective(resolvedLang),
+      `Input JSON: ${JSON.stringify({ days: compactDays })}`,
+    ].join('\n');
+
+    let serverTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      serverTimeoutId = setTimeout(() => {
+        reject(new Error('Gemini translation timed out after 15000ms'));
+      }, 15000);
+    });
+
+    const response = await Promise.race([
+      ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: translatePrompt,
+        config: {
+          systemInstruction: `${nuclearPrefix} ${buildGlobalLanguageDirective(resolvedLang)} ${buildUniversalProperNounDirective(resolvedLang)} Return strictly valid JSON with the translated 'days' array preserving every 'id'.`,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              days: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.STRING },
+                    theme: { type: Type.STRING },
+                    activities: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          id: { type: Type.STRING },
+                          title: { type: Type.STRING },
+                          description: { type: Type.STRING },
+                          whyThis: { type: Type.STRING },
+                        },
+                        required: ['id', 'title', 'description', 'whyThis'],
+                      },
+                    },
+                  },
+                  required: ['id', 'theme', 'activities'],
+                },
+              },
+            },
+            required: ['days'],
+          },
+        },
+      }),
+      timeoutPromise,
+    ]).finally(() => {
+      if (serverTimeoutId) clearTimeout(serverTimeoutId);
+    });
+
+    const parsed = JSON.parse((response.text || '{}').trim());
+    if (Array.isArray(parsed?.days)) {
+      const mergedDays = deterministicBundle.days.map((day: any) => {
+        const aiDay = parsed.days.find((pd: any) => pd.id === day.id);
+        if (!aiDay) return day;
+        return {
+          ...day,
+          theme: aiDay.theme || day.theme,
+          activities: (day.activities || []).map((act: any) => {
+            const aiAct = (aiDay.activities || []).find((pa: any) => pa.id === act.id);
+            if (!aiAct) return act;
+            return {
+              ...act,
+              title: aiAct.title || act.title,
+              description: aiAct.description || act.description,
+              whyThis: aiAct.whyThis || act.whyThis,
+            };
+          }),
+        };
+      });
+      const finalBundle = { ...deterministicBundle, days: mergedDays };
+      setCached(cacheKey, finalBundle);
+      return res.json({ bundle: finalBundle, translatedBy: 'gemini' });
+    }
+  } catch (error) {
+    console.error('Translation API failed:', error);
+  }
+
+  return res.json({ bundle: deterministicBundle, translatedBy: 'deterministic' });
+});
 
 // Reminder Email Server Function (Feature A9)
 app.post('/api/reminders/send', async (req, res) => {

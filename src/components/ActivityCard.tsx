@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Check, GripVertical, Info, MapPin, Pencil, X } from 'lucide-react';
 import { Activity, BudgetTier, VoteValue } from '../types/models';
 import { getActiveActivityLocation } from '../utils/worldDestinations';
+import { useI18n } from '../i18n/I18nContext';
 import { TrustBadge } from './TrustBadge';
 
 export interface ActivityCardProps {
@@ -45,6 +46,7 @@ const ActivityCardInner: React.FC<ActivityCardProps> = ({
   onRenameActivity,
 }) => {
   const { t } = useTranslation();
+  useI18n();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(act.title);
   const [localSelectedTier, setLocalSelectedTier] = useState<BudgetTier>(
@@ -267,7 +269,7 @@ const ActivityCardInner: React.FC<ActivityCardProps> = ({
                 onMove(idx, -1);
               }}
               disabled={idx === 0}
-              aria-label={`Move ${act.title} up`}
+              aria-label={t('trip.moveUpAria', { title: act.title })}
               className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               <span aria-hidden="true">↑</span>
@@ -279,7 +281,7 @@ const ActivityCardInner: React.FC<ActivityCardProps> = ({
                 onMove(idx, 1);
               }}
               disabled={idx === totalCount - 1}
-              aria-label={`Move ${act.title} down`}
+              aria-label={t('trip.moveDownAria', { title: act.title })}
               className="px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 disabled:opacity-30 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               <span aria-hidden="true">↓</span>
@@ -352,7 +354,6 @@ const ActivityCardInner: React.FC<ActivityCardProps> = ({
                 aria-pressed={localSelectedTier === tier}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setLocalSelectedTier(tier);
                   onTierSelect(act.id, tier);
                 }}
                 className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
@@ -409,7 +410,7 @@ const ActivityCardInner: React.FC<ActivityCardProps> = ({
                     e.stopPropagation();
                     onVote(act.id, v);
                   }}
-                  aria-label={`Vote ${v} ${act.title}`}
+                  aria-label={t('trip.voteAria', { vote: v, title: act.title })}
                   aria-pressed={act.votes?.[activeTravelerId] === v}
                   className={`px-2 py-1 text-xs rounded border cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 ${
                     act.votes?.[activeTravelerId] === v
@@ -440,29 +441,6 @@ const ActivityCardInner: React.FC<ActivityCardProps> = ({
   );
 };
 
-function areActivityCardPropsEqual(prev: ActivityCardProps, next: ActivityCardProps): boolean {
-  const prevSelected = prev.isSelected ?? prev.selectedActivityId === prev.act.id;
-  const nextSelected = next.isSelected ?? next.selectedActivityId === next.act.id;
-
-  return (
-    prev.act === next.act &&
-    prev.idx === next.idx &&
-    prev.totalCount === next.totalCount &&
-    prevSelected === nextSelected &&
-    prev.activeTravelerId === next.activeTravelerId &&
-    prev.onSelect === next.onSelect &&
-    prev.onMove === next.onMove &&
-    prev.onRemove === next.onRemove &&
-    prev.onTierSelect === next.onTierSelect &&
-    prev.onEscapeCrowds === next.onEscapeCrowds &&
-    prev.onVote === next.onVote &&
-    prev.onQuickExpense === next.onQuickExpense &&
-    prev.getTierLabel === next.getTierLabel &&
-    prev.onOpenDetails === next.onOpenDetails &&
-    prev.onRenameActivity === next.onRenameActivity
-  );
-}
-
-export const ActivityCard = React.memo(ActivityCardInner, areActivityCardPropsEqual);
+export const ActivityCard = React.memo(ActivityCardInner);
 export const SortableActivityCard = ActivityCard;
 export default ActivityCard;

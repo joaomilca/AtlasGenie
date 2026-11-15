@@ -248,11 +248,20 @@ export interface Trip {
   isDemo?: boolean;
 }
 
-export interface UserProfile {
+export interface TravelerProfilePreferences {
+  defaultGroupSize: number;
+  defaultPaceLevel: number;
+  savedInterests: string[];
+  savedRestrictions: string[];
+}
+
+export interface UserProfile extends TravelerProfilePreferences {
   id: string;
   name: string;
   email: string;
   language: Language;
+  notificationEnabled?: boolean;
+  reminderDaysBefore?: number;
   notificationPrefs: {
     enabled: boolean;
     daysBefore: number;
@@ -275,6 +284,8 @@ export interface ProposalChange {
   reason: string;
   source: 'chat' | 'pace' | 'local_alt' | 'budget' | 'compromise' | 'accommodation';
   status: 'pending' | 'accepted' | 'rejected';
+  optionGroupId?: string;
+  optionIndex?: number;
 }
 
 export interface FullTripBundle {

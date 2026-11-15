@@ -27,6 +27,7 @@ import {
 } from '../types/models';
 import { DEMO_TRIPS } from '../data/demoTrips';
 import {
+  ACTIVE_TRIP_STORAGE_KEY,
   BudgetOptimizationChange,
   applySelectedBudgetProposalsToDays,
   applySingleProposalChange,
@@ -35,10 +36,15 @@ import {
   computeTripTotalCost,
   deduplicateAndMergeProposals,
   getProposalTargetKey,
+  hasValidItineraryData,
+  parseActiveTripFromStorage,
+  readActiveTripFromLocalStorage,
   recalculateDayTravelTimes,
   removeExpenseById,
+  writeActiveTripToLocalStorageGuarded,
 } from '../utils/domainLogic';
 import { i18n } from '../i18n/I18nContext';
+import { useAuth } from './AuthContext';
 
 export type ToastVariant = 'success' | 'alert';
 
@@ -100,9 +106,37 @@ function loadInitialTrips(): Record<string, FullTripBundle> {
   const base = JSON.parse(JSON.stringify(DEMO_TRIPS)) as Record<string, FullTripBundle>;
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const activeRaw = localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
+    const activeBundle = parseActiveTripFromStorage(activeRaw);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...base, ...parsed };
+      const parsed = JSON.parse(raw) as Record<string, FullTripBundle>;
+      const merged: Record<string, FullTripBundle> = { ...base, ...parsed };
+      for (const demoKey of Object.keys(base)) {
+        if (merged[demoKey] && base[demoKey]) {
+          merged[demoKey] = {
+            ...merged[demoKey],
+            trip: {
+              ...merged[demoKey].trip,
+              destination: base[demoKey].trip.destination,
+              country: base[demoKey].trip.country,
+              assumptions: base[demoKey].trip.assumptions,
+              totalBudget: base[demoKey].trip.totalBudget,
+            },
+            days: merged[demoKey].days.map((day, idx) => ({
+              ...day,
+              theme: base[demoKey].days[idx]?.theme || day.theme,
+              city: base[demoKey].days[idx]?.city || day.city,
+            })),
+          };
+        }
+      }
+      if (activeBundle) {
+        merged[activeBundle.trip.id] = activeBundle;
+      }
+      return merged;
+    }
+    if (activeBundle) {
+      return { ...base, [activeBundle.trip.id]: activeBundle };
     }
   } catch {
     // ignore storage errors
@@ -111,9 +145,10 @@ function loadInitialTrips(): Record<string, FullTripBundle> {
 }
 
 export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(true);
+  const { user: authContextUser, loading: authContextLoading } = useAuth();
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(authContextUser);
+  const [authReady, setAuthReady] = useState(!authContextLoading);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(!authContextUser);
   const [trips, setTrips] = useState<Record<string, FullTripBundle>>(loadInitialTrips);
   const [proposalsByTrip, setProposalsByTrip] = useState<Record<string, ProposalChange[]>>({});
   const [undoHistoryByTrip, setUndoHistoryByTrip] = useState<Record<string, UndoHistoryEntry[]>>({});
@@ -143,21 +178,35 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [trips]);
 
-  // Listen to Firebase Auth state
+  // Sync with AuthContext user
   useEffect(() => {
+    setCurrentUser(authContextUser);
+    setAuthReady(!authContextLoading);
+    if (authContextUser) {
+      setIsDemoMode(false);
+    }
+  }, [authContextUser, authContextLoading]);
+
+  // Listen to Firebase Auth state with safe unmount cleanup
+  useEffect(() => {
+    let isMounted = true;
     const unsub = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setAuthReady(true);
+      if (!isMounted) return;
       if (user) {
+        setCurrentUser(user);
         setIsDemoMode(false);
       }
+      setAuthReady(true);
     });
-    return () => unsub();
+    return () => {
+      isMounted = false;
+      unsub();
+    };
   }, []);
 
   // Real-time Firestore listener for authenticated user's trips
   useEffect(() => {
-    if (!authReady || !currentUser) return;
+    if (!authReady || !currentUser || !auth.currentUser) return;
 
     const tripsPath = 'trips';
     const q = query(collection(db, tripsPath), where('memberIds', 'array-contains', currentUser.uid));
@@ -177,6 +226,17 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           } else {
             setTrips((prev) => {
               const existing = prev[tripId];
+              const activePersisted = readActiveTripFromLocalStorage();
+              const fallbackExisting =
+                existing ||
+                (activePersisted && activePersisted.trip.id === tripId ? activePersisted : undefined);
+              const resolvedDays =
+                Array.isArray(tripData.days) && tripData.days.length > 0
+                  ? tripData.days
+                  : fallbackExisting?.days || [];
+              if (resolvedDays.length === 0) {
+                return prev;
+              }
               const nestedTrip = tripData.trip && typeof tripData.trip === 'object' ? tripData.trip : {};
               return {
                 ...prev,
@@ -200,15 +260,15 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     groupEnabled: Boolean(tripData.groupEnabled ?? nestedTrip.groupEnabled),
                     isDemo: false,
                   },
-                  days: Array.isArray(tripData.days) && tripData.days.length > 0 ? tripData.days : existing?.days || [],
+                  days: resolvedDays,
                   travelers:
                     Array.isArray(tripData.travelers) && tripData.travelers.length > 0
                       ? tripData.travelers
-                      : existing?.travelers || [],
+                      : fallbackExisting?.travelers || [],
                   expenses:
                     Array.isArray(tripData.expenses) && tripData.expenses.length > 0
                       ? tripData.expenses
-                      : existing?.expenses || [],
+                      : fallbackExisting?.expenses || [],
                 },
               };
             });
@@ -287,7 +347,9 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const saveTripBundle = async (bundle: FullTripBundle) => {
+    if (!hasValidItineraryData(bundle)) return;
     setTrips((prev) => ({ ...prev, [bundle.trip.id]: bundle }));
+    writeActiveTripToLocalStorageGuarded(bundle, { allowDemoOverwrite: true });
     await syncBundleToFirestore(bundle);
   };
 
@@ -296,7 +358,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setTrips((prev) => {
       const next = { ...prev };
       for (const b of bundles) {
-        if (b && b.trip && b.trip.id) {
+        if (hasValidItineraryData(b)) {
           next[b.trip.id] = b;
         }
       }
@@ -311,6 +373,10 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       delete next[tripId];
       return next;
     });
+    const activePersisted = readActiveTripFromLocalStorage();
+    if (activePersisted && activePersisted.trip.id === tripId) {
+      writeActiveTripToLocalStorageGuarded(null, { explicitClear: true });
+    }
     if (currentUser && currentUser.emailVerified && target && !target.trip.isDemo) {
       try {
         await deleteDoc(doc(db, 'trips', tripId));
@@ -318,7 +384,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         handleFirestoreError(err, OperationType.DELETE, `trips/${tripId}`);
       }
     }
-    showToast('Trip removed from your Atlas.', 'alert');
+    showToast(String(i18n.t('toast.tripRemoved')), 'alert');
   };
 
   const duplicateTrip = async (tripId: string): Promise<string> => {
@@ -334,7 +400,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     copy.travelers = copy.travelers.map((t) => ({ ...t, tripId: newId }));
     copy.expenses = copy.expenses.map((e) => ({ ...e, tripId: newId }));
     await saveTripBundle(copy);
-    showToast(`Duplicated "${source.trip.destination}".`);
+    showToast(String(i18n.t('toast.tripDuplicated', { destination: source.trip.destination })));
     return newId;
   };
 
@@ -361,7 +427,14 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setProposalsByTrip((prev) => ({
       ...prev,
       [tripId]: (prev[tripId] || []).filter(
-        (p) => p.id !== proposalId && getProposalTargetKey(p) !== acceptedKey
+        (p) =>
+          p.id !== proposalId &&
+          getProposalTargetKey(p) !== acceptedKey &&
+          !(
+            proposal.targetActivityId &&
+            p.dayId === proposal.dayId &&
+            p.targetActivityId === proposal.targetActivityId
+          )
       ),
     }));
 
@@ -382,13 +455,8 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const targetBundle = prev[tripId];
       if (!targetBundle) return prev;
       const updatedDays = applySingleProposalChange(targetBundle.days, proposal);
-      const recomputedTotal = computeTripTotalCost(updatedDays).total;
       const nextBundle: FullTripBundle = {
         ...targetBundle,
-        trip: {
-          ...targetBundle.trip,
-          totalBudget: recomputedTotal > 0 ? recomputedTotal : targetBundle.trip.totalBudget,
-        },
         days: updatedDays,
       };
       syncedBundle = nextBundle;
@@ -396,9 +464,10 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     if (syncedBundle) {
+      writeActiveTripToLocalStorageGuarded(syncedBundle, { allowDemoOverwrite: true });
       await syncBundleToFirestore(syncedBundle);
     }
-    showToast('Change accepted and applied to your itinerary.');
+    showToast(String(i18n.t('toast.proposalAccepted')));
   };
 
   const rejectProposal = (tripId: string, proposalId: string) => {
@@ -406,7 +475,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...prev,
       [tripId]: (prev[tripId] || []).filter((p) => p.id !== proposalId),
     }));
-    showToast('Proposal rejected — your original plan remains untouched.', 'alert');
+    showToast(String(i18n.t('toast.proposalRejected')), 'alert');
   };
 
   const acceptAllProposals = async (tripId: string) => {
@@ -439,13 +508,8 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       for (const prop of dedupedList) {
         workingDays = applySingleProposalChange(workingDays, prop);
       }
-      const recomputedTotal = computeTripTotalCost(workingDays).total;
       const nextBundle: FullTripBundle = {
         ...targetBundle,
-        trip: {
-          ...targetBundle.trip,
-          totalBudget: recomputedTotal > 0 ? recomputedTotal : targetBundle.trip.totalBudget,
-        },
         days: workingDays,
       };
       syncedBundle = nextBundle;
@@ -453,14 +517,15 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     if (syncedBundle) {
+      writeActiveTripToLocalStorageGuarded(syncedBundle, { allowDemoOverwrite: true });
       await syncBundleToFirestore(syncedBundle);
     }
-    showToast(`Applied all ${dedupedList.length} changes.`);
+    showToast(String(i18n.t('toast.allProposalsAccepted', { count: dedupedList.length })));
   };
 
   const rejectAllProposals = (tripId: string) => {
     setProposalsByTrip((prev) => ({ ...prev, [tripId]: [] }));
-    showToast('Discarded all pending suggestions.', 'alert');
+    showToast(String(i18n.t('toast.allProposalsRejected')), 'alert');
   };
 
   const undoLastChange = async (tripId: string) => {
@@ -469,24 +534,33 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!bundle || history.length === 0) return;
 
     const [latest, ...rest] = history;
-    const recomputedTotal = computeTripTotalCost(latest.previousDays).total;
     const nextBundle: FullTripBundle = {
       ...bundle,
-      trip: {
-        ...bundle.trip,
-        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
-      },
       days: latest.previousDays,
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
     setUndoHistoryByTrip((prev) => ({ ...prev, [tripId]: rest }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
     await syncBundleToFirestore(nextBundle);
-    showToast('Undid last change.', 'alert');
+    showToast(String(i18n.t('toast.undidLastChange')), 'alert');
   };
 
   const togglePlanB = async (tripId: string, dayId: string) => {
     const bundle = trips[tripId];
     if (!bundle) return;
+
+    const snapshotDays = JSON.parse(JSON.stringify(bundle.days)) as Day[];
+    setUndoHistoryByTrip((prev) => ({
+      ...prev,
+      [tripId]: [
+        {
+          tripId,
+          description: `Switched Plan A/B for day ${dayId}`,
+          previousDays: snapshotDays,
+        },
+        ...(prev[tripId] || []).slice(0, 9),
+      ],
+    }));
 
     const nextDays = bundle.days.map((d) => {
       if (d.id !== dayId) return d;
@@ -515,6 +589,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const nextBundle: FullTripBundle = { ...bundle, days: nextDays };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
     await syncBundleToFirestore(nextBundle);
     showToast(String(i18n.t('toast.itineraryUpdated')));
   };
@@ -527,6 +602,20 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   ) => {
     const bundle = trips[tripId];
     if (!bundle) return;
+
+    const snapshotDays = JSON.parse(JSON.stringify(bundle.days)) as Day[];
+    setUndoHistoryByTrip((prev) => ({
+      ...prev,
+      [tripId]: [
+        {
+          tripId,
+          description: `Updated activities for day ${dayId}`,
+          previousDays: snapshotDays,
+        },
+        ...(prev[tripId] || []).slice(0, 9),
+      ],
+    }));
+
     const recalculated = recalculateDayTravelTimes(activities);
     const nextDays = bundle.days.map((d) => {
       if (d.id !== dayId) return d;
@@ -541,16 +630,12 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return updated;
     });
 
-    const recomputedTotal = computeTripTotalCost(nextDays).total;
     const nextBundle = {
       ...bundle,
-      trip: {
-        ...bundle.trip,
-        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
-      },
       days: nextDays,
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
     await syncBundleToFirestore(nextBundle);
   };
 
@@ -562,19 +647,28 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const bundle = trips[tripId];
     if (!bundle) return;
 
+    const snapshotDays = JSON.parse(JSON.stringify(bundle.days)) as Day[];
+    setUndoHistoryByTrip((prev) => ({
+      ...prev,
+      [tripId]: [
+        {
+          tripId,
+          description: `Updated accommodation for day ${dayId}`,
+          previousDays: snapshotDays,
+        },
+        ...(prev[tripId] || []).slice(0, 9),
+      ],
+    }));
+
     const nextDays = bundle.days.map((d) =>
       d.id === dayId ? { ...d, accommodation } : d
     );
-    const recomputedTotal = computeTripTotalCost(nextDays).total;
     const nextBundle: FullTripBundle = {
       ...bundle,
-      trip: {
-        ...bundle.trip,
-        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
-      },
       days: nextDays,
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
     await syncBundleToFirestore(nextBundle);
   };
 
@@ -607,7 +701,10 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
     });
 
-    const recomputedTotal = computeTripTotalCost(nextDays).total;
+    const recomputedTotal = computeTripTotalCost(
+      nextDays,
+      bundle.trip.travelersCount || 1
+    ).total;
 
     setUndoHistoryByTrip((prev) => ({
       ...prev,
@@ -623,13 +720,10 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const nextBundle: FullTripBundle = {
       ...bundle,
-      trip: {
-        ...bundle.trip,
-        totalBudget: recomputedTotal > 0 ? recomputedTotal : bundle.trip.totalBudget,
-      },
       days: nextDays,
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
     await syncBundleToFirestore(nextBundle);
   };
 
@@ -671,7 +765,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
     await syncBundleToFirestore(nextBundle);
-    showToast(`Applied new budget tiers (€${newTotalBudget}).`);
+    showToast(String(i18n.t('toast.appliedBudgetTiers', { budget: newTotalBudget })));
   };
 
   const applySelectedBudgetProposals = async (
@@ -710,7 +804,14 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
     await syncBundleToFirestore(nextBundle);
-    showToast(`Applied ${selectedOnly.length} budget tier change(s) (€${nextItineraryTotal}).`);
+    showToast(
+      String(
+        i18n.t('toast.appliedSelectedTiers', {
+          count: selectedOnly.length,
+          total: nextItineraryTotal,
+        })
+      )
+    );
   };
 
   const castVote = async (
@@ -770,7 +871,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
       setActiveTravelerId(tripId, id);
       await syncBundleToFirestore(nextBundle);
-      showToast(`${newTraveler.displayName} joined the group!`);
+      showToast(String(i18n.t('toast.travelerJoined', { name: newTraveler.displayName })));
     }
     return newTraveler;
   };
@@ -844,7 +945,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
     const nextBundle: FullTripBundle = { ...bundle, expenses: nextExpenses };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
-    showToast('Updated settlement status.');
+    showToast(String(i18n.t('toast.settlementUpdated')));
   };
 
   const findTripByInviteCode = (inviteCode: string): FullTripBundle | undefined => {
