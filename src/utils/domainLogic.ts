@@ -13,8 +13,8 @@ import type {
   Traveler,
   TravelerProfilePreferences,
   UserProfile,
-} from '../types/models';
-import { resolveDestinationCoordinates } from './worldDestinations';
+} from '../types/models.ts';
+import { resolveDestinationCoordinates } from './worldDestinations.ts';
 
 export interface DaySubtotalBreakdown {
   total: number;
