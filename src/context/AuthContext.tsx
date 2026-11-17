@@ -15,17 +15,20 @@ import {
 import type { TravelerProfilePreferences, UserProfile } from '../types/models';
 import {
   extractFirebaseAuthErrorCode,
+  formatCleanAuthOrFirestoreError,
   mapFirebaseAuthError,
   mapFirebaseAuthErrorToPt,
 } from '../utils/domainLogic';
 
-export { mapFirebaseAuthError, mapFirebaseAuthErrorToPt };
+export { formatCleanAuthOrFirestoreError, mapFirebaseAuthError, mapFirebaseAuthErrorToPt };
 
 export interface AuthContextValue {
   user: User | null;
   currentUser: User | null;
   userProfile: UserProfile | null;
   loading: boolean;
+  authErrorToast: string | null;
+  clearAuthErrorToast: () => void;
   login: (email: string, password: string) => Promise<User>;
   signup: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
@@ -139,6 +142,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(() => readLocalSessionUser());
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [authErrorToast, setAuthErrorToast] = useState<string | null>(null);
+
+  const clearAuthErrorToast = useCallback(() => {
+    setAuthErrorToast(null);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -160,7 +168,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // Sync userProfile state whenever the authenticated user changes
+  // Sync userProfile state whenever the authenticated user changes (wrapped in try/catch for clean error handling)
   useEffect(() => {
     let isMounted = true;
     if (!user?.uid) {
@@ -169,21 +177,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     (async () => {
-      const existing = await getUserProfile(
-        user.uid,
-        user.email || undefined,
-        user.displayName || undefined
-      );
-      if (!isMounted) return;
-      if (existing) {
-        setUserProfile(existing);
-      } else {
-        const initialized = await ensureUserProfile(
+      try {
+        const existing = await getUserProfile(
           user.uid,
-          user.displayName || user.email?.split('@')[0] || 'Viajante',
-          user.email || 'traveller@atlasgenie.eu'
+          user.email || undefined,
+          user.displayName || undefined
         );
-        if (isMounted) setUserProfile(initialized);
+        if (!isMounted) return;
+        if (existing) {
+          setUserProfile(existing);
+        } else {
+          const initialized = await ensureUserProfile(
+            user.uid,
+            user.displayName || user.email?.split('@')[0] || 'Viajante',
+            user.email || 'traveller@atlasgenie.eu'
+          );
+          if (isMounted) setUserProfile(initialized);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setAuthErrorToast(formatCleanAuthOrFirestoreError(err));
+        }
       }
     })();
 
@@ -194,34 +208,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUserProfile = useCallback(async (): Promise<UserProfile | null> => {
     if (!user?.uid) return null;
-    const loaded = await getUserProfile(
-      user.uid,
-      user.email || undefined,
-      user.displayName || undefined
-    );
-    if (loaded) {
-      setUserProfile(loaded);
-      return loaded;
+    try {
+      const loaded = await getUserProfile(
+        user.uid,
+        user.email || undefined,
+        user.displayName || undefined
+      );
+      if (loaded) {
+        setUserProfile(loaded);
+        return loaded;
+      }
+      const created = await ensureUserProfile(
+        user.uid,
+        user.displayName || user.email?.split('@')[0] || 'Viajante',
+        user.email || 'traveller@atlasgenie.eu'
+      );
+      setUserProfile(created);
+      return created;
+    } catch (err) {
+      setAuthErrorToast(formatCleanAuthOrFirestoreError(err));
+      return null;
     }
-    const created = await ensureUserProfile(
-      user.uid,
-      user.displayName || user.email?.split('@')[0] || 'Viajante',
-      user.email || 'traveller@atlasgenie.eu'
-    );
-    setUserProfile(created);
-    return created;
   }, [user?.uid, user?.email, user?.displayName]);
 
   const updateUserProfile = useCallback(
     async (updates: Partial<TravelerProfilePreferences>): Promise<UserProfile | null> => {
       if (!user?.uid) return null;
-      const updated = await syncUserProfile(user.uid, {
-        name: user.displayName || user.email?.split('@')[0] || 'Viajante',
-        email: user.email || 'traveller@atlasgenie.eu',
-        ...updates,
-      });
-      setUserProfile(updated);
-      return updated;
+      try {
+        const updated = await syncUserProfile(user.uid, {
+          name: user.displayName || user.email?.split('@')[0] || 'Viajante',
+          email: user.email || 'traveller@atlasgenie.eu',
+          ...updates,
+        });
+        setUserProfile(updated);
+        return updated;
+      } catch (err) {
+        setAuthErrorToast(formatCleanAuthOrFirestoreError(err));
+        return null;
+      }
     },
     [user?.uid, user?.email, user?.displayName]
   );
@@ -243,12 +267,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: cred.user.email || cleanEmail,
         displayName,
       });
-      const existing = await getUserProfile(cred.user.uid, cred.user.email || cleanEmail, displayName);
-      if (existing) {
-        setUserProfile(existing);
-      } else {
-        const initialized = await ensureUserProfile(cred.user.uid, displayName, cred.user.email || cleanEmail);
-        setUserProfile(initialized);
+      try {
+        const existing = await getUserProfile(cred.user.uid, cred.user.email || cleanEmail, displayName);
+        if (existing) {
+          setUserProfile(existing);
+        } else {
+          const initialized = await ensureUserProfile(cred.user.uid, displayName, cred.user.email || cleanEmail);
+          setUserProfile(initialized);
+        }
+      } catch (profileErr) {
+        setAuthErrorToast(formatCleanAuthOrFirestoreError(profileErr));
       }
       setUser(cred.user);
       return cred.user;
@@ -270,12 +298,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: matched.email,
             displayName: matched.displayName,
           });
-          const existing = await getUserProfile(matched.uid, matched.email, matched.displayName);
-          if (existing) {
-            setUserProfile(existing);
-          } else {
-            const initialized = await ensureUserProfile(matched.uid, matched.displayName, matched.email);
-            setUserProfile(initialized);
+          try {
+            const existing = await getUserProfile(matched.uid, matched.email, matched.displayName);
+            if (existing) {
+              setUserProfile(existing);
+            } else {
+              const initialized = await ensureUserProfile(matched.uid, matched.displayName, matched.email);
+              setUserProfile(initialized);
+            }
+          } catch (profileErr) {
+            setAuthErrorToast(formatCleanAuthOrFirestoreError(profileErr));
           }
           setUser(synthUser);
           return synthUser;
@@ -298,8 +330,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
       const displayName = cleanEmail.split('@')[0] || 'Viajante';
-      const createdProfile = await ensureUserProfile(cred.user.uid, displayName, cleanEmail);
-      setUserProfile(createdProfile);
+      try {
+        const createdProfile = await ensureUserProfile(cred.user.uid, displayName, cleanEmail);
+        setUserProfile(createdProfile);
+      } catch (profileErr) {
+        setAuthErrorToast(formatCleanAuthOrFirestoreError(profileErr));
+      }
       writeLocalSessionUser({
         uid: cred.user.uid,
         email: cred.user.email || cleanEmail,
@@ -325,8 +361,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         writeLocalAccounts([...accounts, newAccount]);
         writeLocalSessionUser({ uid, email: cleanEmail, displayName });
-        const createdProfile = await ensureUserProfile(uid, displayName, cleanEmail);
-        setUserProfile(createdProfile);
+        try {
+          const createdProfile = await ensureUserProfile(uid, displayName, cleanEmail);
+          setUserProfile(createdProfile);
+        } catch (profileErr) {
+          setAuthErrorToast(formatCleanAuthOrFirestoreError(profileErr));
+        }
         const synthUser = createSyntheticFirebaseUser(uid, cleanEmail, displayName);
         setUser(synthUser);
         return synthUser;
@@ -352,13 +392,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       currentUser: user,
       userProfile,
       loading,
+      authErrorToast,
+      clearAuthErrorToast,
       login,
       signup,
       logout,
       refreshUserProfile,
       updateUserProfile,
     }),
-    [user, userProfile, loading, login, signup, logout, refreshUserProfile, updateUserProfile]
+    [
+      user,
+      userProfile,
+      loading,
+      authErrorToast,
+      clearAuthErrorToast,
+      login,
+      signup,
+      logout,
+      refreshUserProfile,
+      updateUserProfile,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

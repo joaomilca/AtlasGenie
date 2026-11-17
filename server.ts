@@ -5,18 +5,28 @@ import { z } from 'zod';
 import dotenv from 'dotenv';
 import {
   type GooglePlaceDetailsResult,
+  ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+  ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
   CHAT_ASSISTANT_PT_DIRECTIVE,
+  CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE,
+  GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
   MULTI_OPTION_PROPOSALS_DIRECTIVE,
   NON_LATIN_SCRIPT_DIRECTIVE,
   PROPER_NOUN_PRESERVATION_DIRECTIVE,
+  RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+  SMART_RADIUS_EXPANSION_DIRECTIVE,
+  STRICT_INTENT_MATCHING_DIRECTIVE,
   buildChatAssistantSystemPrompt,
+  buildCustomActivitySystemPrompt,
   buildFunctionResponsePayload,
   buildGlobalLanguageDirective,
   buildJitTranslateSystemPrompt,
   buildNuclearLanguagePrefix,
   buildStrictBudgetConstraintDirective,
   buildUniversalProperNounDirective,
+  detectRequestedActivityIntent,
   extractPlaceQueryArgs,
+  filterAndSanitizeProposalsForRegionAndIntent,
   formatGroundedPlaceReply,
   isInformationalPlaceQuery,
   mergeJitTranslatedBundle,
@@ -24,6 +34,8 @@ import {
   normalizeInputBudget,
   normalizeJitLanguageCode,
   normalizeTargetUiLanguage,
+  resolveIntentAndRegionProposals,
+  resolveRegionalCustomActivity,
   resolveVerifiedPlaceDetails,
   sanitizeItineraryForAI,
   translateItineraryBundleDeterministic,
@@ -32,6 +44,7 @@ import {
   findWorldCountry,
   normalizeGeoText,
   registerVerifiedCityCoordinates,
+  resolveDestinationCoordinates,
   sanitizeAndCheckLocationInput,
   validateCityInCountry,
 } from './src/utils/worldDestinations.ts';
@@ -134,6 +147,7 @@ async function executeFetchGooglePlaceDetails(
   if (mapsApiKey) {
     try {
       const textQuery = city ? `${placeName}, ${city}` : placeName;
+      const targetCoords = city ? resolveDestinationCoordinates(city) : null;
       const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
         method: 'POST',
         headers: {
@@ -145,6 +159,19 @@ async function executeFetchGooglePlaceDetails(
         body: JSON.stringify({
           textQuery,
           languageCode: 'en',
+          ...(targetCoords
+            ? {
+                locationBias: {
+                  circle: {
+                    center: {
+                      latitude: targetCoords.lat,
+                      longitude: targetCoords.lng,
+                    },
+                    radius: 30000.0,
+                  },
+                },
+              }
+            : {}),
         }),
       });
 
@@ -257,7 +284,14 @@ const ProposalChangeSchema = z.object({
 
 const ChatDiffResponseSchema = z.object({
   reply: z.string(),
-  proposals: z.array(ProposalChangeSchema),
+  proposals: z.array(ProposalChangeSchema).default([]),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .nullable()
+    .optional(),
 });
 
 async function callGeminiWithRetry<T>(
@@ -282,6 +316,12 @@ async function callGeminiWithRetry<T>(
     'You are AtlasGenie, an expert global & European travel architect.',
     buildGlobalLanguageDirective(uiLanguage),
     buildUniversalProperNounDirective(uiLanguage),
+    ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
+    SMART_RADIUS_EXPANSION_DIRECTIVE,
+    STRICT_INTENT_MATCHING_DIRECTIVE,
+    ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+    RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+    GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
     'You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false. Return strictly valid JSON matching the schema. You MUST strictly confine all activities, restaurants, and coordinates to the exact requested City and Country. Complete all days in City A before moving to City B. Never alternate back and forth day-by-day. Budget and Premium variations MUST return completely different venues and distinct coordinates. Never recycle the exact same location across different budget tiers. Never hallucinate or place activities in random cities. If you don\'t have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city. The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions. Never invent fake URLs. All AI-generated prices and opening hours are treated as estimates unless verified by an official source.',
   ].join(' ');
 
@@ -536,6 +576,13 @@ app.post('/api/ai/generate-itinerary', async (req, res) => {
       `BUDGET NORMALIZATION & TIER SCALING: The total group budget is €${normalizedTotalBudget} across ${normalizedTravelers} travelers, which equals an individual per-person budget of €${perPersonBudget}/person (target budget tier: "${evaluatedBudgetTier}"). Scale all venue, meal, and activity recommendations strictly to the per-person budget of €${perPersonBudget}/person ("${evaluatedBudgetTier}" tier), NOT the group total.`,
       'Each day MUST explicitly include accommodation ({ name, type (hotel/hostel/apartment), price, isPriceVerified, coordinates }), meals ({ breakfast, lunch, dinner } with specific distinct restaurant names, estimated prices, isPriceVerified, and coordinates), and intercity_transit ({ method, duration, price, isPriceVerified }) ONLY on days where the user changes cities.',
       strictConstraintsInstruction,
+      CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE,
+      ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
+      SMART_RADIUS_EXPANSION_DIRECTIVE,
+      STRICT_INTENT_MATCHING_DIRECTIVE,
+      ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+      RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+      GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
       'Never hallucinate or place activities in random cities. If you don\'t have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city.',
       'The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions.',
       'Return strictly valid JSON matching the schema. Never invent fake URLs. All AI-generated prices and opening hours are treated as estimates unless verified by an official source.',
@@ -646,7 +693,7 @@ app.post('/api/ai/propose-changes', async (req, res) => {
   }
 
   const {
-    taskType,
+    taskType = 'chat',
     destination,
     message,
     currentDay,
@@ -667,14 +714,56 @@ app.post('/api/ai/propose-changes', async (req, res) => {
   const sanitizedContext =
     clientSanitizedItinerary ||
     sanitizeItineraryForAI(itinerary || (currentDay ? { destination, days: [currentDay] } : { destination, days: [] }));
-  const chatSystemInstruction = buildChatAssistantSystemPrompt(
-    itinerary || (currentDay ? { destination, days: [currentDay] } : { destination, days: [] }),
-    resolvedUiLanguage
-  );
-  const cacheKey = `prop:v24:${taskType}:${resolvedUiLanguage}:${destination}:${message || ''}:${currentDay?.id || ''}`;
+  const effectiveDest = String(currentDay?.city || destination || 'Lisbon').trim();
+  const chatSystemInstruction = [
+    buildChatAssistantSystemPrompt(
+      itinerary || (currentDay ? { destination: effectiveDest, days: [currentDay] } : { destination: effectiveDest, days: [] }),
+      resolvedUiLanguage
+    ),
+    CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE,
+    ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
+    SMART_RADIUS_EXPANSION_DIRECTIVE,
+    STRICT_INTENT_MATCHING_DIRECTIVE,
+    ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+    RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+    GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
+  ].join(' ');
+  const cacheKey = `prop:v27:${taskType}:${resolvedUiLanguage}:${effectiveDest}:${message || ''}:${currentDay?.id || ''}`;
   const cached = getCached(cacheKey);
   if (cached) {
     return res.json(cached);
+  }
+
+  // Pre-evaluate strict intent & geographic impossibility or verified regional outdoor/camping/park/local match
+  if (taskType === 'chat') {
+    const requestedIntent = detectRequestedActivityIntent(message || '', effectiveDest);
+    if (
+      requestedIntent === 'impossible' ||
+      requestedIntent === 'camping' ||
+      requestedIntent === 'hiking' ||
+      requestedIntent === 'park_nature' ||
+      requestedIntent === 'local_spots'
+    ) {
+      const regionalResult = resolveIntentAndRegionProposals({
+        destination: effectiveDest,
+        message: message || '',
+        currentDay: currentDay || {
+          id: 'day-1',
+          tripId: 'trip-1',
+          ownerId: 'u-1',
+          date: '2026-11-18',
+          dayNumber: 1,
+          paceLevel: 3,
+          paceScore: 50,
+          activePlan: 'A',
+          activities: [],
+          planB: [],
+        },
+        uiLanguage: resolvedUiLanguage,
+      });
+      setCached(cacheKey, regionalResult);
+      return res.json(regionalResult);
+    }
   }
 
   // When taskType is 'chat' and the user asks an informational query about a place,
@@ -683,15 +772,15 @@ app.post('/api/ai/propose-changes', async (req, res) => {
     const ai = getGeminiClient();
     const extractedArgs = extractPlaceQueryArgs(
       message || '',
-      destination,
+      effectiveDest,
       currentDay?.activities || []
     );
 
     if (ai) {
       try {
-        const userPrompt = `User question about their trip in ${destination}: "${message}". Lightweight Sanitized Itinerary Context: ${JSON.stringify(
+        const userPrompt = `User question about their trip in ${effectiveDest}: "${message}". Lightweight Sanitized Itinerary Context: ${JSON.stringify(
           sanitizedContext
-        )}. ${buildGlobalLanguageDirective(resolvedUiLanguage)} ${buildUniversalProperNounDirective(resolvedUiLanguage)} ${NON_LATIN_SCRIPT_DIRECTIVE} Use fetch_google_place_details whenever the user asks about a venue's opening hours, rating, price level, or reviews.`;
+        )}. ${buildGlobalLanguageDirective(resolvedUiLanguage)} ${buildUniversalProperNounDirective(resolvedUiLanguage)} ${NON_LATIN_SCRIPT_DIRECTIVE} ${ANTI_SPOOFING_GEOFENCING_DIRECTIVE} ${STRICT_INTENT_MATCHING_DIRECTIVE} ${GRACEFUL_NO_HALLUCINATION_DIRECTIVE} Use fetch_google_place_details whenever the user asks about a venue's opening hours, rating, price level, or reviews.`;
 
         // Step 1 & Step 2: Call Gemini with `tools` and intercept `functionCall`
         const response1 = await ai.models.generateContent({
@@ -710,8 +799,8 @@ app.post('/api/ai/propose-changes', async (req, res) => {
 
         if (functionCall && functionCall.name === 'fetch_google_place_details') {
           const fcArgs = (functionCall.args || {}) as { placeName?: string; city?: string };
-          const targetPlace = fcArgs.placeName || extractedArgs?.placeName || destination;
-          const targetCity = fcArgs.city || extractedArgs?.city || destination;
+          const targetPlace = fcArgs.placeName || extractedArgs?.placeName || effectiveDest;
+          const targetCity = fcArgs.city || extractedArgs?.city || effectiveDest;
 
           // Step 3: Execute the Fetch against Google Places
           const placeDetails = await executeFetchGooglePlaceDetails(
@@ -762,7 +851,7 @@ app.post('/api/ai/propose-changes', async (req, res) => {
     if (extractedArgs) {
       const placeDetails = await executeFetchGooglePlaceDetails(
         extractedArgs.placeName,
-        extractedArgs.city || destination,
+        extractedArgs.city || effectiveDest,
         currentDay?.activities,
         clientPlaceData
       );
@@ -787,16 +876,22 @@ app.post('/api/ai/propose-changes', async (req, res) => {
 
   try {
     const prompt = [
-      `Task: ${taskType} for trip in ${destination}. User request: "${message || taskType}".`,
+      `Task: ${taskType} for trip in ${effectiveDest}. User request: "${message || taskType}".`,
       buildGlobalLanguageDirective(resolvedUiLanguage),
       buildUniversalProperNounDirective(resolvedUiLanguage),
       NON_LATIN_SCRIPT_DIRECTIVE,
       MULTI_OPTION_PROPOSALS_DIRECTIVE,
+      ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
+      SMART_RADIUS_EXPANSION_DIRECTIVE,
+      STRICT_INTENT_MATCHING_DIRECTIVE,
+      ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+      RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+      GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
       `OPTIMIZED SANITIZED ITINERARY CONTEXT: ${JSON.stringify(sanitizedContext)}`,
       `Active Day ID: ${currentDay?.id || 'day-1'} (Day ${currentDay?.dayNumber || 1}). Travelers: ${JSON.stringify(
         travelers || []
       )}.`,
-      `Return a concise assistant reply in ${resolvedUiLanguage} and an array of 2 to 3 distinct, verified ProposalChange alternatives (e.g., different price points or themes) with realistic coordinates in ${destination}.`,
+      `Return a concise assistant reply in ${resolvedUiLanguage} and an array of 2 to 3 distinct, verified ProposalChange alternatives physically located in ${effectiveDest} or its surrounding 20-30km metropolitan area. Only trigger the 'No suitable venues found' error fallback if the request is geographically absurd for the country, or physically impossible to fulfill within the expanded radius. Otherwise, find the closest real, verified alternative that captures the user's requested vibe.`,
     ].join('\n');
 
     const result = await callGeminiWithRetry(
@@ -805,6 +900,14 @@ app.post('/api/ai/propose-changes', async (req, res) => {
         type: Type.OBJECT,
         properties: {
           reply: { type: Type.STRING },
+          error: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: {
+              code: { type: Type.STRING },
+              message: { type: Type.STRING },
+            },
+          },
           proposals: {
             type: Type.ARRAY,
             items: {
@@ -818,6 +921,45 @@ app.post('/api/ai/propose-changes', async (req, res) => {
                 targetActivityTitle: { type: Type.STRING },
                 newStartTime: { type: Type.STRING },
                 reason: { type: Type.STRING },
+                payload: {
+                  type: Type.OBJECT,
+                  nullable: true,
+                  properties: {
+                    id: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    category: {
+                      type: Type.STRING,
+                      enum: [
+                        'food',
+                        'culture',
+                        'nature',
+                        'nightlife',
+                        'shopping',
+                        'relax',
+                        'transport',
+                        'other',
+                      ],
+                    },
+                    description: { type: Type.STRING },
+                    startTime: { type: Type.STRING },
+                    durationMin: { type: Type.INTEGER },
+                    openingHoursText: { type: Type.STRING },
+                    isOutdoor: { type: Type.BOOLEAN },
+                    interestTags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    location: {
+                      type: Type.OBJECT,
+                      properties: {
+                        name: { type: Type.STRING },
+                        lat: { type: Type.NUMBER },
+                        lng: { type: Type.NUMBER },
+                      },
+                      required: ['name', 'lat', 'lng'],
+                    },
+                    whyThis: { type: Type.STRING },
+                    touristTrapScore: { type: Type.INTEGER },
+                  },
+                  required: ['title', 'category', 'description', 'location'],
+                },
               },
               required: ['id', 'dayId', 'dayNumber', 'type', 'reason'],
             },
@@ -830,14 +972,189 @@ app.post('/api/ai/propose-changes', async (req, res) => {
       resolvedUiLanguage
     );
 
-    setCached(cacheKey, result);
-    return res.json(result);
+    const sanitizedProposals = filterAndSanitizeProposalsForRegionAndIntent(
+      (result.proposals || []) as any,
+      effectiveDest,
+      message || ''
+    );
+    const finalPayload = {
+      ...result,
+      proposals: sanitizedProposals,
+    };
+
+    setCached(cacheKey, finalPayload);
+    return res.json(finalPayload);
   } catch {
+    if (taskType === 'chat') {
+      const regionalFallback = resolveIntentAndRegionProposals({
+        destination: effectiveDest,
+        message: message || '',
+        currentDay: currentDay || {
+          id: 'day-1',
+          tripId: 'trip-1',
+          ownerId: 'u-1',
+          date: '2026-11-18',
+          dayNumber: 1,
+          paceLevel: 3,
+          paceScore: 50,
+          activePlan: 'A',
+          activities: [],
+          planB: [],
+        },
+        uiLanguage: resolvedUiLanguage,
+      });
+      return res.status(200).json(regionalFallback);
+    }
     return res.status(200).json({
       fallback: true,
       message: 'AI live service unavailable — generated deterministic Atlas Genie proposal.',
     });
   }
+});
+
+// (h) generateCustomActivity — Geolocation Engine for Custom Activity & Regional/Mountain Requests
+app.post('/api/ai/custom-activity', async (req, res) => {
+  const clientIp = req.ip || 'anon';
+  if (!checkRateLimit(clientIp)) {
+    return res.status(429).json({ error: 'Rate limit exceeded.' });
+  }
+
+  const {
+    requestText = '',
+    destination = 'Lisbon',
+    country = '',
+    startTime = '14:30',
+    estimatedCost = 18,
+    baseCoords,
+    language = 'pt',
+    uiLanguage = '',
+  } = req.body || {};
+
+  const resolvedUiLanguage = normalizeTargetUiLanguage(
+    typeof uiLanguage === 'string' && uiLanguage.trim()
+      ? uiLanguage.trim()
+      : language === 'en'
+      ? 'en'
+      : 'pt-PT'
+  );
+
+  // First check deterministic geographic impossibility or regional trail match
+  const regionalEvaluation = resolveRegionalCustomActivity({
+    requestText,
+    destination,
+    country,
+    startTime,
+    estimatedCost: Number(estimatedCost),
+    baseCoords,
+    uiLanguage: resolvedUiLanguage,
+  });
+
+  if (regionalEvaluation.error) {
+    return res.json({
+      error: regionalEvaluation.error,
+    });
+  }
+
+  const ai = getGeminiClient();
+  const customSystemPrompt = buildCustomActivitySystemPrompt(
+    destination,
+    country,
+    resolvedUiLanguage
+  );
+
+  if (ai) {
+    try {
+      const prompt = [
+        customSystemPrompt,
+        `User custom activity request: "${requestText}" near "${destination}${country ? `, ${country}` : ''}".`,
+        `Preferred start time: ${startTime}, target mid-tier cost: €${estimatedCost}.`,
+        'Return JSON with either { "isGeographicallyImpossible": true, "errorMessage": "..." } OR { "isGeographicallyImpossible": false, "title": "...", "venueName": "...", "locationName": "...", "lat": number, "lng": number, "category": "nature" | "culture" | "food" | "nightlife" | "shopping" | "relax" | "other", "isOutdoor": boolean, "durationMin": number, "description": "...", "whyThis": "..." }.',
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: {
+          systemInstruction: customSystemPrompt,
+          responseMimeType: 'application/json',
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          },
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              isGeographicallyImpossible: { type: Type.BOOLEAN },
+              errorMessage: { type: Type.STRING },
+              title: { type: Type.STRING },
+              venueName: { type: Type.STRING },
+              locationName: { type: Type.STRING },
+              lat: { type: Type.NUMBER },
+              lng: { type: Type.NUMBER },
+              category: { type: Type.STRING },
+              isOutdoor: { type: Type.BOOLEAN },
+              durationMin: { type: Type.INTEGER },
+              description: { type: Type.STRING },
+              whyThis: { type: Type.STRING },
+            },
+            required: ['isGeographicallyImpossible'],
+          },
+        },
+      });
+
+      const rawText = (response.text || '{}')
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const parsed = JSON.parse(rawText);
+
+      if (parsed.isGeographicallyImpossible) {
+        return res.json({
+          error: {
+            code: 'GEOGRAPHICALLY_IMPOSSIBLE',
+            message:
+              parsed.errorMessage ||
+              `Geographically impossible request for ${destination}: "${requestText}".`,
+          },
+        });
+      }
+
+      if (
+        regionalEvaluation.activity &&
+        typeof parsed.lat === 'number' &&
+        typeof parsed.lng === 'number' &&
+        Number.isFinite(parsed.lat) &&
+        Number.isFinite(parsed.lng)
+      ) {
+        const baseAct = regionalEvaluation.activity;
+        const mergedActivity = {
+          ...baseAct,
+          title: parsed.title || baseAct.title,
+          description: parsed.description || baseAct.description,
+          whyThis: parsed.whyThis || baseAct.whyThis,
+          isOutdoor:
+            typeof parsed.isOutdoor === 'boolean' ? parsed.isOutdoor : baseAct.isOutdoor,
+          durationMin:
+            typeof parsed.durationMin === 'number' && parsed.durationMin >= 30
+              ? parsed.durationMin
+              : baseAct.durationMin,
+          location: {
+            name: parsed.locationName || parsed.venueName || baseAct.location.name,
+            lat: Number(parsed.lat.toFixed(5)),
+            lng: Number(parsed.lng.toFixed(5)),
+          },
+        };
+        return res.json({
+          activity: mergedActivity,
+          expandedRadiusKm: regionalEvaluation.expandedRadiusKm || 25,
+        });
+      }
+    } catch {
+      // Fall back to verified regional catalog resolution below
+    }
+  }
+
+  return res.json(regionalEvaluation);
 });
 
 // Streaming Chat Endpoint with Native Gemini Function Calling (`fetch_google_place_details`)

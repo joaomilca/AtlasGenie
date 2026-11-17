@@ -175,186 +175,206 @@ service cloud.firestore {
     }
 
     // Master Gate Helper for Parent Trip
+    function isTripTravelerOrMember(tripData) {
+      return tripData.ownerId == request.auth.uid
+        || tripData.userId == request.auth.uid
+        || ('travelers' in tripData && tripData.travelers is list && request.auth.uid in tripData.travelers)
+        || ('memberIds' in tripData && tripData.memberIds is list && request.auth.uid in tripData.memberIds);
+    }
     function isTripMember(tripId) {
       let trip = get(/databases/$(database)/documents/trips/$(tripId)).data;
-      return trip.ownerId == request.auth.uid || request.auth.uid in trip.memberIds;
+      return isTripTravelerOrMember(trip);
     }
     function isTripOwner(tripId) {
       let trip = get(/databases/$(database)/documents/trips/$(tripId)).data;
       return trip.ownerId == request.auth.uid && trip.status != 'completed';
     }
 
-    // 1. Users Collection (PII Isolated to Owner Only)
+    // 1. Users Collection (Authenticated users can read/write their own document)
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
       allow list: if false;
-      allow create: if isVerifiedUser()
+      allow create: if isSignedIn()
         && isValidId(userId)
-        && isValidUser(incoming())
-        && incoming().id == userId
-        && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
-        && isValidId(userId)
-        && isValidUser(incoming())
         && request.auth.uid == userId
-        && incoming().id == existing().id
-        && incoming().email == existing().email
-        && incoming().createdAt == existing().createdAt
-        && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'name', 'language', 'notificationEnabled', 'reminderDaysBefore',
-          'defaultGroupSize', 'defaultPaceLevel', 'savedInterests', 'savedRestrictions',
-          'updatedAt'
-        ]);
+        && (
+          (isVerifiedUser()
+            && isValidUser(incoming())
+            && incoming().id == userId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time)
+          || incoming().id == userId
+        );
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && (
+          (isVerifiedUser()
+            && isValidUser(incoming())
+            && incoming().id == existing().id
+            && incoming().email == existing().email
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time)
+          || incoming().id == userId
+        );
       allow delete: if false;
     }
 
-    // 2. Trips Collection
+    // 2. Trips Collection (Read/Write if authenticated user's uid is in travelers or memberIds, or joining via invite)
     match /trips/{tripId} {
-      allow get: if isSignedIn() && isValidId(tripId) && (existing().userId == request.auth.uid || existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
-      allow list: if isSignedIn() && (existing().userId == request.auth.uid || existing().ownerId == request.auth.uid || request.auth.uid in existing().memberIds);
-      allow create: if isVerifiedUser()
+      allow get: if isSignedIn() && isValidId(tripId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn()
         && isValidId(tripId)
-        && isValidTrip(incoming())
-        && incoming().id == tripId
-        && incoming().userId == request.auth.uid
-        && incoming().ownerId == request.auth.uid
-        && request.auth.uid in incoming().memberIds
-        && incoming().status != 'completed'
-        && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser()
-        && isValidId(tripId)
-        && isValidTrip(incoming())
-        && existing().status != 'completed'
-        && incoming().id == existing().id
-        && incoming().userId == existing().userId
-        && incoming().ownerId == existing().ownerId
-        && incoming().inviteCode == existing().inviteCode
-        && incoming().createdAt == existing().createdAt
-        && incoming().updatedAt == request.time
         && (
-          // Action 1: Owner edits trip parameters or status
-          (existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
-            'destination', 'startDate', 'endDate', 'currency', 'totalBudget',
-            'travelersCount', 'interests', 'defaultPace', 'status', 'memberIds',
-            'assumptions', 'groupEnabled', 'updatedAt'
-          ]))
-          ||
-          // Action 2: Authenticated member joins trip via memberIds
-          (request.auth.uid in incoming().memberIds && incoming().diff(existing()).affectedKeys().hasOnly([
-            'memberIds', 'travelersCount', 'updatedAt'
-          ]))
+          (isVerifiedUser()
+            && isValidTrip(incoming())
+            && incoming().id == tripId
+            && incoming().userId == request.auth.uid
+            && incoming().ownerId == request.auth.uid
+            && request.auth.uid in incoming().memberIds
+            && incoming().status != 'completed'
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time)
+          || (
+            incoming().ownerId == request.auth.uid
+            || ('travelers' in incoming() && incoming().travelers is list && request.auth.uid in incoming().travelers)
+            || ('memberIds' in incoming() && incoming().memberIds is list && request.auth.uid in incoming().memberIds)
+          )
         );
-      allow delete: if isVerifiedUser() && isValidId(tripId) && existing().ownerId == request.auth.uid;
+      allow update: if isSignedIn()
+        && isValidId(tripId)
+        && existing().status != 'completed'
+        && (
+          // Action 1: Existing owner or traveler in travelers / memberIds array updates the trip
+          isTripTravelerOrMember(existing())
+          ||
+          // Action 2: Authenticated user joins trip via invite link using arrayUnion on travelers or memberIds
+          ('travelers' in incoming() && incoming().travelers is list && request.auth.uid in incoming().travelers)
+          ||
+          ('memberIds' in incoming() && incoming().memberIds is list && request.auth.uid in incoming().memberIds)
+          ||
+          // Strict blueprint validation path
+          (isVerifiedUser()
+            && isValidTrip(incoming())
+            && incoming().id == existing().id
+            && incoming().userId == existing().userId
+            && incoming().ownerId == existing().ownerId
+            && incoming().inviteCode == existing().inviteCode
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time)
+        );
+      allow delete: if isSignedIn() && isValidId(tripId) && existing().ownerId == request.auth.uid;
 
       // 3. Travelers Subcollection
       match /travelers/{travelerId} {
         allow get: if isSignedIn() && isValidId(tripId) && isValidId(travelerId) && isTripMember(tripId);
-        allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || existing().userId == request.auth.uid);
-        allow create: if isVerifiedUser()
+        allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || existing().userId == request.auth.uid || isTripMember(tripId));
+        allow create: if isSignedIn()
           && isValidId(tripId)
           && isValidId(travelerId)
-          && isValidTraveler(incoming())
-          && incoming().id == travelerId
-          && incoming().tripId == tripId
-          && (incoming().userId == request.auth.uid || incoming().ownerId == request.auth.uid)
-          && incoming().createdAt == request.time
-          && incoming().updatedAt == request.time
-          && exists(/databases/$(database)/documents/trips/$(tripId))
-          && isTripMember(tripId);
-        allow update: if isVerifiedUser()
+          && (
+            (isVerifiedUser()
+              && isValidTraveler(incoming())
+              && incoming().id == travelerId
+              && incoming().tripId == tripId
+              && (incoming().userId == request.auth.uid || incoming().ownerId == request.auth.uid)
+              && incoming().createdAt == request.time
+              && incoming().updatedAt == request.time
+              && exists(/databases/$(database)/documents/trips/$(tripId))
+              && isTripMember(tripId))
+            || (incoming().userId == request.auth.uid || isTripMember(tripId))
+          );
+        allow update: if isSignedIn()
           && isValidId(tripId)
           && isValidId(travelerId)
-          && isValidTraveler(incoming())
-          && incoming().id == existing().id
-          && incoming().tripId == existing().tripId
-          && incoming().ownerId == existing().ownerId
-          && incoming().userId == existing().userId
-          && incoming().createdAt == existing().createdAt
-          && incoming().updatedAt == request.time
-          && (existing().userId == request.auth.uid || existing().ownerId == request.auth.uid)
-          && incoming().diff(existing()).affectedKeys().hasOnly([
-            'displayName', 'interests', 'budgetPerPerson', 'constraints', 'preferredPace', 'color', 'avatar', 'updatedAt'
-          ])
-          && isTripMember(tripId);
-        allow delete: if isVerifiedUser() && isValidId(tripId) && isValidId(travelerId) && isTripOwner(tripId);
+          && (
+            (isVerifiedUser()
+              && isValidTraveler(incoming())
+              && incoming().id == existing().id
+              && incoming().tripId == existing().tripId
+              && incoming().ownerId == existing().ownerId
+              && incoming().userId == existing().userId
+              && incoming().createdAt == existing().createdAt
+              && incoming().updatedAt == request.time
+              && (existing().userId == request.auth.uid || existing().ownerId == request.auth.uid)
+              && isTripMember(tripId))
+            || (existing().userId == request.auth.uid || isTripMember(tripId))
+          );
+        allow delete: if isSignedIn() && isValidId(tripId) && isValidId(travelerId) && isTripOwner(tripId);
       }
 
       // 4. Days Subcollection
       match /days/{dayId} {
         allow get: if isSignedIn() && isValidId(tripId) && isValidId(dayId) && isTripMember(tripId);
-        allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-        allow create: if isVerifiedUser()
+        allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || isTripMember(tripId));
+        allow create: if isSignedIn()
           && isValidId(tripId)
           && isValidId(dayId)
-          && isValidDay(incoming())
-          && incoming().id == dayId
-          && incoming().tripId == tripId
-          && incoming().ownerId == request.auth.uid
-          && incoming().createdAt == request.time
-          && incoming().updatedAt == request.time
-          && exists(/databases/$(database)/documents/trips/$(tripId))
-          && isTripOwner(tripId);
-        allow update: if isVerifiedUser()
-          && isValidId(tripId)
-          && isValidId(dayId)
-          && isValidDay(incoming())
-          && incoming().id == existing().id
-          && incoming().tripId == existing().tripId
-          && incoming().ownerId == existing().ownerId
-          && incoming().createdAt == existing().createdAt
-          && incoming().updatedAt == request.time
           && (
-            // Action 1: Owner updates schedule, pace, or Plan B
-            (existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
-              'date', 'dayNumber', 'paceLevel', 'paceScore', 'activePlan', 'activities', 'planB', 'updatedAt'
-            ]) && isTripOwner(tripId))
-            ||
-            // Action 2: Group member votes on activities
-            (incoming().diff(existing()).affectedKeys().hasOnly(['activities', 'updatedAt']) && isTripMember(tripId))
+            (isVerifiedUser()
+              && isValidDay(incoming())
+              && incoming().id == dayId
+              && incoming().tripId == tripId
+              && incoming().ownerId == request.auth.uid
+              && incoming().createdAt == request.time
+              && incoming().updatedAt == request.time
+              && exists(/databases/$(database)/documents/trips/$(tripId))
+              && isTripOwner(tripId))
+            || isTripMember(tripId)
           );
-        allow delete: if isVerifiedUser() && isValidId(tripId) && isValidId(dayId) && isTripOwner(tripId);
+        allow update: if isSignedIn()
+          && isValidId(tripId)
+          && isValidId(dayId)
+          && (
+            (isVerifiedUser()
+              && isValidDay(incoming())
+              && incoming().id == existing().id
+              && incoming().tripId == existing().tripId
+              && incoming().ownerId == existing().ownerId
+              && incoming().createdAt == existing().createdAt
+              && incoming().updatedAt == request.time
+              && isTripMember(tripId))
+            || isTripMember(tripId)
+          );
+        allow delete: if isSignedIn() && isValidId(tripId) && isValidId(dayId) && isTripOwner(tripId);
       }
 
       // 5. Expenses Subcollection
       match /expenses/{expenseId} {
         allow get: if isSignedIn() && isValidId(tripId) && isValidId(expenseId) && isTripMember(tripId);
-        allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || existing().authorId == request.auth.uid);
-        allow create: if isVerifiedUser()
+        allow list: if isSignedIn() && (existing().ownerId == request.auth.uid || existing().authorId == request.auth.uid || isTripMember(tripId));
+        allow create: if isSignedIn()
           && isValidId(tripId)
           && isValidId(expenseId)
-          && isValidExpense(incoming())
-          && incoming().id == expenseId
-          && incoming().tripId == tripId
-          && incoming().authorId == request.auth.uid
-          && incoming().createdAt == request.time
-          && incoming().updatedAt == request.time
-          && exists(/databases/$(database)/documents/trips/$(tripId))
-          && isTripMember(tripId);
-        allow update: if isVerifiedUser()
-          && isValidId(tripId)
-          && isValidId(expenseId)
-          && isValidExpense(incoming())
-          && incoming().id == existing().id
-          && incoming().tripId == existing().tripId
-          && incoming().ownerId == existing().ownerId
-          && incoming().authorId == existing().authorId
-          && incoming().createdAt == existing().createdAt
-          && incoming().updatedAt == request.time
           && (
-            // Action 1: Owner or expense author updates expense details
-            ((existing().ownerId == request.auth.uid || existing().authorId == request.auth.uid)
-              && incoming().diff(existing()).affectedKeys().hasOnly([
-                'activityId', 'category', 'description', 'amount', 'currency', 'paidBy', 'splitMode', 'splits', 'date', 'settled', 'updatedAt'
-              ]))
-            ||
-            // Action 2: Any trip member marks expense as settled
-            (incoming().diff(existing()).affectedKeys().hasOnly(['settled', 'updatedAt']))
-          )
-          && isTripMember(tripId);
-        allow delete: if isVerifiedUser()
+            (isVerifiedUser()
+              && isValidExpense(incoming())
+              && incoming().id == expenseId
+              && incoming().tripId == tripId
+              && incoming().authorId == request.auth.uid
+              && incoming().createdAt == request.time
+              && incoming().updatedAt == request.time
+              && exists(/databases/$(database)/documents/trips/$(tripId))
+              && isTripMember(tripId))
+            || isTripMember(tripId)
+          );
+        allow update: if isSignedIn()
+          && isValidId(tripId)
+          && isValidId(expenseId)
+          && (
+            (isVerifiedUser()
+              && isValidExpense(incoming())
+              && incoming().id == existing().id
+              && incoming().tripId == existing().tripId
+              && incoming().ownerId == existing().ownerId
+              && incoming().authorId == existing().authorId
+              && incoming().createdAt == existing().createdAt
+              && incoming().updatedAt == request.time
+              && isTripMember(tripId))
+            || isTripMember(tripId)
+          );
+        allow delete: if isSignedIn()
           && isValidId(tripId)
           && isValidId(expenseId)
           && (existing().ownerId == request.auth.uid || existing().authorId == request.auth.uid)

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Suspense, lazy, useCallback, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { I18nProvider } from './i18n/I18nContext';
 import { AuthProvider } from './context/AuthContext';
 import { AtlasProvider } from './context/AtlasContext';
@@ -34,6 +34,22 @@ const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage }))
 );
 
+const InviteQueryRedirector: React.FC = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/join')) return;
+    const params = new URLSearchParams(location.search);
+    const inviteCode = params.get('invite')?.trim();
+    if (inviteCode) {
+      navigate(`/join/${encodeURIComponent(inviteCode)}`, { replace: true });
+    }
+  }, [location.pathname, location.search, navigate]);
+
+  return null;
+};
+
 export default function App() {
   const [supportModalOpen, setSupportModalOpen] = useState(false);
   const handleOpenSupport = useCallback(() => setSupportModalOpen(true), []);
@@ -44,6 +60,7 @@ export default function App() {
       <AuthProvider>
         <AtlasProvider>
           <BrowserRouter>
+            <InviteQueryRedirector />
             <div className="min-h-screen flex flex-col bg-[#FAF6F0] text-[#0F172A] dark:bg-[#0B1120] dark:text-[#F8FAFC] overflow-x-hidden">
               <Navbar />
               <div
@@ -71,6 +88,7 @@ export default function App() {
                     <Route path="/trips/:id/budget" element={<TripWorkspacePage />} />
                     <Route path="/trips/:id/group" element={<TripWorkspacePage />} />
                     <Route path="/trips/:id/expenses" element={<TripWorkspacePage />} />
+                    <Route path="/join" element={<JoinTripPage />} />
                     <Route path="/join/:inviteCode" element={<JoinTripPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />

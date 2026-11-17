@@ -50,6 +50,7 @@ import {
   TabViewSuspenseFallback,
 } from '../components/SuspenseFallback';
 import {
+  generateCustomActivity,
   requestAccommodationAlternative,
   requestAiProposals,
   requestJitTripTranslation,
@@ -1015,7 +1016,23 @@ export const TripWorkspacePage: React.FC = () => {
       lat: 38.7139,
       lng: -9.1334,
     };
-    const created: Activity = {
+
+    const customRes = await generateCustomActivity({
+      requestText: newActTitle.trim(),
+      destination: currentDay.city || bundle.trip.destination,
+      country: bundle.trip.country,
+      startTime: newActTime,
+      estimatedCost: Number(newActCost),
+      baseCoords: { lat: refLoc.lat, lng: refLoc.lng },
+      uiLanguage,
+    });
+
+    if (customRes.error) {
+      showToast(customRes.error.message, 'alert');
+      return;
+    }
+
+    const created: Activity = customRes.activity || {
       id: `custom-${Date.now().toString(36)}`,
       title: newActTitle.trim(),
       category: 'culture',
@@ -1026,9 +1043,9 @@ export const TripWorkspacePage: React.FC = () => {
       isOutdoor: false,
       interestTags: bundle.trip.interests.slice(0, 2),
       location: {
-        name: `${bundle.trip.destination} Central`,
-        lat: refLoc.lat + 0.003,
-        lng: refLoc.lng + 0.002,
+        name: `${bundle.trip.destination}`,
+        lat: refLoc.lat + 0.008,
+        lng: refLoc.lng - 0.007,
       },
       costOptions: {
         budget: {
@@ -1080,7 +1097,7 @@ export const TripWorkspacePage: React.FC = () => {
 
     try {
       const res = await streamAtlasGenieChat({
-        destination: bundle.trip.destination,
+        destination: currentDay.city || bundle.trip.destination,
         message: clean,
         currentDay,
         itinerary: bundle,
@@ -1113,7 +1130,9 @@ export const TripWorkspacePage: React.FC = () => {
         )
       );
 
-      if (res.proposals && res.proposals.length > 0) {
+      if (res.error?.message) {
+        showToast(res.error.message, 'alert');
+      } else if (res.proposals && res.proposals.length > 0) {
         addProposals(bundle.trip.id, res.proposals);
       }
     } finally {

@@ -2338,3 +2338,485 @@ test('37. JIT Translation Pipeline: system prompt, pure JSON merge, price/coordi
   assert.equal(translatedViaApi.days[0].activities[0].costOptions.mid.estimatedCost, origMidCost);
 });
 
+test('38. Bug Triage: Clean Firestore error formatting, Regional Mountain/Nature Geolocation Expansion, and Geographically Impossible Error Object', async () => {
+  const {
+    CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE,
+    buildCustomActivitySystemPrompt,
+    formatCleanAuthOrFirestoreError,
+    resolveRegionalCustomActivity,
+  } = await import('./domainLogic');
+  const { buildGenerateItinerarySystemPrompt } = await import('../services/api');
+
+  // 1. Clean Firestore error formatting (never outputs raw JSON)
+  const rawFirestoreJsonError = new Error(
+    JSON.stringify({
+      error: 'Missing or insufficient permissions.',
+      operationType: 'write',
+      path: 'users/uid-123',
+      authInfo: { userId: 'uid-123' },
+    })
+  );
+  const cleanEn = formatCleanAuthOrFirestoreError(rawFirestoreJsonError, 'en');
+  const cleanPt = formatCleanAuthOrFirestoreError(rawFirestoreJsonError, 'pt');
+  assert.ok(!cleanEn.startsWith('{'), 'Must never return raw JSON');
+  assert.ok(!cleanPt.startsWith('{'), 'Must never return raw JSON');
+  assert.ok(cleanEn.includes('permissions'));
+  assert.ok(cleanPt.includes('permissões'));
+
+  // 2. Exact Geolocation System Prompt Instruction verification
+  const expectedInstruction =
+    "You are a precise geolocation engine. If the user's custom request implies nature, mountains, specific sports, or regional landmarks, you MUST expand your search radius to the wider metropolitan area or surrounding region. You MUST return real, existing venues/trails that match the request. NEVER fallback to generic city center walking tours. If the request is geographically impossible, return an explicit error object, do not hallucinate.";
+  assert.equal(CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE, expectedInstruction);
+
+  const customSysPrompt = buildCustomActivitySystemPrompt('Lisbon', 'Portugal', 'en');
+  assert.ok(customSysPrompt.includes(expectedInstruction));
+
+  const itinerarySysPrompt = buildGenerateItinerarySystemPrompt(
+    'Lisbon',
+    'Portugal',
+    [],
+    'mountain hike nearby',
+    'en',
+    1200,
+    2
+  );
+  assert.ok(itinerarySysPrompt.includes(expectedInstruction));
+
+  // 3. Mountain hike request in Lisbon expands radius to Serra de Sintra (NOT Lisbon city center)
+  const lisbonMountainRes = resolveRegionalCustomActivity({
+    requestText: 'a mountain hike nearby',
+    destination: 'Lisbon',
+    country: 'Portugal',
+    startTime: '09:00',
+    estimatedCost: 15,
+    baseCoords: { lat: 38.7139, lng: -9.1334 },
+    uiLanguage: 'en',
+  });
+  assert.equal(lisbonMountainRes.error, undefined);
+  assert.ok(lisbonMountainRes.activity);
+  assert.ok(lisbonMountainRes.activity.title.includes('Serra de Sintra'));
+  assert.equal(lisbonMountainRes.activity.category, 'nature');
+  assert.equal(lisbonMountainRes.activity.isOutdoor, true);
+  // Coordinates are in Serra de Sintra (~38.7804, -9.3906), well outside downtown Lisbon (-9.1334)
+  assert.ok(Math.abs(lisbonMountainRes.activity.location.lng - -9.1334) > 0.15);
+
+  // 4. Geographically impossible request returns an explicit error object and does NOT hallucinate an activity
+  const impossibleSurfMadrid = resolveRegionalCustomActivity({
+    requestText: 'ocean surfing and coral reef scuba diving',
+    destination: 'Madrid',
+    country: 'Spain',
+    uiLanguage: 'en',
+  });
+  assert.ok(impossibleSurfMadrid.error);
+  assert.equal(impossibleSurfMadrid.error.code, 'GEOGRAPHICALLY_IMPOSSIBLE');
+  assert.equal(impossibleSurfMadrid.activity, undefined);
+
+  const impossibleGlacierLisbon = resolveRegionalCustomActivity({
+    requestText: 'glacier trek and northern lights',
+    destination: 'Lisbon',
+    country: 'Portugal',
+    uiLanguage: 'en',
+  });
+  assert.ok(impossibleGlacierLisbon.error);
+  assert.equal(impossibleGlacierLisbon.error.code, 'GEOGRAPHICALLY_IMPOSSIBLE');
+  assert.equal(impossibleGlacierLisbon.activity, undefined);
+});
+
+test('39. Critical AI Hallucination Fix: Geographic Spoofing, Strict Intent Matching (Camping in Andorra), and Graceful Fallback', async () => {
+  const {
+    ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
+    STRICT_INTENT_MATCHING_DIRECTIVE,
+    GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
+    buildChatAssistantSystemPrompt,
+    buildCustomActivitySystemPrompt,
+    isVenueSpoofedForDestination,
+    isProposalIntentMismatched,
+    resolveIntentAndRegionProposals,
+    resolveRegionalCustomActivity,
+    filterAndSanitizeProposalsForRegionAndIntent,
+  } = await import('./domainLogic');
+
+  // 1. Exact prompt constraint directives verification
+  assert.equal(
+    ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
+    "CRITICAL: You MUST NEVER append or stitch the target city's name to a venue from a different country to fake its location. Every suggested venue MUST physically exist in or near the requested target destination. If you use a tool like Google Places, strictly bound the search to the target coordinates/region."
+  );
+  assert.equal(
+    STRICT_INTENT_MATCHING_DIRECTIVE,
+    "You must strictly honor the activity type requested. If the user asks for 'camping', you MUST return campsites, nature parks, or outdoor reserves. Do not return restaurants, wine salons, or urban markets. If the exact request cannot be fulfilled, see the fallback rule."
+  );
+  assert.equal(
+    GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
+    "If you cannot find real, verified venues that match both the geographic region AND the user's intent, DO NOT hallucinate. You must return an explicit error object or a specific message (e.g., 'No suitable camping sites found exactly in this area') so the UI can inform the user gracefully."
+  );
+
+  // Verify directives are injected into Chat Assistant, Custom Activity, and Itinerary Generation system prompts
+  const chatSysPrompt = buildChatAssistantSystemPrompt(
+    { destination: 'Andorra la Vella, Andorra', days: [] },
+    'en'
+  );
+  assert.ok(chatSysPrompt.includes(ANTI_SPOOFING_GEOFENCING_DIRECTIVE));
+  assert.ok(chatSysPrompt.includes(STRICT_INTENT_MATCHING_DIRECTIVE));
+  assert.ok(chatSysPrompt.includes(GRACEFUL_NO_HALLUCINATION_DIRECTIVE));
+
+  const customSysPrompt = buildCustomActivitySystemPrompt('Andorra la Vella', 'Andorra', 'en');
+  assert.ok(customSysPrompt.includes(ANTI_SPOOFING_GEOFENCING_DIRECTIVE));
+  assert.ok(customSysPrompt.includes(STRICT_INTENT_MATCHING_DIRECTIVE));
+  assert.ok(customSysPrompt.includes(GRACEFUL_NO_HALLUCINATION_DIRECTIVE));
+
+  const itinerarySysPrompt = buildGenerateItinerarySystemPrompt(
+    'Andorra la Vella',
+    'Andorra',
+    ['Andorra la Vella'],
+    'camping nearby',
+    'en',
+    1200,
+    2
+  );
+  assert.ok(itinerarySysPrompt.includes(ANTI_SPOOFING_GEOFENCING_DIRECTIVE));
+  assert.ok(itinerarySysPrompt.includes(STRICT_INTENT_MATCHING_DIRECTIVE));
+  assert.ok(itinerarySysPrompt.includes(GRACEFUL_NO_HALLUCINATION_DIRECTIVE));
+
+  // 2. Anti-Spoofing detection: Lisbon venues with "(Andorra la Vella)" stitched onto them MUST be flagged as spoofed
+  assert.equal(
+    isVenueSpoofedForDestination(
+      'Mercado de Campo de Ourique & Tasca da Esquina (Andorra la Vella)',
+      'Andorra la Vella'
+    ),
+    true
+  );
+  assert.equal(
+    isVenueSpoofedForDestination(
+      'Palácio Belmonte Private Wine Salon & Terrace (Andorra la Vella)',
+      'Andorra la Vella'
+    ),
+    true
+  );
+  assert.equal(
+    isVenueSpoofedForDestination(
+      'Miradouro de Santa Catarina & Pharmacia Petiscos (Andorra)',
+      'Andorra'
+    ),
+    true
+  );
+  // Real Andorra venues must NOT be flagged as spoofed
+  assert.equal(
+    isVenueSpoofedForDestination(
+      'Camping Valira & Parc Central Mountain Basecamp',
+      'Andorra la Vella'
+    ),
+    false
+  );
+
+  // 3. Strict Intent Matching: "camping nearby" in Andorra returns ONLY real Andorra campsites, nature parks, or outdoor reserves
+  const andorraDay: Day = {
+    id: 'day-andorra-1',
+    tripId: 'trip-andorra',
+    ownerId: 'u1',
+    date: '2026-07-10',
+    dayNumber: 1,
+    city: 'Andorra la Vella',
+    paceLevel: 3,
+    paceScore: 45,
+    activePlan: 'A',
+    activities: [
+      sampleActivity('act-and-1', 'Casa de la Vall Heritage Visit', '10:00', 90, 5, 10, 25),
+    ],
+    planB: [],
+  };
+
+  const andorraCampingRes = resolveIntentAndRegionProposals({
+    destination: 'Andorra la Vella, Andorra',
+    message: 'camping nearby',
+    currentDay: andorraDay,
+    uiLanguage: 'en',
+  });
+
+  assert.equal(andorraCampingRes.error, undefined);
+  assert.equal(andorraCampingRes.proposals.length, 3);
+  for (const prop of andorraCampingRes.proposals) {
+    const payload = prop.payload;
+    assert.ok(payload, 'Proposal must include concrete activity payload');
+    assert.ok(!payload.title.includes('Mercado de Campo de Ourique'), 'Must never return Lisbon markets');
+    assert.ok(!payload.title.includes('Palácio Belmonte'), 'Must never return Lisbon wine salons');
+    assert.ok(!payload.title.includes('Miradouro de Santa Catarina'), 'Must never return Lisbon viewpoints');
+    assert.equal(payload.category, 'nature');
+    assert.equal(payload.isOutdoor, true);
+    assert.equal(
+      isProposalIntentMismatched(
+        {
+          title: payload.title,
+          description: payload.description,
+          category: payload.category,
+          locationName: payload.location?.name,
+        },
+        'camping nearby',
+        'Andorra la Vella'
+      ),
+      false
+    );
+  }
+  assert.ok(
+    andorraCampingRes.proposals.some((p) => p.payload?.title.includes('Camping Valira')),
+    'Should include verified Camping Valira in Andorra la Vella'
+  );
+  assert.ok(
+    andorraCampingRes.proposals.some(
+      (p) => p.payload?.title.includes('Sorteny') || p.payload?.title.includes('Comapedrosa')
+    ),
+    'Should include verified Andorra nature parks (Sorteny / Comapedrosa)'
+  );
+
+  // Custom activity modal for "camping nearby" in Andorra also returns real Camping Valira
+  const customAndorraCamping = resolveRegionalCustomActivity({
+    requestText: 'camping nearby',
+    destination: 'Andorra la Vella',
+    country: 'Andorra',
+    uiLanguage: 'en',
+  });
+  assert.equal(customAndorraCamping.error, undefined);
+  assert.ok(customAndorraCamping.activity);
+  assert.ok(customAndorraCamping.activity.title.includes('Camping Valira'));
+  assert.equal(customAndorraCamping.activity.category, 'nature');
+  assert.equal(customAndorraCamping.activity.isOutdoor, true);
+
+  // 4. Filter & Sanitize rejects spoofed Lisbon proposals when user asks for "camping nearby" in Andorra
+  const spoofedProposals = [
+    {
+      id: 'spoof-1',
+      dayId: 'day-andorra-1',
+      dayNumber: 1,
+      type: 'replace' as const,
+      targetActivityId: 'act-and-1',
+      payload: {
+        ...sampleActivity(
+          'act-spoof-1',
+          'Mercado de Campo de Ourique & Tasca da Esquina (Andorra la Vella)',
+          '12:00',
+          90,
+          8,
+          14,
+          28
+        ),
+        category: 'food' as const,
+      },
+      reason: 'Fits budget',
+      source: 'chat' as const,
+      status: 'pending' as const,
+    },
+    {
+      id: 'spoof-2',
+      dayId: 'day-andorra-1',
+      dayNumber: 1,
+      type: 'replace' as const,
+      targetActivityId: 'act-and-1',
+      payload: {
+        ...sampleActivity(
+          'act-spoof-2',
+          'Palácio Belmonte Private Wine Salon & Terrace (Andorra la Vella)',
+          '15:00',
+          90,
+          16,
+          28,
+          56
+        ),
+        category: 'food' as const,
+      },
+      reason: 'Premium',
+      source: 'chat' as const,
+      status: 'pending' as const,
+    },
+  ];
+  const filtered = filterAndSanitizeProposalsForRegionAndIntent(
+    spoofedProposals,
+    'Andorra la Vella',
+    'camping nearby'
+  );
+  assert.equal(filtered.length, 0, 'Must strip all spoofed and intent-mismatched proposals');
+
+  // 5. Graceful Fallback (The "No Hallucination" Rule):
+  // Asking for "camping nearby" in an area without verified campsites returns an explicit error object and 0 proposals
+  const monacoDay: Day = {
+    ...andorraDay,
+    city: 'Monte Carlo',
+  };
+  const noCampingRes = resolveIntentAndRegionProposals({
+    destination: 'Monte Carlo, Monaco',
+    message: 'camping nearby',
+    currentDay: monacoDay,
+    uiLanguage: 'en',
+  });
+  assert.equal(noCampingRes.proposals.length, 0);
+  assert.ok(noCampingRes.error, 'Must return explicit error object when no verified camping sites exist');
+  assert.equal(noCampingRes.error.code, 'NO_SUITABLE_CAMPING_SITES');
+  assert.ok(
+    noCampingRes.error.message.includes('No suitable camping sites found exactly in this area'),
+    'Error message must include "No suitable camping sites found exactly in this area"'
+  );
+});
+
+test('Sprint 40: Prompt Tuning — Smart Radius Expansion (20-30km), Abstract Intent Translation ("More local spots"), and Relaxed Fallback Sweet Spot ("any park next to the town" in Algiers)', async () => {
+  const {
+    SMART_RADIUS_EXPANSION_DIRECTIVE,
+    ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+    RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+    buildChatAssistantSystemPrompt,
+    buildCustomActivitySystemPrompt,
+    detectRequestedActivityIntent,
+    resolveIntentAndRegionProposals,
+    resolveRegionalCustomActivity,
+  } = await import('./domainLogic');
+  const { buildGenerateItinerarySystemPrompt } = await import('../services/api');
+
+  // 1. Verify exact balanced prompt directives exist and are injected into system prompts
+  assert.equal(
+    SMART_RADIUS_EXPANSION_DIRECTIVE,
+    'You must search for real venues within the target city AND its surrounding metropolitan area (allow up to a 20-30km radius for nature, parks, or regional specific requests). Do not artificially restrict your search to the exact city center.'
+  );
+  assert.equal(
+    ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+    "If the user asks for abstract concepts like 'local spots', 'hidden gems', or 'less touristy places', you MUST intelligently translate this into finding authentic, highly-rated cafes, neighborhoods, or cultural venues frequented by locals. Do not fail just because 'local spots' isn't a rigid database category."
+  );
+  assert.equal(
+    RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+    "Only trigger the 'No suitable venues found' error fallback if the request is geographically absurd for the country, or physically impossible to fulfill within the expanded radius. Otherwise, find the closest real, verified alternative that captures the user's requested vibe."
+  );
+
+  const chatPrompt = buildChatAssistantSystemPrompt(
+    { destination: 'Algiers, Algeria', days: [] },
+    'en'
+  );
+  assert.ok(chatPrompt.includes(SMART_RADIUS_EXPANSION_DIRECTIVE));
+  assert.ok(chatPrompt.includes(ABSTRACT_INTENT_TRANSLATION_DIRECTIVE));
+  assert.ok(chatPrompt.includes(RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE));
+
+  const customActPrompt = buildCustomActivitySystemPrompt('Algiers', 'Algeria', 'en');
+  assert.ok(customActPrompt.includes(SMART_RADIUS_EXPANSION_DIRECTIVE));
+  assert.ok(customActPrompt.includes(ABSTRACT_INTENT_TRANSLATION_DIRECTIVE));
+  assert.ok(customActPrompt.includes(RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE));
+
+  const genPrompt = buildGenerateItinerarySystemPrompt('Algiers', 'Algeria', [], '', 'en');
+  assert.ok(genPrompt.includes(SMART_RADIUS_EXPANSION_DIRECTIVE));
+  assert.ok(genPrompt.includes(ABSTRACT_INTENT_TRANSLATION_DIRECTIVE));
+  assert.ok(genPrompt.includes(RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE));
+
+  // 2. Semantic intent classification for "More local spots" and "any park next to the town" in Algiers
+  assert.equal(detectRequestedActivityIntent('More local spots', 'Algiers'), 'local_spots');
+  assert.equal(detectRequestedActivityIntent('hidden gems and less touristy places', 'Algiers'), 'local_spots');
+  assert.equal(detectRequestedActivityIntent('any park next to the town', 'Algiers'), 'park_nature');
+
+  const algiersDay: Day = {
+    id: 'day-algiers-1',
+    tripId: 'trip-algiers',
+    ownerId: 'u1',
+    date: '2026-09-12',
+    dayNumber: 1,
+    city: 'Algiers',
+    paceLevel: 3,
+    paceScore: 48,
+    activePlan: 'A',
+    activities: [
+      {
+        ...sampleActivity('act-alg-1', 'Ketchaoua Mosque & Lower Casbah', '09:30', 90, 5, 12, 25),
+        location: { name: 'Algiers', lat: 36.7851, lng: 3.0604 },
+      },
+    ],
+    planB: [],
+  };
+
+  // 3. "More local spots" in Algiers must NEVER fail with NO_VERIFIED_VENUES_FOUND; returns authentic Algiers cafes/neighborhoods/cultural venues
+  const localSpotsAlgiers = resolveIntentAndRegionProposals({
+    destination: 'Algiers, Algeria',
+    message: 'More local spots',
+    currentDay: algiersDay,
+    uiLanguage: 'en',
+  });
+  assert.equal(localSpotsAlgiers.error, undefined);
+  assert.equal(localSpotsAlgiers.proposals.length, 3);
+  assert.ok(
+    localSpotsAlgiers.proposals.some(
+      (p) =>
+        p.payload?.title.includes("Casbah d'Alger") ||
+        p.payload?.title.includes('Didouche Mourad') ||
+        p.payload?.title.includes("Jardin d'Essai du Hamma")
+    ),
+    'Must return authentic Algiers neighborhoods, cafes, and cultural spots'
+  );
+
+  const customLocalSpotsAlgiers = resolveRegionalCustomActivity({
+    requestText: 'More local spots',
+    destination: 'Algiers',
+    country: 'Algeria',
+    uiLanguage: 'en',
+  });
+  assert.equal(customLocalSpotsAlgiers.error, undefined);
+  assert.ok(customLocalSpotsAlgiers.activity);
+  assert.ok(
+    customLocalSpotsAlgiers.activity.title.includes("Casbah d'Alger") ||
+      customLocalSpotsAlgiers.activity.location.name.includes('Alger')
+  );
+
+  // 4. "any park next to the town" in Algiers must expand radius (20-30km) and return real Algiers parks (Jardin d'Essai du Hamma, Forêt de Baïnem, Parc National de Chréa)
+  const parkNextToTownAlgiers = resolveIntentAndRegionProposals({
+    destination: 'Algiers, Algeria',
+    message: 'any park next to the town',
+    currentDay: algiersDay,
+    uiLanguage: 'en',
+  });
+  assert.equal(parkNextToTownAlgiers.error, undefined);
+  assert.equal(parkNextToTownAlgiers.proposals.length, 3);
+  assert.ok(
+    parkNextToTownAlgiers.proposals.some(
+      (p) =>
+        p.payload?.title.includes("Jardin d'Essai du Hamma") ||
+        p.payload?.title.includes('Forêt Récréative de Baïnem') ||
+        p.payload?.title.includes('Parc National de Chréa')
+    ),
+    'Must return real Algiers / Greater Algiers metropolitan parks within 20-30km'
+  );
+
+  const customParkAlgiers = resolveRegionalCustomActivity({
+    requestText: 'any park next to the town',
+    destination: 'Algiers',
+    country: 'Algeria',
+    uiLanguage: 'en',
+  });
+  assert.equal(customParkAlgiers.error, undefined);
+  assert.ok(customParkAlgiers.activity);
+  assert.equal(customParkAlgiers.activity.category, 'nature');
+  assert.ok((customParkAlgiers.expandedRadiusKm ?? 0) >= 20);
+
+  // 5. Relaxed Fallback Sweet Spot: Even for an unlisted global city (e.g. "Tunis" or "Ljubljana"), "More local spots" and "any park next to the town" succeed without throwing "No suitable verified venues found"
+  const tunisLocalRes = resolveIntentAndRegionProposals({
+    destination: 'Tunis, Tunisia',
+    message: 'More local spots',
+    currentDay: { ...algiersDay, city: 'Tunis' },
+    uiLanguage: 'en',
+  });
+  assert.equal(tunisLocalRes.error, undefined);
+  assert.equal(tunisLocalRes.proposals.length, 3);
+
+  const tunisParkRes = resolveIntentAndRegionProposals({
+    destination: 'Tunis, Tunisia',
+    message: 'any park next to the town',
+    currentDay: { ...algiersDay, city: 'Tunis' },
+    uiLanguage: 'en',
+  });
+  assert.equal(tunisParkRes.error, undefined);
+  assert.equal(tunisParkRes.proposals.length, 3);
+
+  // While geographically absurd requests in Algiers (e.g. "glacier trek and northern lights") still trigger the error fallback
+  const absurdAlgiersRes = resolveIntentAndRegionProposals({
+    destination: 'Algiers, Algeria',
+    message: 'glacier trek and northern lights',
+    currentDay: algiersDay,
+    uiLanguage: 'en',
+  });
+  assert.ok(absurdAlgiersRes.error);
+  assert.equal(absurdAlgiersRes.error.code, 'GEOGRAPHICALLY_IMPOSSIBLE');
+  assert.equal(absurdAlgiersRes.proposals.length, 0);
+});
+
+
+
+

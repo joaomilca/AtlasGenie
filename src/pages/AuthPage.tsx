@@ -6,7 +6,7 @@ import {
   signInWithGoogle,
 } from '../services/firebase';
 import { useAtlas } from '../context/AtlasContext';
-import { useAuth, mapFirebaseAuthError } from '../context/AuthContext';
+import { useAuth, formatCleanAuthOrFirestoreError } from '../context/AuthContext';
 
 export const AuthPage: React.FC = () => {
   const { t, i18n } = useTranslation();
@@ -33,8 +33,8 @@ export const AuthPage: React.FC = () => {
         await login(email, password);
       }
       navigate('/dashboard');
-    } catch (err: any) {
-      setError(mapFirebaseAuthError(err, i18n.language));
+    } catch (err: unknown) {
+      setError(formatCleanAuthOrFirestoreError(err, i18n.language));
     } finally {
       setLoading(false);
     }
@@ -46,8 +46,10 @@ export const AuthPage: React.FC = () => {
     try {
       await signInWithGoogle();
       navigate('/dashboard');
-    } catch (err: any) {
-      setError(err?.message || t('auth.errGoogle'));
+    } catch (err: unknown) {
+      const cleanMsg = formatCleanAuthOrFirestoreError(err, i18n.language);
+      setError(cleanMsg);
+      showToast(cleanMsg, 'alert');
     } finally {
       setLoading(false);
     }
