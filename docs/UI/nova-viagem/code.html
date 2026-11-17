@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+
+<html lang="pt"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Traçar uma Nova Viagem - AtlasGenie</title>
+<!-- Tailwind CSS v3 with Plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'sand-bg': '#FAF7F2',
+            'sand-card': '#FBF9F5',
+            'sand-border': '#EFEAE1',
+            'atlas-navy': '#111827',
+            'atlas-footer': '#0D1322',
+            'atlas-orange': '#EA580C',
+            'atlas-orange-hover': '#C2410C',
+            'atlas-dark-chip': '#1E293B',
+          },
+          fontFamily: {
+            serif: ['Georgia', 'Cambria', '"Times New Roman"', 'Times', 'serif'],
+            sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+<!-- Custom Styles for Form Elements and Slider -->
+<style data-purpose="custom-inputs">
+    /* Range Slider Styling */
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 18px;
+      width: 18px;
+      border-radius: 50%;
+      background: #EA580C;
+      cursor: pointer;
+      border: 3px solid #FAF7F2;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      margin-top: -6px;
+    }
+    input[type=range]::-moz-range-thumb {
+      height: 18px;
+      width: 18px;
+      border-radius: 50%;
+      background: #EA580C;
+      cursor: pointer;
+      border: 3px solid #FAF7F2;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 6px;
+      cursor: pointer;
+      background: linear-gradient(to right, #EA580C 0%, #EA580C 50%, #334155 50%, #334155 100%);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="bg-sand-bg text-slate-800 font-sans antialiased min-h-screen flex flex-col justify-between">
+<!-- BEGIN: NavigationBar -->
+<header class="w-full bg-sand-bg/90 backdrop-blur-sm border-b border-sand-border sticky top-0 z-50">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+<!-- Brand Logo -->
+<a class="flex items-center gap-2 group" href="#">
+<svg class="w-7 h-7 text-atlas-orange" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewbox="0 0 24 24">
+<circle cx="12" cy="12" r="10"></circle>
+<path d="m16.2 7.8-2 6.3-6.4 2 2-6.3z"></path>
+</svg>
+<span class="text-xl font-bold tracking-tight text-atlas-navy">AtlasGenie</span>
+</a>
+<!-- Navigation Links -->
+<nav class="hidden md:flex items-center space-x-7 text-sm font-medium text-slate-600">
+<a class="hover:text-atlas-navy transition-colors" href="#">Modo Demo</a>
+<a class="hover:text-atlas-navy transition-colors" href="#">As Minhas Viagens</a>
+<a class="text-atlas-orange border-b-2 border-atlas-orange pb-0.5 font-semibold" href="#">Nova Viagem</a>
+<a class="hover:text-atlas-navy transition-colors" href="#">Definições</a>
+<div class="flex items-center space-x-4 pl-3 border-l border-slate-300">
+<button class="hover:text-atlas-navy text-xs font-semibold tracking-wider transition-colors uppercase">EN</button>
+<button class="flex items-center gap-1.5 hover:text-atlas-navy text-xs font-medium text-slate-600 transition-colors">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.03 9.03 0 008.354-5.646z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+            Escuro
+          </button>
+</div>
+</nav>
+<!-- Right CTAs -->
+<div class="flex items-center gap-3">
+<button class="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-full text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition-all shadow-sm">
+<svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+          Iniciar Sessão
+        </button>
+<button class="inline-flex items-center px-4 py-2 bg-atlas-navy text-white rounded-full text-xs font-semibold hover:bg-slate-800 transition-colors shadow-sm">
+          Começar a Planear
+        </button>
+</div>
+</div>
+</header>
+<!-- END: NavigationBar -->
+<!-- BEGIN: MainContent -->
+<main class="flex-grow py-8 px-4 sm:px-6">
+<div class="max-w-3xl mx-auto bg-white rounded-2xl shadow-sm border border-stone-200/70 p-6 sm:p-10">
+<!-- Form Top Header -->
+<div class="pb-6 border-b border-stone-200">
+<div class="flex items-start justify-between">
+<h1 class="font-serif text-3xl sm:text-[34px] font-bold text-slate-900 tracking-tight">Traçar uma Nova Viagem</h1>
+<button class="text-xs sm:text-sm text-slate-500 hover:text-slate-800 underline underline-offset-4 decoration-slate-300 transition-colors" type="button">
+            Limpar Formulário
+          </button>
+</div>
+<p class="mt-2 text-xs sm:text-[13px] text-slate-500">
+          1. Destino e Datas • 2. Interesses e Ritmo • 3. Restrições e Pedidos Especiais (Opcional)
+        </p>
+</div>
+<form class="mt-8 space-y-9" onsubmit="event.preventDefault();">
+<!-- BEGIN: Section1_DestinoDatas -->
+<section class="space-y-6" data-purpose="trip-dates-destination">
+<h2 class="text-lg font-bold text-slate-900 tracking-tight">1. Destino e Datas</h2>
+<!-- Inputs: País, Início, Fim -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-3.5">
+<!-- País de Destino -->
+<div class="md:col-span-6 space-y-1.5">
+<label class="block text-xs font-semibold text-slate-700">
+<span class="inline-block mr-1 text-slate-500">🌐</span> País de Destino
+              </label>
+<div class="relative">
+<select class="w-full h-11 bg-white border border-stone-300 rounded-lg px-3.5 py-2 text-sm text-slate-500 focus:outline-none focus:ring-1 focus:ring-atlas-orange focus:border-atlas-orange appearance-none cursor-pointer">
+<option disabled="" selected="">Pesquise ou selecione um país</option>
+<option value="PT">Portugal</option>
+<option value="ES">Espanha</option>
+<option value="IT">Itália</option>
+<option value="FR">França</option>
+</select>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+</div>
+</div>
+<!-- Data de Início -->
+<div class="md:col-span-3 space-y-1.5">
+<label class="block text-xs font-semibold text-slate-700">Data de início</label>
+<div class="relative">
+<input class="w-full h-11 bg-stone-50/50 border border-stone-300 rounded-lg px-3.5 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-atlas-orange focus:border-atlas-orange" type="text" value="11/18/2026"/>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-500">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+</div>
+</div>
+<!-- Data de Fim -->
+<div class="md:col-span-3 space-y-1.5">
+<label class="block text-xs font-semibold text-slate-700">Data de fim</label>
+<div class="relative">
+<input class="w-full h-11 bg-stone-50/50 border border-stone-300 rounded-lg px-3.5 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-atlas-orange focus:border-atlas-orange" type="text" value="11/21/2026"/>
+<div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-500">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+</div>
+</div>
+</div>
+<!-- Specific Cities Box -->
+<div class="bg-stone-50/70 border border-stone-200/90 rounded-xl p-4 sm:p-5 space-y-3">
+<label class="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+<svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+              Cidades Específicas (Opcional)
+            </label>
+<div class="flex gap-2">
+<input class="flex-grow h-10 bg-white border border-stone-300 rounded-lg px-3.5 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-atlas-orange focus:border-atlas-orange" placeholder="Escreva uma cidade (ex: Roma, Florença) e prima Enter..." type="text"/>
+<button class="px-4 h-10 bg-stone-100 hover:bg-stone-200 text-slate-700 border border-stone-200 rounded-lg text-xs font-medium transition-colors flex items-center gap-1" type="button">
+                + Adicionar
+              </button>
+</div>
+<p class="text-[11px] text-slate-400">Prima Enter ou clique em Adicionar para incluir várias cidades.</p>
+<div class="pt-1">
+<label class="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+<input class="w-4 h-4 rounded text-slate-800 border-stone-300 focus:ring-0" type="checkbox"/>
+<span>Não sei que cidades visitar, deixar a IA decidir a melhor rota no país.</span>
+</label>
+</div>
+</div>
+<!-- Travelers and Budget -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="space-y-1.5">
+<label class="block text-xs font-semibold text-slate-700">Dimensão do Grupo (Número de viajantes)</label>
+<input class="w-full h-11 bg-white border border-stone-300 rounded-lg px-3.5 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-atlas-orange focus:border-atlas-orange" type="number" value="2"/>
+</div>
+<div class="space-y-1.5">
+<label class="block text-xs font-semibold text-slate-700">Orçamento total da viagem (€)</label>
+<input class="w-full h-11 bg-white border border-stone-300 rounded-lg px-3.5 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-atlas-orange focus:border-atlas-orange" type="number" value="900"/>
+<p class="text-[11px] text-slate-400">~€900 (~€450/pessoa)</p>
+</div>
+</div>
+<!-- Group Travel Callout Banner -->
+<div class="bg-[#F8F5EE] border border-[#E9E4D6] rounded-xl p-4 sm:p-5 space-y-3">
+<div class="flex items-center justify-between">
+<div>
+<h4 class="text-xs sm:text-sm font-semibold text-slate-900">Viaja em grupo?</h4>
+<p class="text-xs text-slate-500">Viaja em grupo? Ativar Modo de Grupo (convites, votações e divisão de contas)</p>
+</div>
+<!-- Active Toggle Switch -->
+<button aria-pressed="true" class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-atlas-orange transition-colors duration-200 ease-in-out focus:outline-none" type="button">
+<span class="translate-x-5 pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"></span>
+</button>
+</div>
+<!-- Group Features List -->
+<div class="pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-[11px] font-mono text-emerald-800">
+<div class="flex items-center gap-1.5">
+<span class="text-emerald-600 font-bold">✓</span> Código de Convite Partilhável
+              </div>
+<div class="flex items-center gap-1.5">
+<span class="text-emerald-600 font-bold">✓</span> Medidor de Justiça do Grupo
+              </div>
+<div class="flex items-center gap-1.5">
+<span class="text-emerald-600 font-bold">✓</span> Votação ao Vivo 👍/😐/👎
+              </div>
+<div class="flex items-center gap-1.5">
+<span class="text-emerald-600 font-bold">✓</span> Divisão de Despesas e Acerto de Contas
+              </div>
+</div>
+</div>
+</section>
+<!-- END: Section1_DestinoDatas -->
+<!-- BEGIN: Section2_InteressesRitmo -->
+<section class="space-y-6 pt-4 border-t border-stone-200" data-purpose="trip-interests-pace">
+<div>
+<h2 class="text-lg font-bold text-slate-900 tracking-tight">2. Interesses e Ritmo</h2>
+<p class="text-xs text-slate-500 mt-1">Selecione os seus interesses de viagem</p>
+</div>
+<!-- Interest Cards Grid -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+<!-- Gastronomia (Selected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#111827] text-white border border-[#111827] transition-all" type="button">
+<span class="text-base">🍲</span> Gastronomia
+            </button>
+<!-- História (Selected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#111827] text-white border border-[#111827] transition-all" type="button">
+<span class="text-base">🏛️</span> História
+            </button>
+<!-- Arquitetura (Unselected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#FAF7F2] text-slate-800 border border-stone-200 hover:bg-stone-100 transition-all" type="button">
+<span class="text-base">🧱</span> Arquitetura
+            </button>
+<!-- Miradouros (Selected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#111827] text-white border border-[#111827] transition-all" type="button">
+<span class="text-base">🌅</span> Miradouros
+            </button>
+<!-- Arte (Unselected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#FAF7F2] text-slate-800 border border-stone-200 hover:bg-stone-100 transition-all" type="button">
+<span class="text-base">🎨</span> Arte
+            </button>
+<!-- Vinhos (Unselected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#FAF7F2] text-slate-800 border border-stone-200 hover:bg-stone-100 transition-all" type="button">
+<span class="text-base">🍷</span> Vinhos
+            </button>
+<!-- Música (Unselected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#FAF7F2] text-slate-800 border border-stone-200 hover:bg-stone-100 transition-all" type="button">
+<span class="text-base">🎸</span> Música
+            </button>
+<!-- Natureza (Unselected) -->
+<button class="flex items-center gap-2 p-3 rounded-lg text-xs font-semibold bg-[#FAF7F2] text-slate-800 border border-stone-200 hover:bg-stone-100 transition-all" type="button">
+<span class="text-base">🌿</span> Natureza
+            </button>
+</div>
+<!-- Ritmo Diário Predefinido -->
+<div class="space-y-3 pt-2">
+<div class="flex items-center justify-between text-xs">
+<span class="font-semibold text-slate-700">Ritmo diário predefinido</span>
+<span class="text-slate-600 font-mono text-[11px] font-semibold">Nível 3/5 (Equilibrado)</span>
+</div>
+<!-- Range Slider -->
+<div class="relative w-full">
+<input class="w-full appearance-none bg-transparent cursor-pointer" max="5" min="1" type="range" value="3"/>
+</div>
+</div>
+</section>
+<!-- END: Section2_InteressesRitmo -->
+<!-- BEGIN: Section3_RestricoesPedidos -->
+<section class="space-y-5 pt-4 border-t border-stone-200" data-purpose="trip-restrictions-special-requests">
+<div>
+<h2 class="text-lg font-bold text-slate-900 tracking-tight">3. Restrições e Pedidos Especiais (Opcional)</h2>
+<p class="text-xs text-slate-500 mt-1">Selecione restrições ou preferências rápidas — a IA ajustará locais, refeições e logística.</p>
+</div>
+<!-- Restriction Chips -->
+<div class="flex flex-wrap gap-2">
+<button class="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-stone-50 border border-stone-200 text-slate-700 hover:bg-stone-100 transition-colors" type="button">
+<span>🥗</span> Dieta Vegetariana / Vegan
+            </button>
+<button class="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-stone-50 border border-stone-200 text-slate-700 hover:bg-stone-100 transition-colors" type="button">
+<span class="text-blue-600">♿</span> Mobilidade Reduzida (Evitar escadas)
+            </button>
+<button class="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-stone-50 border border-stone-200 text-slate-700 hover:bg-stone-100 transition-colors" type="button">
+<span>👨‍👩‍👧</span> Viagem com Crianças
+            </button>
+<button class="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-stone-50 border border-stone-200 text-slate-700 hover:bg-stone-100 transition-colors" type="button">
+<span>🧭</span> Evitar multidões (Fugir das 'Tourist Traps')
+            </button>
+<button class="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-stone-50 border border-stone-200 text-slate-700 hover:bg-stone-100 transition-colors" type="button">
+<span>🚖</span> Preferir deslocações de Táxi/Uber
+            </button>
+<button class="inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-stone-50 border border-stone-200 text-slate-700 hover:bg-stone-100 transition-colors" type="button">
+<span>🌾</span> Sem Glúten / Alergias Alimentares
+            </button>
+</div>
+<!-- Free-text request -->
+<div class="space-y-1.5 pt-2">
+<label class="block text-xs font-semibold text-slate-700">Outros pedidos? (Opcional)</label>
+<textarea class="w-full bg-white border border-stone-300 rounded-lg p-3 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-atlas-orange focus:border-atlas-orange" placeholder="Ex: Tenho alergia a marisco, ou gostava de incluir uma ida ao estádio de futebol..." rows="3"></textarea>
+</div>
+</section>
+<!-- END: Section3_RestricoesPedidos -->
+<!-- Form Final Actions -->
+<div class="pt-6 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+<button class="text-xs sm:text-sm text-slate-500 hover:text-slate-800 underline underline-offset-4 decoration-slate-300 transition-colors" type="button">
+            Limpar Formulário
+          </button>
+<button class="w-full sm:w-auto px-6 py-3 bg-atlas-orange hover:bg-atlas-orange-hover text-white rounded-lg text-sm font-semibold transition-colors shadow-sm text-center" type="submit">
+            Consultar o Atlas e Gerar Roteiro
+          </button>
+</div>
+</form>
+</div>
+</main>
+<!-- END: MainContent -->
+<!-- BEGIN: Footer -->
+<footer class="bg-atlas-footer text-slate-300 text-xs mt-16 pt-12 pb-8 border-t border-slate-800/80">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+<!-- Upper Footer Row -->
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+<!-- Left Brand & Mission -->
+<div class="max-w-md space-y-3">
+<div class="flex items-center gap-2">
+<svg class="w-6 h-6 text-atlas-orange" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewbox="0 0 24 24">
+<circle cx="12" cy="12" r="10"></circle>
+<path d="m16.2 7.8-2 6.3-6.4 2 2-6.3z"></path>
+</svg>
+<span class="text-xl font-bold tracking-tight text-white">AtlasGenie</span>
+</div>
+<p class="text-slate-400 leading-relaxed text-xs">
+            O único planeador de viagens onde sabe o que está verificado, quanto custa e mantém o controlo — a solo ou com o seu grupo.
+          </p>
+</div>
+<!-- Links and Support CTA -->
+<div class="flex flex-wrap items-center gap-6 sm:gap-8">
+<a class="hover:text-white transition-colors" href="#">Experimentar Demo</a>
+<a class="hover:text-white transition-colors" href="#">Painel de Viagens</a>
+<a class="hover:text-white transition-colors" href="#">Perguntas Frequentes</a>
+<a class="inline-flex items-center gap-1.5 hover:text-white transition-colors" href="#">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+            Repositório GitHub
+          </a>
+<a class="inline-flex items-center gap-2 px-5 py-2.5 bg-atlas-orange hover:bg-atlas-orange-hover text-white rounded-lg font-semibold text-xs transition-colors shadow" href="#">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824-2.167a1 1 0 111.414 1.414" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+            Contactar Suporte
+          </a>
+</div>
+</div>
+<!-- Lower Footer Row / Status Legend -->
+<div class="pt-6 border-t border-slate-800/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-500">
+<div>
+          © 2026 AtlasGenie • Criado para viajantes independentes na Europa.
+        </div>
+<div class="flex items-center flex-wrap gap-4 text-slate-400 font-mono">
+<div class="flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-lime-400"></span>
+            Fontes Oficiais Verificadas
+          </div>
+<span>•</span>
+<div class="flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            ~Estimativas IA
+          </div>
+<span>•</span>
+<div class="flex items-center gap-1.5">
+<span class="text-xs">⇌</span>
+            Alterações Controladas por Si
+          </div>
+</div>
+</div>
+</div>
+</footer>
+<!-- END: Footer -->
+</body></html>

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+
+<html lang="pt-PT"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AtlasGenie - Preferências do Atlas e Lembretes de Partida</title>
+<!-- Google Fonts: Playfair Display (Serif headings) and Plus Jakarta Sans / Inter -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&amp;family=Playfair+Display:wght@600;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS v3 with forms and container queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              orange: '#D97706',
+              'orange-dark': '#C2410C',
+              'orange-primary': '#EA580C',
+              navy: '#0F172A',
+              'navy-deep': '#0B1120',
+              cream: '#FAF7F2',
+              'cream-input': '#FDFBF7',
+              'cream-card': '#FFFFFF',
+              'border-subtle': '#E7E2D8'
+            }
+          },
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            serif: ['"Playfair Display"', 'Georgia', 'serif'],
+            mono: ['"JetBrains Mono"', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+<!-- Custom styles for pixel-perfect refinement -->
+<style data-purpose="custom-styling">
+    body {
+      background-color: #FAF7F2;
+      color: #1E293B;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    
+    .input-warm {
+      background-color: #F8F5EE;
+      border: 1px solid #E5DFD3;
+      transition: all 0.2s ease;
+    }
+
+    .input-warm:focus {
+      background-color: #FFFFFF;
+      border-color: #D97706;
+      box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.15);
+      outline: none;
+    }
+
+    /* Modal Backdrop Transitions */
+    .modal-backdrop {
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-amber-100 selection:text-amber-900">
+<!-- BEGIN: SiteHeader -->
+<header class="w-full bg-[#FAF7F2] border-b border-[#EDE8DE] sticky top-0 z-40" data-purpose="site-header">
+<div class="max-w-[1240px] mx-auto px-6 h-20 flex items-center justify-between">
+<!-- Brand Logo & Main Navigation -->
+<div class="flex items-center space-x-10">
+<!-- Logo -->
+<a class="flex items-center space-x-2.5 group" href="#">
+<div class="w-7 h-7 flex items-center justify-center text-[#D97706]">
+<!-- Orange Compass/Swirl Glyph -->
+<svg class="w-6 h-6 fill-current text-[#D97706]" viewbox="0 0 24 24">
+<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"></path>
+</svg>
+</div>
+<span class="text-xl font-bold tracking-tight text-slate-900">AtlasGenie</span>
+</a>
+<!-- Links Navigation -->
+<nav class="hidden md:flex items-center space-x-7 text-[14.5px] text-slate-600 font-medium">
+<a class="hover:text-slate-900 transition-colors" href="#">Modo Demo</a>
+<a class="hover:text-slate-900 transition-colors" href="#">As Minhas Viagens</a>
+<a class="hover:text-slate-900 transition-colors" href="#">Nova Viagem</a>
+<a class="text-[#D97706] font-semibold border-b-2 border-[#D97706] pb-1" href="#">Definições</a>
+<button class="hover:text-slate-900 transition-colors uppercase tracking-wider text-xs font-semibold px-1 text-slate-500">EN</button>
+<button class="hover:text-slate-900 transition-colors flex items-center space-x-1.5 text-slate-600">
+<span>Escuro</span>
+</button>
+</nav>
+</div>
+<!-- Action Buttons -->
+<div class="flex items-center space-x-3.5">
+<!-- Sign in trigger for modal -->
+<button class="flex items-center space-x-2 text-slate-800 border border-slate-300 rounded-full px-4 py-2 text-sm font-medium hover:bg-slate-100/70 transition-all shadow-sm" id="open-login-btn">
+<svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Iniciar Sessão</span>
+</button>
+<!-- CTA Plan Button -->
+<button class="bg-[#111827] text-white rounded-full px-5 py-2 text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm">
+          Começar a Planear
+        </button>
+</div>
+</div>
+</header>
+<!-- END: SiteHeader -->
+<!-- BEGIN: MainContent -->
+<main class="flex-grow max-w-[760px] w-full mx-auto px-4 py-10" data-purpose="settings-view">
+<!-- Page Header Title -->
+<div class="mb-9">
+<h1 class="font-serif text-[32px] md:text-[35px] font-bold text-slate-900 tracking-tight leading-tight">
+        Preferências do Atlas e Lembretes de Partida
+      </h1>
+</div>
+<div class="space-y-6">
+<!-- CARD 1: Conta de Utilizador -->
+<section class="bg-white rounded-2xl p-7 border border-[#E9E4D8] shadow-[0_1px_3px_rgba(0,0,0,0.02)]" data-purpose="card-user-account">
+<!-- Header of Card -->
+<div class="flex items-start space-x-3.5 mb-6">
+<div class="mt-0.5 text-[#D97706]">
+<!-- Shield icon -->
+<svg class="w-5 h-5 text-[#EA580C]" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</div>
+<div>
+<h2 class="text-lg font-bold text-slate-900 leading-snug">Conta de Utilizador</h2>
+<p class="text-[13.5px] text-slate-500 mt-0.5">Inicie sessão ou crie uma conta para sincronizar as suas viagens na nuvem.</p>
+</div>
+</div>
+<!-- Inline Account Form -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+<!-- Email Input -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="page-email">Email</label>
+<input class="w-full input-warm rounded-lg px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none" id="page-email" type="email" value="exemplo@email.pt"/>
+</div>
+<!-- Password Input -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="page-password">Palavra-passe</label>
+<input class="w-full input-warm rounded-lg px-3.5 py-2.5 text-sm text-slate-800 tracking-wider focus:outline-none" id="page-password" type="password" value="••••••••"/>
+</div>
+</div>
+<!-- Bottom Action Row -->
+<div class="flex items-center justify-between pt-1">
+<button class="bg-[#111827] text-white text-xs font-semibold px-5 py-2.5 rounded-lg hover:bg-slate-800 transition-colors shadow-sm" id="card-login-btn">
+            Iniciar Sessão
+          </button>
+<button class="text-xs font-semibold text-[#D97706] hover:text-[#B45309] transition-colors" id="card-register-link">
+            Ainda não tem conta? Criar Conta
+          </button>
+</div>
+</section>
+<!-- CARD 2: Preferências Gerais (Idioma, Tema, PWA) -->
+<section class="bg-white rounded-2xl p-7 border border-[#E9E4D8] shadow-[0_1px_3px_rgba(0,0,0,0.02)] divide-y divide-[#F1EDE4]" data-purpose="card-system-preferences">
+<!-- Row 1: Idioma da Interface -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between pb-6 gap-4">
+<div>
+<h3 class="text-base font-bold text-slate-900">Idioma da Interface</h3>
+<p class="text-xs text-slate-500 mt-0.5">Suporte bilingue completo para Português (PT-PT) e Inglês.</p>
+</div>
+<!-- Toggle Group -->
+<div class="inline-flex rounded-lg p-0.5 bg-slate-100/60 border border-slate-200">
+<button class="px-3 py-1.5 text-xs font-medium rounded-md text-slate-700 hover:text-slate-900">English (EN)</button>
+<button class="px-3 py-1.5 text-xs font-semibold rounded-md bg-[#111827] text-white shadow-sm">Português (PT-PT)</button>
+</div>
+</div>
+<!-- Row 2: Tema Visual -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between py-6 gap-4">
+<div>
+<h3 class="text-base font-bold text-slate-900">Tema Visual</h3>
+<p class="text-xs text-slate-500 mt-0.5">Alterne entre Areia Quente e Atlas Meia-Noite.</p>
+</div>
+<!-- Toggle Group -->
+<div class="inline-flex rounded-lg p-0.5 bg-slate-100/60 border border-slate-200">
+<button class="px-3.5 py-1.5 text-xs font-semibold rounded-md bg-[#111827] text-white shadow-sm">Areia Quente (Claro)</button>
+<button class="px-3.5 py-1.5 text-xs font-medium rounded-md text-slate-700 hover:text-slate-900">Atlas Meia-Noite (Escuro)</button>
+</div>
+</div>
+<!-- Row 3: PWA e Modo Avião -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between pt-6 gap-4">
+<div class="flex items-start space-x-3">
+<div class="text-[#0D9488] mt-0.5">
+<!-- Wifi / Plane signal icon -->
+<svg class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</div>
+<div>
+<h3 class="text-base font-bold text-slate-900">PWA e Modo Avião</h3>
+<p class="text-xs text-slate-500 mt-0.5">PWA Pronto para Offline</p>
+</div>
+</div>
+<!-- Offline Cache Active Badge -->
+<div>
+<span class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-emerald-800 bg-[#E8F8F0] border border-[#A7F3D0]">
+<svg class="w-3.5 h-3.5 text-emerald-600" fill="currentColor" viewbox="0 0 20 20">
+<path clip-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" fill-rule="evenodd"></path>
+</svg>
+<span>Cache Offline Ativa</span>
+</span>
+</div>
+</div>
+</section>
+<!-- CARD 3: Lembretes de Partida por E-mail -->
+<section class="bg-white rounded-2xl p-7 border border-[#E9E4D8] shadow-[0_1px_3px_rgba(0,0,0,0.02)]" data-purpose="card-email-reminders">
+<h2 class="text-lg font-bold text-slate-900">Lembretes de Partida por E-mail</h2>
+<p class="text-[13.5px] text-slate-500 mt-1 mb-6">Receba um resumo antes da viagem com horários por confirmar e o Plano B meteorológico.</p>
+<!-- Checkbox with custom warm accent -->
+<div class="flex items-center space-x-3 mb-6">
+<input checked="" class="h-4.5 w-4.5 rounded border-slate-300 text-[#D97706] focus:ring-[#D97706] focus:ring-offset-0 transition cursor-pointer" id="enable-reminders" type="checkbox"/>
+<label class="text-xs font-medium text-slate-700 cursor-pointer select-none" for="enable-reminders">
+            Ativar lembrete automático por e-mail antes da partida e verificação meteorológica do Plano B
+          </label>
+</div>
+<!-- Form fields grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-7">
+<!-- E-mail de Destino -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="remind-email">E-mail de Destino</label>
+<input class="w-full input-warm rounded-lg px-3.5 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none" id="remind-email" type="email" value="traveller@atlasgenie.eu"/>
+</div>
+<!-- Enviar lembrete dias antes da partida -->
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1.5" for="remind-days">Enviar lembrete dias antes da partida</label>
+<input class="w-full input-warm rounded-lg px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none" id="remind-days" type="number" value="3"/>
+</div>
+</div>
+<!-- Submit Button -->
+<div>
+<button class="bg-[#D97706] hover:bg-[#B45309] text-white text-xs font-semibold px-5 py-3 rounded-lg transition-colors shadow-sm inline-flex items-center justify-center">
+            Guardar Preferências e Enviar Confirmação
+          </button>
+</div>
+</section>
+</div>
+</main>
+<!-- END: MainContent -->
+<!-- BEGIN: SiteFooter -->
+<footer class="bg-[#0D1525] text-white pt-14 pb-8 border-t border-slate-800 mt-16" data-purpose="site-footer">
+<div class="max-w-[1240px] mx-auto px-6">
+<!-- Top Section: Brand + Links + CTA -->
+<div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-8 pb-12 border-b border-slate-800/80">
+<!-- Left: Logo & Pitch -->
+<div class="max-w-md">
+<div class="flex items-center space-x-2.5 mb-3">
+<div class="w-6 h-6 flex items-center justify-center text-[#D97706]">
+<svg class="w-5 h-5 fill-current text-[#D97706]" viewbox="0 0 24 24">
+<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"></path>
+</svg>
+</div>
+<span class="text-xl font-bold tracking-tight text-white">AtlasGenie</span>
+</div>
+<p class="text-slate-400 text-xs leading-relaxed">
+            O único planeador de viagens onde sabe o que está verificado, quanto custa e mantém o controlo — a solo ou com o seu grupo.
+          </p>
+</div>
+<!-- Center: Quick Links -->
+<div class="grid grid-cols-2 gap-x-8 gap-y-3 text-xs text-slate-300 font-medium">
+<a class="hover:text-white transition-colors" href="#">Experimentar Demo</a>
+<a class="hover:text-white transition-colors" href="#">Painel de Viagens</a>
+<a class="hover:text-white transition-colors" href="#">Perguntas Frequentes</a>
+<a class="hover:text-white transition-colors flex items-center space-x-1" href="#">
+<svg class="w-3.5 h-3.5 text-slate-400" fill="currentColor" viewbox="0 0 24 24">
+<path clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" fill-rule="evenodd"></path>
+</svg>
+<span>Repositório GitHub</span>
+</a>
+</div>
+<!-- Right: Support CTA -->
+<div>
+<button class="bg-[#D97706] hover:bg-[#B45309] text-white px-5 py-2.5 rounded-lg text-xs font-semibold flex items-center space-x-2 transition-all shadow-md">
+<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Contactar Suporte</span>
+</button>
+</div>
+</div>
+<!-- Bottom Sub-Footer: Copyright & Trust Markers -->
+<div class="pt-6 flex flex-col md:flex-row justify-between items-center text-[11px] text-slate-500 gap-4">
+<div>
+          © 2026 AtlasGenie · Criado para viajantes independentes na Europa.
+        </div>
+<!-- Indicators -->
+<div class="flex items-center space-x-4 font-mono text-[10.5px]">
+<span class="inline-flex items-center space-x-1.5">
+<span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+<span class="text-slate-400">Fontes Oficiais Verificadas</span>
+</span>
+<span class="text-slate-600">·</span>
+<span class="inline-flex items-center space-x-1.5">
+<span class="w-2 h-2 rounded-full bg-amber-400 inline-block"></span>
+<span class="text-slate-400">~Estimativas IA</span>
+</span>
+<span class="text-slate-600">·</span>
+<span class="inline-flex items-center space-x-1">
+<span class="text-slate-400">⇄ Alterações Controladas por Si</span>
+</span>
+</div>
+</div>
+</div>
+</footer>
+<!-- END: SiteFooter -->
+<!-- BEGIN: AuthModal -->
+<!-- Dialog Container (Hidden by default, shown via JS) -->
+<div aria-modal="true" class="fixed inset-0 z-50 hidden" data-purpose="auth-modal" id="auth-modal" role="dialog">
+<!-- Semi-transparent Backdrop -->
+<div class="fixed inset-0 bg-slate-900/60 modal-backdrop transition-opacity" id="modal-backdrop"></div>
+<!-- Modal Box Container -->
+<div class="fixed inset-0 z-10 overflow-y-auto flex items-center justify-center p-4">
+<div class="bg-white rounded-2xl max-w-[450px] w-full p-6 sm:p-8 shadow-2xl border border-slate-200 relative transform transition-all">
+<!-- Top Close Button -->
+<button class="absolute top-5 right-5 text-slate-400 hover:text-slate-700 transition" id="close-modal-btn">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</button>
+<!-- Header Category Tag -->
+<div class="flex items-center space-x-2 text-[11px] font-bold tracking-widest text-[#D97706] uppercase mb-2">
+<!-- Shield Glyph -->
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewbox="0 0 24 24">
+<path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>ATLASGENIE • SINCRONIZAÇÃO NA NUVEM</span>
+</div>
+<!-- Dynamic Title -->
+<h3 class="text-xl font-bold text-slate-900 tracking-tight" id="modal-title">Iniciar Sessão</h3>
+<!-- Dynamic Description -->
+<p class="text-xs text-slate-500 mt-1 mb-5" id="modal-desc">
+          Inicie sessão ou crie uma conta para sincronizar as suas viagens na nuvem.
+        </p>
+<!-- Modal Form Fields -->
+<form class="space-y-3.5" onsubmit="event.preventDefault();">
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1" for="modal-input-email">Email</label>
+<input class="w-full input-warm rounded-lg px-3.5 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none" id="modal-input-email" type="email" value="exemplo@email.pt"/>
+</div>
+<div>
+<label class="block text-xs font-semibold text-slate-700 mb-1" for="modal-input-pass">Palavra-passe</label>
+<input class="w-full input-warm rounded-lg px-3.5 py-2 text-sm text-slate-800 tracking-wider focus:outline-none" id="modal-input-pass" type="password" value="••••••••"/>
+</div>
+<!-- Submit Button -->
+<div class="pt-1">
+<button class="w-full bg-[#111827] text-white py-2.5 rounded-lg text-xs font-semibold hover:bg-slate-800 transition-colors shadow-sm" id="modal-submit-btn" type="submit">
+              Iniciar Sessão
+            </button>
+</div>
+</form>
+<!-- Or divider -->
+<div class="relative my-4">
+<div class="absolute inset-0 flex items-center">
+<div class="w-full border-t border-slate-200"></div>
+</div>
+<div class="relative flex justify-center text-[11px]">
+<span class="bg-white px-2 text-slate-400">ou com e-mail</span>
+</div>
+</div>
+<!-- Google Auth Option -->
+<div>
+<button class="w-full flex items-center justify-center space-x-2 py-2 px-3 border border-slate-200 bg-[#FCFBF8] rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 transition" type="button">
+<svg class="w-3.5 h-3.5" viewbox="0 0 24 24">
+<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path>
+<path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"></path>
+<path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"></path>
+<path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"></path>
+</svg>
+<span>Continuar com Google</span>
+</button>
+</div>
+<!-- Footer Switch Mode -->
+<div class="mt-5 pt-3 flex items-center justify-between text-xs">
+<button class="font-medium text-[#D97706] hover:text-[#B45309] transition" id="modal-mode-toggle">
+            Ainda não tem conta? Criar Conta
+          </button>
+<button class="text-slate-500 hover:text-slate-800 transition" id="cancel-modal-btn">
+            Cancelar
+          </button>
+</div>
+</div>
+</div>
+</div>
+<!-- END: AuthModal -->
+<!-- BEGIN: InteractiveScripts -->
+<script data-purpose="auth-modal-interactivity">
+    // State management for modal
+    const modal = document.getElementById('auth-modal');
+    const modalBackdrop = document.getElementById('modal-backdrop');
+    const openLoginBtn = document.getElementById('open-login-btn');
+    const cardLoginBtn = document.getElementById('card-login-btn');
+    const cardRegisterLink = document.getElementById('card-register-link');
+    const closeModalBtn = document.getElementById('close-modal-btn');
+    const cancelModalBtn = document.getElementById('cancel-modal-btn');
+    const modalModeToggle = document.getElementById('modal-mode-toggle');
+    
+    const modalTitle = document.getElementById('modal-title');
+    const modalSubmitBtn = document.getElementById('modal-submit-btn');
+
+    let isRegisterMode = false;
+
+    function updateModalUI() {
+      if (isRegisterMode) {
+        modalTitle.textContent = 'Criar Conta';
+        modalSubmitBtn.textContent = 'Criar Conta';
+        modalModeToggle.innerHTML = '<span class="border border-[#D97706] rounded px-1.5 py-0.5 font-semibold text-[#D97706]">Já tem conta? Iniciar Sessão</span>';
+      } else {
+        modalTitle.textContent = 'Iniciar Sessão';
+        modalSubmitBtn.textContent = 'Iniciar Sessão';
+        modalModeToggle.innerHTML = 'Ainda não tem conta? <span class="font-semibold underline">Criar Conta</span>';
+      }
+    }
+
+    function openModal(register = false) {
+      isRegisterMode = register;
+      updateModalUI();
+      modal.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal() {
+      modal.classList.add('hidden');
+      document.body.style.overflow = 'auto';
+    }
+
+    // Trigger listeners
+    openLoginBtn.addEventListener('click', () => openModal(false));
+    cardLoginBtn.addEventListener('click', () => openModal(false));
+    cardRegisterLink.addEventListener('click', () => openModal(true));
+    closeModalBtn.addEventListener('click', closeModal);
+    cancelModalBtn.addEventListener('click', closeModal);
+    modalBackdrop.addEventListener('click', closeModal);
+
+    modalModeToggle.addEventListener('click', () => {
+      isRegisterMode = !isRegisterMode;
+      updateModalUI();
+    });
+
+    // Close on Escape key
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+        closeModal();
+      }
+    });
+  </script>
+<!-- END: InteractiveScripts -->
+</body></html>

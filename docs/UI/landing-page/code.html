@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+
+<html lang="pt"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AtlasGenie — O único planeador de viagens verificado</title>
+<!-- Tailwind CSS v3 CDN with plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              amber: '#d97706',
+              amberDark: '#b45309',
+              orange: '#ea580c',
+              cream: '#fcfbf8',
+              cardBg: '#0f172a',
+              cardBorder: '#1e293b',
+              badgeGreen: '#10b981',
+              badgeAmber: '#f59e0b'
+            }
+          },
+          fontFamily: {
+            serif: ['Newsreader', 'Georgia', 'serif'],
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&amp;display=swap" rel="stylesheet"/>
+<style data-purpose="custom-typography">
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background-color: #fbfbf9;
+      color: #1e293b;
+      -webkit-font-smoothing: antialiased;
+    }
+    .font-serif-heading {
+      font-family: 'Newsreader', Georgia, serif;
+    }
+  </style>
+<style data-purpose="animations-and-svg">
+    .route-glow {
+      filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.45));
+    }
+    .node-pulse {
+      animation: pulseNode 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulseNode {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: .75; transform: scale(1.15); }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-amber-100 selection:text-amber-900">
+<!-- BEGIN: MainHeader -->
+<header class="w-full bg-[#fbfbf9]/95 sticky top-0 z-50 border-b border-gray-200/70 backdrop-blur-sm">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between text-xs sm:text-sm font-medium text-slate-700">
+<!-- Brand Logo -->
+<a class="flex items-center gap-2 group" href="#">
+<div class="w-6 h-6 rounded-full bg-gradient-to-tr from-orange-500 to-amber-400 flex items-center justify-center shadow-inner">
+<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24">
+<circle cx="12" cy="12" r="9" stroke="currentColor"></circle>
+<path d="M12 3v3m0 12v3M3 12h3m12 0h3M9.5 9.5l5 5" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</div>
+<span class="font-serif-heading text-lg sm:text-xl font-bold tracking-tight text-slate-900 group-hover:text-amber-700 transition">AtlasGenie</span>
+</a>
+<!-- Desktop Navigation Menu -->
+<nav class="hidden md:flex items-center space-x-6 text-slate-600">
+<a class="hover:text-slate-900 transition" href="#demo">Modo Demo</a>
+<a class="hover:text-slate-900 transition" href="#viagens">As Minhas Viagens</a>
+<a class="hover:text-slate-900 transition" href="#nova">Nova Viagem</a>
+<a class="hover:text-slate-900 transition" href="#definicoes">Definições</a>
+<span class="text-slate-300">|</span>
+<button aria-label="Alterar idioma para inglês" class="hover:text-slate-900 transition font-semibold">EN</button>
+<button aria-label="Alternar modo escuro" class="flex items-center gap-1.5 hover:text-slate-900 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Escuro</span>
+</button>
+</nav>
+<!-- Action Buttons -->
+<div class="flex items-center space-x-3">
+<button class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-700 hover:text-slate-900 transition border border-gray-200 rounded-full hover:bg-gray-50">
+<svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Iniciar Sessão</span>
+</button>
+<a class="inline-flex items-center justify-center px-4 py-1.5 text-xs sm:text-sm font-semibold rounded-full text-white bg-slate-900 hover:bg-slate-800 transition shadow-sm" href="#gerador">
+          Começar a Planear
+        </a>
+</div>
+</div>
+</header>
+<!-- END: MainHeader -->
+<main class="flex-grow">
+<!-- BEGIN: HeroSection -->
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-14 lg:pt-16 lg:pb-20">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+<!-- Left Column: Copy & CTAs -->
+<div class="lg:col-span-7 flex flex-col justify-center">
+<!-- Category Supertitle -->
+<div class="inline-flex items-center text-[11px] font-bold tracking-widest text-[#b45309] uppercase mb-4">
+            ATLAS DE VIAGENS EUROPEU VERIFICADO • PT-PT &amp; EN
+          </div>
+<!-- Main Serif Headline -->
+<h1 class="font-serif-heading text-3xl sm:text-4xl lg:text-[45px] leading-[1.18] font-bold text-slate-950 tracking-tight">
+            O único planeador de viagens onde sabe o que está verificado, quanto custa e mantém o controlo.
+          </h1>
+<!-- Subtitle -->
+<p class="mt-5 text-sm sm:text-base text-slate-600 leading-relaxed max-w-xl">
+            Planeie a solo ou com o seu grupo pela Europa. Cada preço e horário mostra a fonte real de verificação, qualquer sugestão da IA pede a sua aprovação e a divisão de despesas já está incluída.
+          </p>
+<!-- Primary & Secondary CTA Buttons -->
+<div class="mt-7 flex flex-wrap items-center gap-3">
+<a class="px-5 py-3 rounded-full bg-[#d97706] hover:bg-[#b45309] text-white text-xs sm:text-sm font-semibold tracking-wide shadow-sm transition" href="#gerador">
+              Experimentar Demo — Sem Registo
+            </a>
+<a class="px-5 py-3 rounded-full bg-white hover:bg-slate-50 text-slate-800 text-xs sm:text-sm font-medium border border-gray-300 shadow-2xs transition" href="#explorar">
+              Criar o Meu Atlas
+            </a>
+</div>
+<!-- Micro-Trust Badges -->
+<div class="mt-8 flex flex-wrap items-center gap-y-2 gap-x-5 text-[11px] text-slate-600 font-medium">
+<span class="inline-flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+              Fontes Oficiais de Preços e Horários
+            </span>
+<span class="text-slate-300">•</span>
+<span class="inline-flex items-center gap-1.5">
+<svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+              Controlo Visual de Alterações (Aceitar / Rejeitar)
+            </span>
+<span class="text-slate-300 hidden sm:inline">•</span>
+<span class="inline-flex items-center gap-1.5">
+<svg class="w-3.5 h-3.5 text-teal-600" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+              Justiça de Grupo e Divisão de Contas
+            </span>
+</div>
+</div>
+<!-- Right Column: Interactive Map Graphic Card -->
+<div class="lg:col-span-5">
+<div class="bg-[#0b1322] border border-slate-800 text-white rounded-2xl p-5 shadow-2xl relative overflow-hidden flex flex-col justify-between min-h-[380px]">
+<!-- Card Header -->
+<div>
+<div class="flex items-center justify-between text-[11px] text-slate-400">
+<span>Carta I do Atlas • 38.7139° N, 9.1334° W</span>
+<span class="text-emerald-400 font-semibold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block"></span>
+                  92% Verificado
+                </span>
+</div>
+<h3 class="font-serif-heading text-lg sm:text-xl font-bold mt-1 text-slate-100">
+                Rotas Verificadas: Lisboa, Porto e Roma
+              </h3>
+</div>
+<!-- Route Visualization SVG -->
+<div class="py-6 my-auto relative">
+<svg class="w-full h-auto overflow-visible" fill="none" viewbox="0 0 380 180" xmlns="http://www.w3.org/2000/svg">
+<!-- Grid background lines -->
+<line stroke="#1e293b" stroke-dasharray="3 3" stroke-width="0.7" x1="10" x2="370" y1="30" y2="30"></line>
+<line stroke="#1e293b" stroke-dasharray="3 3" stroke-width="0.7" x1="10" x2="370" y1="90" y2="90"></line>
+<line stroke="#1e293b" stroke-dasharray="3 3" stroke-width="0.7" x1="10" x2="370" y1="150" y2="150"></line>
+<!-- Curving Route Line -->
+<path class="route-glow" d="M 40 140 C 90 140, 100 115, 140 110 C 180 105, 200 90, 240 85 C 280 80, 310 50, 340 50" stroke="url(#routeGradient)" stroke-linecap="round" stroke-width="3"></path>
+<defs>
+<lineargradient id="routeGradient" x1="0%" x2="100%" y1="0%" y2="0%">
+<stop offset="0%" stop-color="#38bdf8"></stop>
+<stop offset="45%" stop-color="#f59e0b"></stop>
+<stop offset="85%" stop-color="#10b981"></stop>
+</lineargradient>
+</defs>
+<!-- Point 1: Alfama -->
+<circle cx="40" cy="140" fill="#f8fafc" r="5" stroke="#38bdf8" stroke-width="2"></circle>
+<text fill="#94a3b8" font-family="sans-serif" font-size="9" text-anchor="middle" x="40" y="160">1. Alfama</text>
+<!-- Point 2: Campo de Ourique -->
+<circle cx="140" cy="110" fill="#f59e0b" r="6" stroke="#ffffff" stroke-width="2"></circle>
+<text fill="#cbd5e1" font-family="sans-serif" font-size="9" text-anchor="middle" x="140" y="130">2. Campo de Ourique</text>
+<!-- Point 3: Claustro do Azulejo -->
+<circle cx="240" cy="85" fill="#f8fafc" r="5" stroke="#3b82f6" stroke-width="2"></circle>
+<text fill="#cbd5e1" font-family="sans-serif" font-size="9" text-anchor="middle" x="240" y="70">3. Claustro do Azulejo</text>
+<!-- Point 4: Fado na Mouraria -->
+<circle class="node-pulse" cx="340" cy="50" fill="#10b981" r="7" stroke="#ffffff" stroke-width="2"></circle>
+<text fill="#6ee7b7" font-family="sans-serif" font-size="9" font-weight="600" text-anchor="middle" x="330" y="36">4. Fado na Mouraria</text>
+</svg>
+</div>
+<!-- Card Footer Badges -->
+<div class="pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between text-[11px] gap-2">
+<div class="flex items-center gap-1.5 text-slate-300">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+<span>Tarifa Oficial do Castelo de São Jorge</span>
+<span class="text-white font-medium ml-1">15.00€ • Verificado</span>
+</div>
+<div class="flex items-center gap-1.5 text-amber-400">
+<span class="w-2 h-2 rounded-full bg-amber-400"></span>
+<span class="text-slate-300">Alternativa Local:</span>
+<span class="text-teal-400 font-medium">14 min transporte</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- END: HeroSection -->
+<!-- BEGIN: LivePreviewGeneratorSection -->
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" data-purpose="sample-generator" id="gerador">
+<div class="bg-white rounded-2xl border border-gray-200 p-6 sm:p-8 shadow-xs">
+<!-- Input Top Bar -->
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-gray-100">
+<div>
+<h2 class="text-xl sm:text-2xl font-bold font-serif-heading text-slate-900">
+              Pré-visualização ao Vivo — Faça um Pedido ao Génio
+            </h2>
+<p class="text-xs sm:text-sm text-slate-500 mt-1">
+              Experimente como o AtlasGenie separa dados verificados de estimativas da IA (~) antes de criar conta.
+            </p>
+</div>
+<!-- Search / Prompt Input Group -->
+<div class="flex items-center gap-2 max-w-md w-full">
+<input class="w-full text-xs sm:text-sm rounded-lg border-gray-300 bg-gray-50 focus:bg-white focus:ring-1 focus:ring-amber-500 focus:border-amber-500 px-3.5 py-2 text-slate-800" id="city-input" placeholder="Digite uma cidade..." type="text" value="Lisboa"/>
+<button class="whitespace-nowrap px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs sm:text-sm font-semibold transition" id="generate-button" type="button">
+              Gerar Amostra de 2 Dias
+            </button>
+</div>
+</div>
+<!-- Sample Content Container -->
+<div class="mt-6">
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-5">
+<h3 class="text-sm sm:text-base font-semibold text-slate-900" id="sample-title">
+              Amostra Verificada de 2 Dias • Belém, Claustros de Azulejo e Miradouros
+            </h3>
+<a class="text-xs font-semibold text-amber-700 hover:text-amber-800 inline-flex items-center gap-1" href="#explorar">
+              Personalizar roteiro completo em Lisboa →
+            </a>
+</div>
+<!-- Two-column Day Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-5" id="days-container">
+<!-- DIA 1 -->
+<div class="bg-gray-50/70 border border-gray-200/90 rounded-xl p-4 sm:p-5 flex flex-col justify-between">
+<div>
+<span class="text-[10px] uppercase font-bold tracking-wider text-slate-500">AMOSTRA • DIA 1</span>
+<!-- Activity 1 -->
+<div class="mt-3.5 pb-4 border-b border-gray-200/60">
+<div class="flex items-center justify-between">
+<span class="text-xs sm:text-sm font-bold text-slate-900">
+<span class="text-amber-700 font-semibold mr-1.5">09:00</span> Mosteiro dos Jerónimos
+                    </span>
+<span class="inline-flex items-center text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span> 18€
+                    </span>
+</div>
+<p class="text-xs text-slate-600 mt-1 leading-relaxed">
+                    Entrada matinal nos claustros manuelinos da UNESCO antes dos grupos turísticos
+                  </p>
+<p class="text-[11px] text-slate-400 mt-1.5 font-mono">
+                    Fonte: Museus e Monumentos de Portugal (Verificado Out 2026) • Índice de multidão: 48/100
+                  </p>
+</div>
+<!-- Activity 2 -->
+<div class="mt-4">
+<div class="flex items-center justify-between">
+<span class="text-xs sm:text-sm font-bold text-slate-900">
+<span class="text-amber-700 font-semibold mr-1.5">11:30</span> Pastéis de Belém
+                    </span>
+<span class="inline-flex items-center text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span> 8€
+                    </span>
+</div>
+<p class="text-xs text-slate-600 mt-1 leading-relaxed">
+                    Receita original de 1837 servida morna nas salas de azulejo
+                  </p>
+<p class="text-[11px] text-slate-400 mt-1.5 font-mono">
+                    Fonte: Menu oficial pasteisdebelem.pt (Verificado Out 2026) • Índice de multidão: 62/100
+                  </p>
+</div>
+</div>
+</div>
+<!-- DIA 2 -->
+<div class="bg-gray-50/70 border border-gray-200/90 rounded-xl p-4 sm:p-5 flex flex-col justify-between">
+<div>
+<span class="text-[10px] uppercase font-bold tracking-wider text-slate-500">AMOSTRA • DIA 2</span>
+<!-- Activity 1 -->
+<div class="mt-3.5 pb-4 border-b border-gray-200/60">
+<div class="flex items-center justify-between">
+<span class="text-xs sm:text-sm font-bold text-slate-900">
+<span class="text-amber-700 font-semibold mr-1.5">10:30</span> Museu Nacional do Azulejo
+                    </span>
+<span class="inline-flex items-center text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span> 8€
+                    </span>
+</div>
+<p class="text-xs text-slate-600 mt-1 leading-relaxed">
+                    Cinco séculos de azulejaria portuguesa num convento de 1509
+                  </p>
+<p class="text-[11px] text-slate-400 mt-1.5 font-mono">
+                    Fonte: museudoazulejo.gov.pt (Verificado Out 2026) • Índice de multidão: 22/100
+                  </p>
+</div>
+<!-- Activity 2 -->
+<div class="mt-4">
+<div class="flex items-center justify-between">
+<span class="text-xs sm:text-sm font-bold text-slate-900">
+<span class="text-amber-700 font-semibold mr-1.5">13:15</span> Mercado de Campo de Ourique
+                    </span>
+<span class="inline-flex items-center text-xs font-medium text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+<span class="w-1.5 h-1.5 rounded-full bg-amber-400 mr-1.5"></span> ~16€
+                    </span>
+</div>
+<p class="text-xs text-slate-600 mt-1 leading-relaxed">
+                    Mercado de bairro autêntico como alternativa às zonas turísticas
+                  </p>
+<p class="text-[11px] text-slate-400 mt-1.5 font-mono">
+                    Fonte: Almoço estimado nas bancas de bairro • Índice de multidão: 18/100
+                  </p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- END: LivePreviewGeneratorSection -->
+<!-- BEGIN: SampleAtlasSection -->
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12" id="explorar">
+<div class="flex flex-col sm:flex-row sm:items-end justify-between mb-8 gap-4">
+<div>
+<h2 class="text-2xl sm:text-3xl font-serif-heading font-bold text-slate-900">
+            Explore Atlas de Exemplo Completos
+          </h2>
+<p class="text-xs sm:text-sm text-slate-600 mt-1.5 max-w-2xl">
+            Clique em qualquer atlas de exemplo para testar já o Simulador de Orçamento, Vibe Slider, trocas Anti-Turista, Medidor de Justiça e Divisão de Despesas.
+          </p>
+</div>
+<a class="text-xs sm:text-sm font-semibold text-[#b45309] hover:text-amber-700 whitespace-nowrap" href="#">
+          Ver todos os Atlas Demo →
+        </a>
+</div>
+<!-- 3 Columns Card Grid -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- Card 1: Lisboa -->
+<article class="bg-white rounded-xl border border-gray-200 p-5 flex flex-col justify-between hover:shadow-md transition">
+<div>
+<div class="text-[11px] text-slate-500 font-medium tracking-wide">
+              4 Dias • 3 Viajantes • €1050 Orçamento
+            </div>
+<h3 class="font-serif-heading text-xl font-bold text-slate-900 mt-1 mb-2">
+              Lisboa, Portugal
+            </h3>
+<p class="text-xs text-slate-600 leading-relaxed mb-6">
+              Alma de Alfama, Azulejos e Pôr do Sol no Tejo — inclui ligações oficiais de museus, Plano B para chuva, alternativas locais sem multidões e despesas de grupo.
+            </p>
+</div>
+<div>
+<div class="flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-gray-100 mb-3">
+<span>Membros do Grupo: Ana, Rui, Sofia</span>
+<span class="font-mono text-slate-400">Código: LISB0A26</span>
+</div>
+<button class="w-full py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold tracking-wide transition">
+              Abrir Atlas Demo de Lisboa
+            </button>
+</div>
+</article>
+<!-- Card 2: Porto -->
+<article class="bg-white rounded-xl border border-gray-200 p-5 flex flex-col justify-between hover:shadow-md transition">
+<div>
+<div class="text-[11px] text-slate-500 font-medium tracking-wide">
+              3 Dias • 2 Viajantes • €680 Orçamento
+            </div>
+<h3 class="font-serif-heading text-xl font-bold text-slate-900 mt-1 mb-2">
+              Porto, Portugal
+            </h3>
+<p class="text-xs text-slate-600 leading-relaxed mb-6">
+              Azulejos de São Bento, Clérigos e Caves de Gaia — inclui ligações oficiais de museus, Plano B para chuva, alternativas locais sem multidões e despesas de grupo.
+            </p>
+</div>
+<div>
+<div class="flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-gray-100 mb-3">
+<span>Membros do Grupo: Clara, Miguel</span>
+<span class="font-mono text-slate-400">Código: PORT026</span>
+</div>
+<button class="w-full py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold tracking-wide transition">
+              Abrir Atlas Demo de Porto
+            </button>
+</div>
+</article>
+<!-- Card 3: Roma -->
+<article class="bg-white rounded-xl border border-gray-200 p-5 flex flex-col justify-between hover:shadow-md transition">
+<div>
+<div class="text-[11px] text-slate-500 font-medium tracking-wide">
+              5 Dias • 2 Viajantes • €1450 Orçamento
+            </div>
+<h3 class="font-serif-heading text-xl font-bold text-slate-900 mt-1 mb-2">
+              Roma, Itália
+            </h3>
+<p class="text-xs text-slate-600 leading-relaxed mb-6">
+              Coliseu, Fórum Romano e Ruas de Monti — inclui ligações oficiais de museus, Plano B para chuva, alternativas locais sem multidões e despesas de grupo.
+            </p>
+</div>
+<div>
+<div class="flex items-center justify-between text-[11px] text-slate-500 pt-3 border-t border-gray-100 mb-3">
+<span>Membros do Grupo: Elena, Lucas</span>
+<span class="font-mono text-slate-400">Código: ROMA2026</span>
+</div>
+<button class="w-full py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold tracking-wide transition">
+              Abrir Atlas Demo de Roma
+            </button>
+</div>
+</article>
+</div>
+</section>
+<!-- END: SampleAtlasSection -->
+<!-- BEGIN: ValuePropositionSection -->
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+<!-- Section Title -->
+<h2 class="font-serif-heading text-2xl sm:text-3xl lg:text-[32px] font-bold text-slate-900 mb-8 max-w-2xl">
+        Desenhado para viajantes que detestam alucinações genéricas de IA
+      </h2>
+<!-- 2x2 Feature Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+<!-- Feature 1 -->
+<div class="bg-white border border-gray-200 rounded-xl p-6 hover:border-gray-300 transition">
+<h3 class="text-sm sm:text-base font-bold text-slate-900 mb-2">
+            01. Camada de Confiança e Fontes
+          </h3>
+<p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            Nunca adivinhe se um museu está mesmo aberto ou custa 12€. Cada actividade inclui selos separados para preço e horário com ligação oficial.
+          </p>
+</div>
+<!-- Feature 2 -->
+<div class="bg-white border border-gray-200 rounded-xl p-6 hover:border-gray-300 transition">
+<h3 class="text-sm sm:text-base font-bold text-slate-900 mb-2">
+            02. Orçamento Vivo com Simulador E-Se
+          </h3>
+<p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            Deslize o orçamento total e veja as opções (económico, médio, premium) ajustarem-se deterministicamente em tempo real — sem esperar pela IA.
+          </p>
+</div>
+<!-- Feature 3 -->
+<div class="bg-white border border-gray-200 rounded-xl p-6 hover:border-gray-300 transition">
+<h3 class="text-sm sm:text-base font-bold text-slate-900 mb-2">
+            03. Modo de Grupo e Medidor de Justiça
+          </h3>
+<p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            Partilhe um código de convite, vote nas actividades e deixe o Medidor de Justiça equilibrar os interesses e orçamentos de todos.
+          </p>
+</div>
+<!-- Feature 4 -->
+<div class="bg-white border border-gray-200 rounded-xl p-6 hover:border-gray-300 transition">
+<h3 class="text-sm sm:text-base font-bold text-slate-900 mb-2">
+            04. Filtro Anti-Turista e Plano B num Toque
+          </h3>
+<p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            Detete armadilhas turísticas (&gt;70/100) e troque por alternativas locais autênticas a 15 minutos, ou ative o Plano B para dias de chuva.
+          </p>
+</div>
+</div>
+</section>
+<!-- END: ValuePropositionSection -->
+<!-- BEGIN: FAQSection -->
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 mb-10" data-purpose="faq-section">
+<!-- Section Headers -->
+<div class="mb-8">
+<span class="text-[11px] font-bold tracking-widest text-[#b45309] uppercase block mb-1">
+          RESPOSTAS CLARAS • ZERO SURPRESAS
+        </span>
+<h2 class="font-serif-heading text-2xl sm:text-3xl font-bold text-slate-900">
+          Perguntas Frequentes
+        </h2>
+<p class="text-xs sm:text-sm text-slate-600 mt-1 max-w-xl">
+          Tudo o que precisa de saber sobre como o AtlasGenie mantém o seu roteiro verificado, flexível e justo para todo o grupo.
+        </p>
+</div>
+<!-- FAQ Accordion List -->
+<div class="space-y-3" id="faq-accordion">
+<!-- Accordion 1 (Default Open) -->
+<div class="bg-white border border-gray-200 rounded-xl overflow-hidden transition" data-faq="item">
+<button class="w-full text-left px-5 py-4 flex items-center justify-between text-xs sm:text-sm font-semibold text-slate-900 focus:outline-hidden" onclick="toggleFaq(this)" type="button">
+<span>O que é o AtlasGenie?</span>
+<svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 rotate-180 faq-icon" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<div class="px-5 pb-4 text-xs sm:text-sm text-slate-600 leading-relaxed faq-content">
+            Um planeador de viagens com IA que separa factos verificados de estimativas, mantendo-o no controlo do seu orçamento, ritmo e logística de grupo.
+          </div>
+</div>
+<!-- Accordion 2 -->
+<div class="bg-white border border-gray-200 rounded-xl overflow-hidden transition" data-faq="item">
+<button class="w-full text-left px-5 py-4 flex items-center justify-between text-xs sm:text-sm font-semibold text-slate-900 focus:outline-hidden" onclick="toggleFaq(this)" type="button">
+<span>Como sei se os preços e horários estão corretos?</span>
+<svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 faq-icon" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<div class="px-5 pb-4 text-xs sm:text-sm text-slate-600 leading-relaxed hidden faq-content">
+            Todos os itens marcados a verde contêm fontes diretas aos bilhetes oficiais e entidades de turismo atualizadas para a temporada atual.
+          </div>
+</div>
+<!-- Accordion 3 -->
+<div class="bg-white border border-gray-200 rounded-xl overflow-hidden transition" data-faq="item">
+<button class="w-full text-left px-5 py-4 flex items-center justify-between text-xs sm:text-sm font-semibold text-slate-900 focus:outline-hidden" onclick="toggleFaq(this)" type="button">
+<span>E se chover ou me sentir cansado?</span>
+<svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 faq-icon" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<div class="px-5 pb-4 text-xs sm:text-sm text-slate-600 leading-relaxed hidden faq-content">
+            O botão Plano B reorganiza o itinerário para locais fechados e acolhedores no raio de proximidade, sem perder reservas pré-existentes.
+          </div>
+</div>
+<!-- Accordion 4 -->
+<div class="bg-white border border-gray-200 rounded-xl overflow-hidden transition" data-faq="item">
+<button class="w-full text-left px-5 py-4 flex items-center justify-between text-xs sm:text-sm font-semibold text-slate-900 focus:outline-hidden" onclick="toggleFaq(this)" type="button">
+<span>Ajuda a gerir as despesas de grupo?</span>
+<svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 faq-icon" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<div class="px-5 pb-4 text-xs sm:text-sm text-slate-600 leading-relaxed hidden faq-content">
+            Sim. A plataforma divide equitativamente despesas em comum, rastreia quem pagou o quê e calcula acertos com conversão cambial exata.
+          </div>
+</div>
+</div>
+<!-- Bottom Help Box -->
+<div class="mt-5 bg-white border border-gray-200 rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+<span class="text-xs sm:text-sm text-slate-700 font-medium text-center sm:text-left">
+          Ainda tem alguma dúvida sobre a sua rota ou viagem de grupo?
+        </span>
+<a class="inline-flex items-center text-xs font-semibold px-4 py-2 border border-amber-300 bg-amber-50/60 hover:bg-amber-100 text-amber-900 rounded-lg transition whitespace-nowrap" href="#suporte">
+          Falar com o Apoio ao Viajante →
+        </a>
+</div>
+</section>
+<!-- END: FAQSection -->
+</main>
+<!-- BEGIN: MainFooter -->
+<footer class="bg-[#090d16] text-slate-400 text-xs pt-12 pb-8 border-t border-slate-900" id="suporte">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+<!-- Top Row -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-8 pb-10 border-b border-slate-800">
+<!-- Left Brand & Mission -->
+<div class="md:col-span-5">
+<div class="flex items-center gap-2 mb-3">
+<div class="w-5 h-5 rounded-full bg-gradient-to-tr from-orange-500 to-amber-400 flex items-center justify-center">
+<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24">
+<circle cx="12" cy="12" r="9" stroke="currentColor"></circle>
+<path d="M12 3v3m0 12v3M3 12h3m12 0h3M9.5 9.5l5 5" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</div>
+<span class="font-serif-heading text-lg font-bold text-white tracking-tight">AtlasGenie</span>
+</div>
+<p class="text-slate-400 leading-relaxed text-xs max-w-sm">
+            O único planeador de viagens onde sabe o que está verificado, quanto custa e mantém o controlo — a solo ou com o seu grupo.
+          </p>
+</div>
+<!-- Middle Quick Links -->
+<div class="md:col-span-4 flex flex-col sm:flex-row gap-6 sm:gap-12">
+<div class="space-y-2.5">
+<a class="block hover:text-white transition" href="#gerador">Experimentar Demo</a>
+<a class="block hover:text-white transition" href="#perguntas">Perguntas Frequentes</a>
+</div>
+<div class="space-y-2.5">
+<a class="block hover:text-white transition" href="#painel">Painel de Viagens</a>
+<a class="inline-flex items-center gap-1.5 hover:text-white transition" href="https://github.com" rel="noreferrer" target="_blank">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Repositório GitHub</span>
+</a>
+</div>
+</div>
+<!-- Right Support CTA Button -->
+<div class="md:col-span-3 flex md:justify-end items-start">
+<a class="inline-flex items-center gap-2 px-4 py-2.5 bg-[#ea580c] hover:bg-[#c2410c] text-white rounded-lg font-semibold text-xs transition shadow-sm" href="mailto:ajuda@atlasgenie.com">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Contactar Suporte</span>
+</a>
+</div>
+</div>
+<!-- Bottom Bar: Copyright & Legend Indicators -->
+<div class="pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-[11px] text-slate-500">
+<div>
+          © 2026 AtlasGenie • Criado para viajantes independentes na Europa.
+        </div>
+<!-- Legend Pill Markers -->
+<div class="flex flex-wrap items-center gap-4 text-slate-400">
+<span class="inline-flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            Fontes Oficiais Verificadas
+          </span>
+<span class="inline-flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            ~Estimativas IA
+          </span>
+<span class="inline-flex items-center gap-1.5">
+<svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+            Alterações Controladas por Si
+          </span>
+</div>
+</div>
+</div>
+</footer>
+<!-- END: MainFooter -->
+<!-- BEGIN: InteractiveScripts -->
+<script data-purpose="faq-accordion-handler">
+    function toggleFaq(button) {
+      const parent = button.parentElement;
+      const content = parent.querySelector('.faq-content');
+      const icon = button.querySelector('.faq-icon');
+      
+      const isOpen = !content.classList.contains('hidden');
+      
+      // Close all items in accordion
+      document.querySelectorAll('#faq-accordion [data-faq="item"]').forEach(item => {
+        item.querySelector('.faq-content').classList.add('hidden');
+        item.querySelector('.faq-icon').classList.remove('rotate-180');
+      });
+
+      // Toggle current item
+      if (isOpen) {
+        content.classList.add('hidden');
+        icon.classList.remove('rotate-180');
+      } else {
+        content.classList.remove('hidden');
+        icon.classList.add('rotate-180');
+      }
+    }
+  </script>
+<script data-purpose="sample-generator-interactivity">
+    document.addEventListener('DOMContentLoaded', () => {
+      const cityInput = document.getElementById('city-input');
+      const generateBtn = document.getElementById('generate-button');
+      const sampleTitle = document.getElementById('sample-title');
+
+      const mockPresets = {
+        lisboa: {
+          title: "Amostra Verificada de 2 Dias • Belém, Claustros de Azulejo e Miradouros",
+          link: "Personalizar roteiro completo em Lisboa →"
+        },
+        porto: {
+          title: "Amostra Verificada de 2 Dias • Ribeira, Caves de Gaia e Serralves",
+          link: "Personalizar roteiro completo em Porto →"
+        },
+        roma: {
+          title: "Amostra Verificada de 2 Dias • Coliseu, Trastevere e Fórum Imperial",
+          link: "Personalizar roteiro completo em Roma →"
+        }
+      };
+
+      generateBtn.addEventListener('click', () => {
+        const cityName = cityInput.value.trim().toLowerCase();
+        generateBtn.textContent = 'A gerar...';
+        generateBtn.disabled = true;
+
+        setTimeout(() => {
+          if (mockPresets[cityName]) {
+            sampleTitle.innerHTML = `${mockPresets[cityName].title}`;
+          } else {
+            const formatted = cityInput.value.trim().charAt(0).toUpperCase() + cityInput.value.trim().slice(1);
+            sampleTitle.innerHTML = `Amostra Verificada de 2 Dias &bull; Centro Histórico e Locais Icónicos de ${formatted || 'Lisboa'}`;
+          }
+          generateBtn.textContent = 'Gerar Amostra de 2 Dias';
+          generateBtn.disabled = false;
+        }, 350);
+      });
+    });
+  </script>
+<!-- END: InteractiveScripts -->
+</body></html>

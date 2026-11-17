@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+
+<html lang="pt"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Treviso, Veneza, Italy Atlas - AtlasGenie</title>
+<!-- Tailwind CSS v3 CDN with forms and container queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Custom Configuration -->
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            sand: {
+              50: '#FDFBF7',
+              100: '#FAF7F2',
+              200: '#F4EFE6',
+              300: '#E8E1D5',
+              400: '#D5CBB9',
+            },
+            brand: {
+              orange: '#D97706',
+              darkorange: '#C25E00',
+              teal: '#0D766E',
+              navy: '#0F172A',
+            }
+          },
+          fontFamily: {
+            serif: ['Georgia', 'Cambria', '"Times New Roman"', 'Times', 'serif'],
+            sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+<!-- Custom CSS for specific styling details -->
+<style data-purpose="custom-utilities">
+    /* Subtle custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #F4EFE6;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #D5CBB9;
+      border-radius: 3px;
+    }
+    .slider-orange::-webkit-slider-thumb {
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #D97706;
+      cursor: pointer;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .slider-orange::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #D97706;
+      cursor: pointer;
+      border: 2px solid white;
+    }
+  </style>
+</head>
+<body class="bg-[#FAF7F2] text-slate-800 font-sans antialiased min-h-screen flex flex-col justify-between selection:bg-amber-100">
+<!-- BEGIN: SiteHeader -->
+<header class="bg-[#FAF7F2]/90 sticky top-0 z-40 border-b border-sand-200/80 backdrop-blur-sm px-4 sm:px-8 py-2.5">
+<div class="max-w-[1400px] mx-auto flex items-center justify-between">
+<!-- Brand Logo & Main Nav -->
+<div class="flex items-center space-x-6 sm:space-x-8">
+<a class="text-2xl font-serif font-black tracking-tight text-slate-900 flex items-center gap-1" href="#">
+          AtlasGenie
+        </a>
+<nav class="hidden md:flex items-center space-x-5 text-[13px] font-medium text-slate-600">
+<a class="hover:text-slate-900 transition-colors" href="#">Modo Demo</a>
+<a class="hover:text-slate-900 transition-colors" href="#">As Minhas Viagens</a>
+<a class="hover:text-slate-900 transition-colors" href="#">Nova Viagem</a>
+<a class="hover:text-slate-900 transition-colors" href="#">Definições</a>
+<a class="hover:text-slate-900 transition-colors" href="#">EN</a>
+<a class="hover:text-slate-900 transition-colors" href="#">Escuro</a>
+</nav>
+</div>
+<!-- User Actions & Global CTA -->
+<div class="flex items-center space-x-2.5 sm:space-x-3 text-xs">
+<button class="bg-[#00685b] hover:bg-[#005247] text-white px-3.5 py-1.5 rounded-md font-medium flex items-center gap-1.5 transition-colors shadow-sm">
+<span>↓</span> Instalar Aplicação
+        </button>
+<button class="flex items-center gap-1 px-2.5 py-1 border border-sand-300 rounded bg-white text-slate-700 font-medium hover:bg-slate-50">
+<span class="w-4 h-4 bg-orange-600 text-white rounded text-[10px] flex items-center justify-center font-bold">R</span>
+<span>Random</span>
+<span class="text-[9px] text-slate-400">▼</span>
+</button>
+<button class="hidden sm:inline-flex items-center gap-1 px-2.5 py-1.5 border border-slate-300 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+<span>↪</span> Terminar Sessão
+        </button>
+<button class="bg-slate-900 hover:bg-slate-800 text-white px-3.5 py-1.5 rounded-md font-medium transition-colors shadow-sm">
+          Começar a Planear
+        </button>
+</div>
+</div>
+</header>
+<!-- END: SiteHeader -->
+<!-- BEGIN: MainContent -->
+<main class="flex-grow max-w-[1400px] w-full mx-auto px-4 sm:px-8 py-5">
+<!-- BEGIN: TripHeaderInfo -->
+<div class="mb-5">
+<!-- Back Link -->
+<a class="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium border border-sand-300 px-3 py-1 rounded bg-white/70 mb-3 shadow-2xs hover:bg-white transition-all" href="#">
+        ← Voltar às Minhas Viagens
+      </a>
+<!-- Date, Travelers & Reliability Meta Pill -->
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-slate-600 mb-2">
+<span class="font-mono text-slate-700">2026-11-18 → 2026-11-21</span>
+<span>·</span>
+<span>2 Viajantes</span>
+<span>·</span>
+<div class="inline-flex items-center gap-1 bg-amber-50/70 border border-amber-200/80 px-2 py-0.5 rounded text-amber-900 font-medium">
+<span>📋 Total da Viagem: ~€208 (~€104/pessoa)</span>
+</div>
+<div class="inline-flex rounded border border-sand-300 bg-white text-[11px] overflow-hidden">
+<span class="px-1.5 py-0.5 text-slate-500 hover:bg-slate-50 border-r border-sand-200">económico</span>
+<span class="px-1.5 py-0.5 bg-sand-200 text-slate-800 font-semibold border-r border-sand-300">médio</span>
+<span class="px-1.5 py-0.5 text-slate-500 hover:bg-slate-50">premium</span>
+</div>
+<span>·</span>
+<span class="inline-flex items-center gap-1 text-slate-600 font-medium">
+          Fiabilidade: <span class="text-emerald-500">●</span> <span class="text-emerald-700 font-semibold">0% Verificado (0/24)</span>
+</span>
+</div>
+<!-- Main Trip Title (Serif) -->
+<h1 class="text-2xl sm:text-3xl lg:text-4xl font-serif font-black tracking-tight text-slate-900 mb-4">
+        Treviso, Veneza, Italy Atlas
+      </h1>
+<!-- Navigation & Action Buttons Bar -->
+<div class="flex flex-wrap items-center justify-between gap-3 border-b border-sand-300/80 pb-3.5">
+<!-- Action Sub-buttons & 4 Primary Tabs -->
+<div class="flex flex-wrap items-center gap-2">
+<!-- Undo button -->
+<button class="text-xs px-2.5 py-1.5 rounded border border-amber-300/70 bg-amber-50/50 text-amber-800 hover:bg-amber-100/60 font-medium transition-colors">
+            ↶ Anular última alteração aceite
+          </button>
+<!-- 4 Core Navigation Tabs -->
+<div class="inline-flex rounded-md p-0.5 border border-sand-300 bg-sand-200/60 text-xs font-medium" data-purpose="tab-navigation">
+<button class="tab-button px-3 py-1 rounded shadow-2xs bg-white text-slate-900 font-semibold transition-all" id="tab-btn-roteiro" onclick="switchTab('roteiro')">
+              Roteiro e Mapa
+            </button>
+<button class="tab-button px-3 py-1 rounded text-slate-600 hover:text-slate-900 font-medium transition-all" id="tab-btn-orcamento" onclick="switchTab('orcamento')">
+              Orçamento Vivo
+            </button>
+<button class="tab-button px-3 py-1 rounded text-slate-600 hover:text-slate-900 font-medium transition-all" id="tab-btn-grupo" onclick="switchTab('grupo')">
+              Grupo e Justiça
+            </button>
+<button class="tab-button px-3 py-1 rounded text-slate-600 hover:text-slate-900 font-medium transition-all" id="tab-btn-despesas" onclick="switchTab('despesas')">
+              Dividir Despesas
+            </button>
+</div>
+</div>
+<!-- Right Side Quick Actions -->
+<div class="flex flex-wrap items-center gap-2 text-xs">
+<button class="inline-flex items-center gap-1.5 px-3 py-1.5 border border-sand-300 rounded bg-white text-slate-700 hover:bg-slate-50 transition-colors">
+<span>🧭</span> Visita Guiada
+          </button>
+<button class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-sm transition-colors">
+<span>💾</span> Guardar Viagem
+          </button>
+<button class="inline-flex items-center gap-1 px-3 py-1.5 border border-sand-300 rounded bg-white text-slate-700 hover:bg-slate-50 transition-colors">
+<span>📥</span> Exportar / Descarregar <span class="text-[9px]">▼</span>
+</button>
+</div>
+</div>
+<!-- Atlas Genie Floating Assistant Trigger -->
+<div class="mt-2.5">
+<button class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#111827] text-white text-xs font-medium shadow-sm hover:bg-black transition-colors">
+<span>💬</span> Assistente Atlas Genie
+        </button>
+</div>
+</div>
+<!-- END: TripHeaderInfo -->
+<!-- BEGIN: TabContentContainer -->
+<div class="relative mt-4">
+<!-- ======================================================== -->
+<!-- TAB 1: ROTEIRO E MAPA -->
+<!-- ======================================================== -->
+<div class="tab-pane block space-y-4" id="tab-roteiro">
+<!-- Day Selector & Action Strip -->
+<div class="flex flex-wrap items-center justify-between gap-3 bg-transparent py-1">
+<!-- Days Pill Bar -->
+<div class="flex items-center gap-1.5">
+<button class="w-6 h-6 flex items-center justify-center text-xs text-slate-400 border border-sand-300 rounded bg-white hover:text-slate-700">◀</button>
+<div class="flex items-center gap-1 text-xs">
+<button class="px-3 py-1 rounded bg-slate-900 text-white font-medium shadow-xs">Dia 1 · 11-18</button>
+<button class="px-3 py-1 rounded bg-white border border-sand-300 text-slate-700 font-medium hover:bg-sand-100">Dia 2 · 11-19</button>
+<button class="px-3 py-1 rounded bg-white border border-sand-300 text-slate-700 font-medium hover:bg-sand-100">Dia 3 · 11-20</button>
+<button class="px-3 py-1 rounded bg-white border border-sand-300 text-slate-700 font-medium hover:bg-sand-100">Dia 4 · 11-21</button>
+</div>
+<button class="w-6 h-6 flex items-center justify-center text-xs text-slate-400 border border-sand-300 rounded bg-white hover:text-slate-700">▶</button>
+</div>
+<!-- Secondary Actions Strip -->
+<div class="flex flex-wrap items-center gap-2 text-xs">
+<button class="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-sand-300 bg-white text-slate-700 hover:bg-slate-50">
+<span class="text-sky-600">ℹ️</span> Compreender Selos <span class="text-[9px]">▼</span>
+</button>
+<button class="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-amber-300 bg-amber-50 text-amber-900 font-medium hover:bg-amber-100">
+<span>⇄</span> Testar Proposta de Alteração
+            </button>
+<button class="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-purple-200 bg-purple-50 text-purple-900 font-medium hover:bg-purple-100">
+<span>☂️</span> Mudar para Plano B (Chuva / Interior)
+            </button>
+<button class="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-sm">
+<span>+</span> Adicionar Atividade
+            </button>
+</div>
+</div>
+<!-- Day Overview Box with Vibe Slider -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-4 shadow-2xs space-y-3">
+<div class="flex flex-wrap items-center justify-between gap-2">
+<div>
+<span class="text-[11px] font-mono uppercase tracking-wider text-slate-400">Dia 1 · 2026-11-18</span>
+<h2 class="text-2xl font-serif font-black text-slate-900">Dia 1</h2>
+</div>
+<div class="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-900 text-xs px-3 py-1 rounded-md font-medium">
+<span>📋</span> Total Diário: ~€58 (~€29/pessoa)
+            </div>
+</div>
+<!-- Quick Metrics Bar -->
+<div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-sand-100 border border-sand-200">
+<span>⏱️</span> <span>Ritmo: <strong class="text-slate-800 font-semibold">Equilibrado (51/100)</strong></span>
+</div>
+<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-sand-100 border border-sand-200">
+<span>🕒</span> <span>Planeado: <strong class="text-slate-800 font-semibold">4.8h</strong></span>
+</div>
+<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-sand-100 border border-sand-200">
+<span>📎</span> <span>Trânsito: <strong class="text-slate-800 font-semibold">35m</strong></span>
+</div>
+<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-sand-100 border border-sand-200">
+<span>☕</span> <span>Margem Livre: <strong class="text-slate-800 font-semibold">6.7h</strong></span>
+</div>
+</div>
+<!-- Vibe Slider Control -->
+<div class="pt-2 border-t border-sand-200/70 flex flex-wrap items-center gap-3 text-xs text-slate-700">
+<span class="font-medium whitespace-nowrap">Ritmo do Dia (Vibe Slider) (1 = Descontraído → 5 = Intenso):</span>
+<div class="flex-grow max-w-md flex items-center gap-2">
+<input class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600" max="5" min="1" type="range" value="3"/>
+</div>
+<span class="font-bold text-slate-900">Nível 3/5</span>
+</div>
+</div>
+<!-- Day Expense Breakdown Mini-strip -->
+<div class="bg-white rounded-lg border border-sand-300/80 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+<div class="text-slate-600">
+<span class="font-bold text-slate-800 mr-2">Dia 1</span>
+            Alojamento <span class="font-semibold text-slate-700">~€0</span> · Refeições <span class="font-semibold text-slate-700">~€0</span> · Atividades <span class="font-semibold text-slate-700">~€58</span>
+</div>
+<div class="bg-slate-900 text-white px-3 py-1 rounded text-xs font-semibold flex items-center gap-1">
+<span>📋</span> Total Diário: ~€58 (~€29/pessoa)
+          </div>
+</div>
+<!-- Two Column Layout: Activities Timeline (Left) & Map View (Right) -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+<!-- LEFT COLUMN: Activity Cards Stream -->
+<div class="lg:col-span-7 space-y-4">
+<!-- Activity Card #1 -->
+<div class="bg-white rounded-xl border border-sand-300/90 p-4 shadow-2xs relative hover:border-sand-400 transition-all">
+<div class="flex items-start justify-between gap-2">
+<div class="flex items-start gap-2.5">
+<div class="cursor-grab text-slate-300 hover:text-slate-600 pt-0.5 text-xs font-mono">⋮⋮</div>
+<div>
+<div class="flex flex-wrap items-center gap-2 text-xs text-amber-900 font-mono font-bold">
+<span class="text-amber-700">#1</span>
+<span>·</span>
+<span>09:30 (95 min)</span>
+<span>·</span>
+<span class="text-slate-500 font-normal">📍</span>
+</div>
+<div class="text-xs text-slate-500 mt-0.5">
+                      Passeio pelo Centro Histórico e Património de Treviso — Centro Histórico, Treviso
+                      <span class="text-[11px] font-mono text-slate-400">(45.6669°, 12.2431°)</span>
+</div>
+<h3 class="text-base font-serif font-bold text-slate-900 mt-1 flex items-center gap-2">
+                      Passeio pelo Centro Histórico e Património de Treviso
+                      <button class="text-xs text-slate-400 hover:text-slate-700 font-sans">✎</button>
+</h3>
+</div>
+</div>
+<!-- Reorder / Remove Controls -->
+<div class="flex items-center gap-1 text-slate-400">
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-sand-100 text-slate-600 text-[10px]">↑</button>
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-sand-100 text-slate-600 text-[10px]">↓</button>
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-red-50 text-slate-400 hover:text-red-600 text-xs">✕</button>
+</div>
+</div>
+<p class="text-xs text-slate-600 mt-2.5 leading-relaxed">
+                Exploração pelas praças históricas, arquitetura tradicional e ruas de comércio local em Treviso.
+              </p>
+<p class="text-[11px] text-slate-400 italic mt-1">
+                Passeio pelo Centro Histórico e Património de Treviso (Espaço Principal): Experiência selecionada no recinto central.
+              </p>
+</div>
+<!-- Transit Separator #1 to #2 -->
+<div class="flex items-center justify-start gap-2 pl-6 py-0.5 text-xs text-slate-500">
+<span class="text-slate-400">↓</span>
+<span class="text-base">🚶</span>
+<span>A pé · <strong>11 min</strong> (0.8 km) · <span class="text-slate-400 font-mono">Fonte: estimado (~)</span></span>
+</div>
+<!-- Activity Card #2 -->
+<div class="bg-white rounded-xl border border-sand-300/90 p-4 shadow-2xs relative hover:border-sand-400 transition-all space-y-3">
+<div class="flex items-start justify-between gap-2">
+<div class="flex items-start gap-2.5">
+<div class="cursor-grab text-slate-300 hover:text-slate-600 pt-0.5 text-xs font-mono">⋮⋮</div>
+<div>
+<div class="flex flex-wrap items-center gap-2 text-xs text-amber-900 font-mono font-bold">
+<span class="text-amber-700">#2</span>
+<span>·</span>
+<span>13:00 (95 min)</span>
+<span>·</span>
+<span class="text-slate-500 font-normal">📍</span>
+</div>
+<div class="text-xs text-slate-500 mt-0.5">
+                      Mercado Regional e Cozinha Tradicional de Treviso — Entrada de Bairro Local
+                      <span class="text-[11px] font-mono text-slate-400">(45.6681°, 12.2339°)</span>
+</div>
+<h3 class="text-base font-serif font-bold text-slate-900 mt-1 flex items-center gap-2">
+                      Mercado Regional e Cozinha Tradicional de Treviso
+                      <button class="text-xs text-slate-400 hover:text-slate-700 font-sans">✎</button>
+</h3>
+</div>
+</div>
+<div class="flex items-center gap-1 text-slate-400">
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-sand-100 text-slate-600 text-[10px]">↑</button>
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-sand-100 text-slate-600 text-[10px]">↓</button>
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-red-50 text-slate-400 hover:text-red-600 text-xs">✕</button>
+</div>
+</div>
+<p class="text-xs text-slate-600 leading-relaxed">
+                Degustação de pratos regionais autênticos, café local e produtos frescos do mercado em Treviso.
+              </p>
+<p class="text-[11px] text-slate-400 italic">
+                Mercado Regional e Cozinha Tradicional de Treviso (Opção Económica Local): Visita autónoma autêntica de bairro ou balcão tradicional local.
+              </p>
+<!-- Why this callout -->
+<div class="text-xs text-teal-800 bg-teal-50/70 border border-teal-200/80 rounded-md p-2.5 flex items-start gap-1.5">
+<span class="text-sm">✨</span>
+<span><strong>Porquê isto:</strong> Escolhido à medida para o seu roteiro em Treviso (Itália), privilegiando autenticidade local e ritmo equilibrado.</span>
+</div>
+<!-- Price Box & Hours Strip -->
+<div class="space-y-1.5">
+<div class="bg-amber-50/60 border border-amber-200/90 rounded-md px-3 py-2 text-xs flex items-center justify-between text-amber-900">
+<div class="flex items-center gap-2">
+<span>🪙</span>
+<strong>~11€ (Mercado Regional e Cozinha Tradicional de Treviso (Opção Económica Local))</strong>
+</div>
+<span class="text-[11px] text-slate-400 font-mono">- Estimado</span>
+</div>
+<div class="bg-amber-50/60 border border-amber-200/90 rounded-md px-3 py-1.5 text-xs inline-flex items-center gap-2 text-amber-900">
+<span>🟡</span>
+<strong>09:30 - 18:30</strong>
+<span class="text-[11px] text-slate-400 font-mono">- Estimado</span>
+</div>
+</div>
+<!-- Tier Selection Buttons & Reaction Strip -->
+<div class="pt-2 border-t border-sand-200/70 flex flex-wrap items-center justify-between gap-2 text-xs">
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-[11px]">
+<button class="px-2 py-1 bg-sand-200 font-semibold text-slate-800 border-r border-sand-300">económico: €11</button>
+<button class="px-2 py-1 text-slate-600 hover:bg-slate-50 border-r border-sand-300">médio: €20</button>
+<button class="px-2 py-1 text-slate-600 hover:bg-slate-50">premium: €37</button>
+</div>
+<div class="flex items-center gap-2">
+<button class="inline-flex items-center gap-1 px-2 py-1 border border-sand-300 rounded text-slate-700 bg-white hover:bg-slate-50">
+<span class="text-amber-600">ⓘ</span> Ler Mais
+                  </button>
+<button class="p-1 rounded border border-sand-300 hover:bg-slate-100 text-xs">👍</button>
+<button class="p-1 rounded border border-sand-300 hover:bg-slate-100 text-xs">👎</button>
+<button class="inline-flex items-center gap-1 px-2 py-1 border border-sand-300 rounded text-slate-700 bg-white hover:bg-slate-50">
+                    + Despesa
+                  </button>
+</div>
+</div>
+</div>
+<!-- Transit Separator #2 to #3 -->
+<div class="flex items-center justify-start gap-2 pl-6 py-0.5 text-xs text-slate-500">
+<span class="text-slate-400">↓</span>
+<span class="text-base">🚶</span>
+<span>A pé · <strong>24 min</strong> (1.8 km) · <span class="text-slate-400 font-mono">Fonte: estimado (~)</span></span>
+</div>
+<!-- Activity Card #3 -->
+<div class="bg-white rounded-xl border border-sand-300/90 p-4 shadow-2xs relative hover:border-sand-400 transition-all space-y-3">
+<div class="flex items-start justify-between gap-2">
+<div class="flex items-start gap-2.5">
+<div class="cursor-grab text-slate-300 hover:text-slate-600 pt-0.5 text-xs font-mono">⋮⋮</div>
+<div>
+<div class="flex flex-wrap items-center gap-2 text-xs text-amber-900 font-mono font-bold">
+<span class="text-amber-700">#3</span>
+<span>·</span>
+<span>16:30 (95 min)</span>
+<span>·</span>
+<span class="text-slate-500 font-normal">📍</span>
+</div>
+<div class="text-xs text-slate-500 mt-0.5">
+                      Trilho Natural e Miradouro Panorâmico de Treviso — Entrada de Bairro Local
+                      <span class="text-[11px] font-mono text-slate-400">(45.6574°, 12.2520°)</span>
+</div>
+<h3 class="text-base font-serif font-bold text-slate-900 mt-1 flex items-center gap-2">
+                      Trilho Natural e Miradouro Panorâmico de Treviso
+                      <button class="text-xs text-slate-400 hover:text-slate-700 font-sans">✎</button>
+</h3>
+</div>
+</div>
+<div class="flex items-center gap-1 text-slate-400">
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-sand-100 text-slate-600 text-[10px]">↑</button>
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-sand-100 text-slate-600 text-[10px]">↓</button>
+<button class="w-6 h-6 rounded border border-sand-300 flex items-center justify-center hover:bg-red-50 text-slate-400 hover:text-red-600 text-xs">✕</button>
+</div>
+</div>
+<p class="text-xs text-slate-600 leading-relaxed">
+                Caminhada pela natureza e miradouro ao final da tarde com vista panorâmica sobre Treviso.
+              </p>
+<p class="text-[11px] text-slate-400 italic">
+                Trilho Natural e Miradouro Panorâmico de Treviso (Opção Económica Local): Visita autónoma autêntica de bairro ou balcão tradicional local.
+              </p>
+<!-- Why this callout -->
+<div class="text-xs text-teal-800 bg-teal-50/70 border border-teal-200/80 rounded-md p-2.5 flex items-start gap-1.5">
+<span class="text-sm">✨</span>
+<span><strong>Porquê isto:</strong> Escolhido à medida para o seu roteiro em Treviso (Itália), privilegiando autenticidade local e ritmo equilibrado.</span>
+</div>
+<!-- Price Box -->
+<div class="bg-amber-50/60 border border-amber-200/90 rounded-md px-3 py-2 text-xs flex items-center justify-between text-amber-900">
+<div class="flex items-center gap-2">
+<span>🪙</span>
+<strong>~6€ (Trilho Natural e Miradouro Panorâmico de Treviso (Opção Económica Local))</strong>
+</div>
+<span class="text-[11px] text-slate-400 font-mono">- Estimado</span>
+</div>
+</div>
+</div>
+<!-- RIGHT COLUMN: Styled Interactive Map View -->
+<div class="lg:col-span-5 sticky top-16">
+<div class="bg-white rounded-xl border border-sand-300/90 shadow-sm overflow-hidden flex flex-col h-[580px]">
+<!-- Map Top Controls -->
+<div class="px-3 py-2 bg-sand-50 border-b border-sand-200 flex items-center justify-between text-xs">
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden shadow-2xs">
+<button class="px-3 py-1 font-semibold text-slate-800 bg-sand-200 border-r border-sand-300">Mapa</button>
+<button class="px-3 py-1 text-slate-600 hover:bg-slate-50">Satélite</button>
+</div>
+<button class="p-1 text-slate-500 hover:text-slate-800 hover:bg-sand-200 rounded" title="Ecrã Completo">
+                  ⛶
+                </button>
+</div>
+<!-- Map Render Canvas Container -->
+<div class="relative flex-grow bg-[#EBF2E8] overflow-hidden" data-purpose="simulated-map">
+<!-- SVG Stylized Map Layer representing Treviso & River Sile -->
+<svg class="w-full h-full object-cover" viewbox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+<!-- Land background -->
+<rect fill="#E9ECE2" height="100%" width="100%"></rect>
+<!-- Waterways / River Sile -->
+<path d="M-20,380 Q100,390 180,360 T350,380 T520,350 L520,440 L-20,440 Z" fill="#C5DCF0" opacity="0.8"></path>
+<path d="M260,-20 Q240,120 280,220 T240,360" fill="none" stroke="#A8D0EE" stroke-linecap="round" stroke-width="12"></path>
+<path d="M120,400 Q200,410 320,440" fill="none" stroke="#A8D0EE" stroke-width="8"></path>
+<!-- Secondary Streets / Roads Grid -->
+<path d="M0,100 L500,120" stroke="#FDFEFE" stroke-width="4"></path>
+<path d="M0,260 L500,240" stroke="#FDFEFE" stroke-width="5"></path>
+<path d="M0,420 L500,430" stroke="#FDFEFE" stroke-width="4"></path>
+<path d="M100,0 L120,500" stroke="#FDFEFE" stroke-width="4"></path>
+<path d="M380,0 L360,500" stroke="#FDFEFE" stroke-width="4"></path>
+<!-- Main Highways (SS13 etc) -->
+<path d="M230,-10 L310,510" stroke="#F8D37E" stroke-width="5"></path>
+<path d="M50,180 L480,310" stroke="#F8D37E" stroke-width="4"></path>
+<!-- Green Urban Parks -->
+<path d="M80,180 Q120,160 160,200 T110,260 Z" fill="#D3E5C7"></path>
+<path d="M340,100 Q400,90 420,150 T360,200 Z" fill="#D3E5C7"></path>
+<!-- Treviso labels & POI Markers -->
+<text fill="#334155" font-family="system-ui" font-size="22" font-weight="bold" opacity="0.85" x="240" y="275">Treviso</text>
+<text fill="#64748B" font-family="system-ui" font-size="11" font-weight="600" x="360" y="220">SELVANESE</text>
+<text fill="#1E40AF" font-family="system-ui" font-size="11" font-weight="bold" x="290" y="415">Sile</text>
+<!-- Highway Badges -->
+<rect fill="#2563EB" height="14" rx="3" width="28" x="290" y="80"></rect>
+<text fill="#ffffff" font-family="system-ui" font-size="8" font-weight="bold" x="294" y="91">SS13</text>
+<rect fill="#2563EB" height="14" rx="3" width="28" x="360" y="325"></rect>
+<text fill="#ffffff" font-family="system-ui" font-size="8" font-weight="bold" x="364" y="336">SS13</text>
+<!-- Walking Route connecting markers -->
+<path d="M250,170 Q280,240 230,310" fill="none" stroke="#D97706" stroke-dasharray="6,4" stroke-width="3"></path>
+<!-- Location Pins -->
+<!-- Pin 1: Historic Center -->
+<circle cx="250" cy="170" fill="#D97706" r="10" stroke="#ffffff" stroke-width="2.5"></circle>
+<text fill="#ffffff" font-size="10" font-weight="bold" x="247" y="174">1</text>
+<!-- Pin 2: Food Market -->
+<circle cx="280" cy="240" fill="#D97706" r="9" stroke="#ffffff" stroke-width="2.5"></circle>
+<text fill="#ffffff" font-size="9" font-weight="bold" x="277" y="244">2</text>
+<!-- Pin 3: Natural Trail -->
+<circle cx="230" cy="310" fill="#D97706" r="9" stroke="#ffffff" stroke-width="2.5"></circle>
+<text fill="#ffffff" font-size="9" font-weight="bold" x="227" y="314">3</text>
+</svg>
+<!-- Interactive Popup Card on Map -->
+<div class="absolute top-12 left-10 sm:left-14 right-10 sm:right-14 bg-white/95 backdrop-blur-xs border border-slate-300 rounded-lg p-3 shadow-lg z-10">
+<div class="flex items-start justify-between">
+<span class="text-[11px] font-mono text-slate-500 font-semibold">09:30 · 95 min</span>
+<button class="text-slate-400 hover:text-slate-700 text-xs font-bold leading-none">✕</button>
+</div>
+<h4 class="text-xs font-serif font-bold text-slate-900 mt-1 leading-snug">
+                    Passeio pelo Centro Histórico e Património de Treviso
+                  </h4>
+<p class="text-[10px] text-slate-500 mt-1 leading-tight line-clamp-2">
+                    Passeio pelo Centro Histórico e Património de Treviso — Centro Histórico, Treviso
+                  </p>
+</div>
+<!-- Google Map attribution bar -->
+<div class="absolute bottom-0 inset-x-0 bg-white/80 text-[9px] text-slate-500 px-2 py-0.5 flex justify-between items-center">
+<span>Google</span>
+<div class="flex gap-2">
+<a class="hover:underline" href="#">Dados do mapa ©2026 Google</a>
+<a class="hover:underline" href="#">Termos</a>
+<a class="hover:underline" href="#">Comunicar um erro no mapa</a>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- END: TAB 1: ROTEIRO E MAPA -->
+<!-- ======================================================== -->
+<!-- TAB 2: ORÇAMENTO VIVO -->
+<!-- ======================================================== -->
+<div class="tab-pane hidden space-y-6" id="tab-orcamento">
+<!-- Top Budget Header Card -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 sm:p-6 shadow-2xs space-y-5">
+<div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+<div>
+<h2 class="text-xl sm:text-2xl font-serif font-black text-slate-900">
+                Orçamento Vivo e Simulador E-Se
+              </h2>
+<p class="text-xs text-slate-500 mt-1">
+                Simulador de Orçamento Total (Reequilíbrio determinístico instantâneo) · Todos os preços não verificados estão assinalados como estimativas (~).
+              </p>
+</div>
+<!-- Header Financial Badges -->
+<div class="flex flex-wrap items-center gap-6 text-right">
+<div>
+<div class="text-[10px] font-mono tracking-wider text-slate-400 uppercase">ORÇAMENTO ALVO</div>
+<div class="text-xl font-bold text-slate-900">€208</div>
+</div>
+<div>
+<div class="text-[10px] font-mono tracking-wider text-slate-400 uppercase">CUSTO ESTIMADO DO PLANO</div>
+<div class="text-xl font-bold text-amber-700">~€208</div>
+</div>
+<div>
+<div class="text-[10px] font-mono tracking-wider text-slate-400 uppercase">DESPESAS REAIS REGISTADAS</div>
+<div class="text-xl font-bold font-mono text-teal-600">€0.00</div>
+</div>
+</div>
+</div>
+<!-- Interactive Range Slider Simulation -->
+<div class="space-y-2 pt-2 border-t border-sand-200">
+<div class="flex justify-between items-center text-xs">
+<span class="text-slate-700 font-medium">Deslize o Orçamento Total da Viagem (150€ – 3.000€ para 2 viajantes)</span>
+<span class="font-bold text-slate-900">€104 / pessoa</span>
+</div>
+<div class="relative py-1">
+<input class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600" max="3000" min="150" type="range" value="208"/>
+</div>
+<div class="flex items-center gap-1.5 text-xs text-amber-800 bg-amber-50/70 border border-amber-200/80 px-3 py-1.5 rounded-md">
+<span>⚠️</span>
+<span>A aproximar-se ou a exceder o orçamento total definido.</span>
+</div>
+</div>
+<!-- Rebalance Status Summary Box -->
+<div class="bg-sand-50/70 border border-sand-200 rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+<div>
+<div class="font-mono font-bold text-slate-700 text-[11px] uppercase tracking-wider">
+                RESUMO DO REEQUILÍBRIO E-SE (0 AJUSTES DE ATIVIDADES)
+              </div>
+<p class="text-slate-500 mt-0.5">
+                Os escalões atuais já estão otimizados para €208. Deslize para a esquerda ou direita para simular poupanças ou melhorias.
+              </p>
+</div>
+<div class="flex items-center gap-2 shrink-0">
+<button class="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-800 text-white font-medium shadow-xs">
+                Aplicar Alterações de Escalão ao Roteiro
+              </button>
+<button class="px-3 py-1.5 rounded border border-sand-300 bg-white text-slate-700 hover:bg-sand-100 font-medium">
+                Repor Simulador
+              </button>
+</div>
+</div>
+</div>
+<!-- Comparative Tables: Estimated vs Real by Category & Group Targets -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+<!-- Category Breakdown Table -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs">
+<h3 class="text-base font-serif font-black text-slate-900 mb-3">
+              Estimado vs Real por Categoria
+            </h3>
+<div class="divide-y divide-sand-200 text-xs">
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Gastronomia</span>
+<span class="font-mono text-slate-600">Est: ~€90 · Real: €0.00</span>
+</div>
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Cultura</span>
+<span class="font-mono text-slate-600">Est: ~€58 · Real: €0.00</span>
+</div>
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Natureza</span>
+<span class="font-mono text-slate-600">Est: ~€20 · Real: €0.00</span>
+</div>
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Vida Noturna</span>
+<span class="font-mono text-slate-600">Est: ~€24 · Real: €0.00</span>
+</div>
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Compras</span>
+<span class="font-mono text-slate-600">Est: ~€16 · Real: €0.00</span>
+</div>
+</div>
+</div>
+<!-- Daily Group Cost List -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs">
+<h3 class="text-base font-serif font-black text-slate-900 mb-3">
+              Custo Diário e Metas por Pessoa no Grupo
+            </h3>
+<div class="divide-y divide-sand-200 text-xs">
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Dia 1 (2026-11-18)</span>
+<span class="font-mono font-semibold text-slate-800">~€58 total do grupo</span>
+</div>
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Dia 2 (2026-11-19)</span>
+<span class="font-mono font-semibold text-slate-800">~€52 total do grupo</span>
+</div>
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Dia 3 (2026-11-20)</span>
+<span class="font-mono font-semibold text-slate-800">~€68 total do grupo</span>
+</div>
+<div class="py-2.5 flex items-center justify-between">
+<span class="text-slate-700 font-medium">Dia 4 (2026-11-21)</span>
+<span class="font-mono font-semibold text-slate-800">~€30 total do grupo</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- END: TAB 2: ORÇAMENTO VIVO -->
+<!-- ======================================================== -->
+<!-- TAB 3: GRUPO E JUSTIÇA -->
+<!-- ======================================================== -->
+<div class="tab-pane hidden space-y-5" id="tab-grupo">
+<!-- Group Invitation Header Card -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div>
+<h2 class="text-xl font-serif font-black text-slate-900">
+              Modo de Grupo e Medidor de Justiça
+            </h2>
+<p class="text-xs text-slate-500 mt-1">
+              Código de Convite do Grupo: <strong class="text-amber-800 font-mono">TREV92</strong> · Partilhe com amigos para entrarem como convidados ou utilizadores registados.
+            </p>
+</div>
+<div class="flex items-center gap-3 shrink-0 text-xs">
+<span class="text-slate-500">A votar como:</span>
+<button class="bg-[#0D766E] hover:bg-[#0b5f59] text-white px-3.5 py-1.5 rounded-md font-medium shadow-xs transition-colors">
+              Copiar Ligação de Convite
+            </button>
+</div>
+</div>
+<!-- Representation & Fairness Meter -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div>
+<h3 class="text-base font-serif font-bold text-slate-900">
+              Representação de Interesses e Medidor de Justiça — Equilíbrio Global: 100%
+            </h3>
+<p class="text-xs text-slate-500 mt-1">
+              Mede quão bem os interesses e orçamentos de cada pessoa estão representados ao longo dos dias.
+            </p>
+</div>
+<button class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-md font-medium text-xs shadow-xs shrink-0 transition-colors">
+            Gerar Compromisso de Grupo com IA
+          </button>
+</div>
+<!-- Live Activity Voting Container -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs space-y-4">
+<h3 class="text-sm font-bold text-slate-900">
+            Votação de Atividades ao Vivo ( 👍 / 😐 / 👎 )
+          </h3>
+<!-- DIA 1 Activities -->
+<div class="space-y-2">
+<span class="text-[11px] font-mono font-bold tracking-wider text-slate-400 uppercase">DIA 1 ·</span>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Passeio pelo Centro Histórico e Património de Treviso</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Mercado Regional e Cozinha Tradicional de Treviso</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Trilho Natural e Miradouro Panorâmico de Treviso</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+</div>
+<!-- DIA 2 Activities -->
+<div class="space-y-2 pt-2">
+<span class="text-[11px] font-mono font-bold tracking-wider text-slate-400 uppercase">DIA 2 ·</span>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Museu de Arte e Arquitetura Clássica de Treviso</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Roteiro de Petiscos e Adega Histórica em Treviso</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Jardins Botânicos e Passeio Ribeirinho de Treviso</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+</div>
+<!-- DIA 3 Activities -->
+<div class="space-y-2 pt-2">
+<span class="text-[11px] font-mono font-bold tracking-wider text-slate-400 uppercase">DIA 3 ·</span>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Oficinas de Artesanato e Bairro Criativo de Veneza</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Taberna de Autor e Doçaria Conventual em Veneza</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Noite Cultural, Música ao Vivo e Terraço em Veneza</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+</div>
+<!-- DIA 4 Activities -->
+<div class="space-y-2 pt-2">
+<span class="text-[11px] font-mono font-bold tracking-wider text-slate-400 uppercase">DIA 4 ·</span>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Palácio Histórico e Pátios Secretos de Veneza</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Confeitaria Histórica e Torrefação Artesanal de Veneza</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+<div class="border border-sand-200 rounded-lg p-3 flex items-center justify-between text-xs hover:bg-sand-50/50 transition-colors">
+<span class="font-medium text-slate-800">Miradouro do Pôr do Sol e Encosta Panorâmica de Veneza</span>
+<div class="inline-flex rounded border border-sand-300 bg-white overflow-hidden text-xs">
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">👍</button>
+<button class="px-2 py-1 hover:bg-sand-100 border-r border-sand-300">😐</button>
+<button class="px-2 py-1 hover:bg-sand-100">👎</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Add Traveler Profile Bottom Card -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs space-y-3">
+<h3 class="text-base font-serif font-black text-slate-900">
+            Adicionar Perfil de Viajante
+          </h3>
+<div class="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
+<input class="sm:col-span-4 rounded border-sand-300 bg-sand-50/40 text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:ring-amber-500 text-xs" placeholder="Nome (ex: Tiago)" type="text"/>
+<input class="sm:col-span-4 rounded border-sand-300 bg-sand-50/40 text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:ring-amber-500 text-xs" placeholder="food, culture" type="text"/>
+<input class="sm:col-span-2 rounded border-sand-300 bg-sand-50/40 text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:ring-amber-500 text-xs" placeholder="350" type="number"/>
+<button class="sm:col-span-2 bg-[#0F172A] hover:bg-black text-white py-2 rounded font-medium text-xs transition-colors">
+              + Adicionar Perfil de Viajante
+            </button>
+</div>
+</div>
+</div>
+<!-- END: TAB 3: GRUPO E JUSTIÇA -->
+<!-- ======================================================== -->
+<!-- TAB 4: DIVIDIR DESPESAS -->
+<!-- ======================================================== -->
+<div class="tab-pane hidden space-y-5" id="tab-despesas">
+<!-- Header Panel with Actions -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div>
+<h2 class="text-xl font-serif font-black text-slate-900">
+              Dividir a Conta e Plano de Acerto
+            </h2>
+<p class="text-xs text-slate-500 mt-1">
+              Nota: O AtlasGenie apenas regista despesas e calcula o acerto ótimo — não processa pagamentos reais.
+            </p>
+</div>
+<div class="flex items-center gap-2 text-xs shrink-0">
+<button class="px-3 py-1.5 rounded border border-sand-300 bg-sand-50 hover:bg-sand-100 text-slate-700 font-medium">
+              Copiar Resumo
+            </button>
+<button class="px-3 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white font-medium">
+              Exportar CSV
+            </button>
+</div>
+</div>
+<!-- Net Balances & Minimum Settlements Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs min-h-[90px]">
+<h3 class="text-sm font-bold text-slate-900">
+              Saldos Líquidos (Soma = 0,00€)
+            </h3>
+</div>
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs min-h-[90px]">
+<h3 class="text-sm font-bold text-slate-900">
+              Transferências Mínimas para Acertar Contas
+            </h3>
+<p class="text-xs text-slate-500 mt-2">
+              Todas as contas estão saldadas! Todos estão a 0,00€.
+            </p>
+</div>
+</div>
+<!-- Register Expense Form Card -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs space-y-4">
+<h3 class="text-base font-serif font-bold text-slate-900">
+            Registar Despesa
+          </h3>
+<div class="space-y-3 text-xs">
+<!-- Row 1: Description, Value, Category -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+<div class="md:col-span-6 space-y-1">
+<label class="block text-slate-600 font-medium">Descrição</label>
+<input class="w-full rounded border-sand-300 bg-sand-50/40 text-xs focus:ring-amber-500 focus:border-amber-500" placeholder="ex: Jantar na tasca, Bilhetes de museu, Táxi Bolt..." type="text"/>
+</div>
+<div class="md:col-span-2 space-y-1">
+<label class="block text-slate-600 font-medium">Valor (€)</label>
+<input class="w-full rounded border-sand-300 bg-sand-50/40 text-xs focus:ring-amber-500 focus:border-amber-500" type="number" value="30"/>
+</div>
+<div class="md:col-span-4 space-y-1">
+<label class="block text-slate-600 font-medium">Categoria</label>
+<select class="w-full rounded border-sand-300 bg-sand-50/40 text-xs focus:ring-amber-500 focus:border-amber-500">
+<option selected="">Gastronomia e Bebidas</option>
+<option>Cultura e Museus</option>
+<option>Transportes</option>
+<option>Alojamento</option>
+<option>Lazer / Outros</option>
+</select>
+</div>
+</div>
+<!-- Row 2: Paid By, Division Mode, Linked Activity -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+<div class="md:col-span-4 space-y-1">
+<label class="block text-slate-600 font-medium">Pago Por</label>
+<select class="w-full rounded border-sand-300 bg-sand-50/40 text-xs focus:ring-amber-500 focus:border-amber-500">
+<option>Viajante 1 (Você)</option>
+<option>Viajante 2</option>
+</select>
+</div>
+<div class="md:col-span-4 space-y-1">
+<label class="block text-slate-600 font-medium">Modo de Divisão</label>
+<select class="w-full rounded border-sand-300 bg-sand-50/40 text-xs focus:ring-amber-500 focus:border-amber-500">
+<option selected="">Divisão Igual</option>
+<option>Por Percentagem</option>
+<option>Por Consumo Individual</option>
+</select>
+</div>
+<div class="md:col-span-4 space-y-1">
+<label class="block text-slate-600 font-medium">Associar a Atividade (Opcional)</label>
+<select class="w-full rounded border-sand-300 bg-sand-50/40 text-xs focus:ring-amber-500 focus:border-amber-500">
+<option selected="">Despesa Geral da Viagem</option>
+<option>#1 Passeio pelo Centro Histórico</option>
+<option>#2 Mercado Regional e Cozinha Tradicional</option>
+<option>#3 Trilho Natural e Miradouro</option>
+</select>
+</div>
+</div>
+<!-- Submit Button -->
+<div class="pt-2">
+<button class="bg-amber-600 hover:bg-amber-700 text-white font-medium px-4 py-2 rounded text-xs shadow-xs transition-colors">
+                + Registar Despesa
+              </button>
+</div>
+</div>
+</div>
+<!-- Registered Expenses History Card -->
+<div class="bg-white rounded-xl border border-sand-300/80 p-5 shadow-2xs space-y-2">
+<h3 class="text-sm font-bold text-slate-900">
+            Despesas Registadas (0)
+          </h3>
+<p class="text-xs text-slate-500">
+            Todas as contas estão saldadas! Todos estão a 0,00€.
+          </p>
+</div>
+</div>
+<!-- END: TAB 4: DIVIDIR DESPESAS -->
+</div>
+<!-- END: TabContentContainer -->
+</main>
+<!-- END: MainContent -->
+<!-- BEGIN: SiteFooter -->
+<footer class="bg-[#0b1329] text-slate-400 text-xs mt-12 py-8 border-t border-slate-800">
+<div class="max-w-[1400px] mx-auto px-4 sm:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
+<div>
+<div class="text-base font-serif font-bold text-white mb-1">AtlasGenie</div>
+<p class="text-slate-400 text-[11px]">
+          Motor Inteligente de Roteiros, Orçamento Vivo e Decisão de Grupo em Viagem.
+        </p>
+</div>
+<div class="flex flex-wrap items-center gap-5 text-[11px]">
+<a class="hover:text-white transition-colors" href="#">Experimentar Demo</a>
+<a class="hover:text-white transition-colors" href="#">Painel de Viagens</a>
+<a class="hover:text-white transition-colors" href="#">Perguntas Frequentes</a>
+<a class="hover:text-white transition-colors" href="#">GitHub</a>
+<button class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">
+          Contactar Suporte
+        </button>
+</div>
+</div>
+</footer>
+<!-- END: SiteFooter -->
+<!-- BEGIN: TabSwitchingScript -->
+<script data-purpose="tab-switcher">
+    // Interactive Tab Controller
+    function switchTab(activeTabId) {
+      // Hide all panes
+      const panes = document.querySelectorAll('.tab-pane');
+      panes.forEach(pane => {
+        pane.classList.add('hidden');
+        pane.classList.remove('block');
+      });
+
+      // Show selected pane
+      const targetPane = document.getElementById('tab-' + activeTabId);
+      if (targetPane) {
+        targetPane.classList.remove('hidden');
+        targetPane.classList.add('block');
+      }
+
+      // Reset all tab button styles
+      const tabButtons = document.querySelectorAll('.tab-button');
+      tabButtons.forEach(btn => {
+        btn.classList.remove('bg-white', 'text-slate-900', 'font-semibold', 'shadow-2xs');
+        btn.classList.add('text-slate-600', 'font-medium');
+      });
+
+      // Activate clicked button style
+      const activeBtn = document.getElementById('tab-btn-' + activeTabId);
+      if (activeBtn) {
+        activeBtn.classList.add('bg-white', 'text-slate-900', 'font-semibold', 'shadow-2xs');
+        activeBtn.classList.remove('text-slate-600', 'font-medium');
+      }
+    }
+  </script>
+<!-- END: TabSwitchingScript -->
+</body></html>

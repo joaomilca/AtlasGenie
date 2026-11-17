@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+
+<html lang="pt"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AtlasGenie - Modo Demo</title>
+<!-- Tailwind CSS v3 with Forms & Container Queries plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Fonts: Inter and Newsreader / Serif for headings -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&amp;family=Inter:wght@400;500;600;700&amp;family=Newsreader:ital,opsz,wght@0,6..72,600;0,6..72,700;1,6..72,600&amp;display=swap" rel="stylesheet"/>
+<script data-purpose="tailwind-config">
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            serif: ['Newsreader', 'Georgia', 'serif'],
+            brand: ['Newsreader', 'Georgia', 'serif'],
+          },
+          colors: {
+            pagebg: '#FBF9F5',
+            brandnavy: '#0E1726',
+            brandfooter: '#0A1120',
+            brandorange: '#D95C00',
+            brandhover: '#C24E00',
+            tealbtn: '#0D7B74',
+            tealhover: '#0A6660',
+            bordercard: '#E8E4DD',
+            textmuted: '#64748B',
+          }
+        }
+      }
+    }
+  </script>
+<style data-purpose="custom-styling">
+    /* Subtle typography tweaks and transitions */
+    body {
+      background-color: #FAF8F4;
+      color: #1E293B;
+      -webkit-font-smoothing: antialiased;
+    }
+    .serif-title {
+      font-family: 'Newsreader', Georgia, serif;
+      letter-spacing: -0.015em;
+    }
+    .brand-mark {
+      font-family: 'Newsreader', Georgia, serif;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col font-sans selection:bg-orange-100 selection:text-orange-900">
+<!-- BEGIN: NavigationBar -->
+<header class="w-full bg-[#FAF8F4] border-b border-[#EBE7DF] sticky top-0 z-40 px-6 lg:px-12 py-3" data-purpose="main-navigation">
+<div class="max-w-[1720px] mx-auto flex items-center justify-between">
+<!-- Brand Logo & Left Nav Links -->
+<div class="flex items-center space-x-9">
+<a class="flex items-center space-x-1 group" href="#demo">
+<span class="text-2xl font-bold text-[#0E1726] brand-mark tracking-tight">Atlas<span class="text-[#0E1726]">Genie</span></span>
+</a>
+<!-- Center/Left Navigation Menu -->
+<nav class="hidden md:flex items-center space-x-7 text-[13.5px] font-medium text-[#4B5563]">
+<!-- Active 'Modo Demo' link -->
+<a class="text-[#0E1726] font-semibold border-b-2 border-[#D95C00] pb-1 pt-1 -mb-[3px] transition-colors" href="#demo">
+            Modo Demo
+          </a>
+<a class="hover:text-[#0E1726] transition-colors py-1" href="#minhas-viagens">
+            As Minhas Viagens
+          </a>
+<a class="hover:text-[#0E1726] transition-colors py-1" href="#nova-viagem">
+            Nova Viagem
+          </a>
+<a class="hover:text-[#0E1726] transition-colors py-1" href="#definicoes">
+            Definições
+          </a>
+<button class="hover:text-[#0E1726] transition-colors text-[13px] uppercase tracking-wider font-semibold py-1" type="button">
+            EN
+          </button>
+<button class="hover:text-[#0E1726] transition-colors py-1 text-[13.5px]" type="button">
+            Escuro
+          </button>
+</nav>
+</div>
+<!-- Right Action Items -->
+<div class="flex items-center space-x-3">
+<!-- Install App Button -->
+<button class="hidden sm:inline-flex items-center space-x-1.5 bg-[#0D7B74] hover:bg-[#0A6660] text-white px-3.5 py-1.5 rounded-md text-[13px] font-medium transition shadow-sm" type="button">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1M7 10l5 5m0 0l5-5m-5 5V3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Instalar Aplicação</span>
+</button>
+<!-- User Profile Dropdown Pill -->
+<div class="flex items-center space-x-2 border border-[#E2DDD3] bg-white rounded-md px-2 py-1 text-[13px] text-[#334155] shadow-xs">
+<span class="w-5 h-5 rounded-full bg-[#EA580C] text-white text-[11px] font-bold flex items-center justify-center">R</span>
+<span class="font-medium text-[12.5px]">Random</span>
+<svg class="w-3 h-3 text-[#64748B]" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<!-- Terminar Sessão (Logout) -->
+<button class="hidden md:inline-flex items-center space-x-1.5 border border-[#E2DDD3] bg-white hover:bg-slate-50 text-[#334155] px-3 py-1.5 rounded-md text-[13px] font-medium transition" type="button">
+<svg class="w-3.5 h-3.5 text-[#64748B]" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6a2 2 0 012 2v1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Terminar Sessão</span>
+</button>
+<!-- Começar a Planear Button -->
+<a class="bg-[#0E1726] hover:bg-[#1E293B] text-white text-[13px] font-medium px-4 py-1.5 rounded-md transition shadow-xs" href="#comecar">
+          Começar a Planear
+        </a>
+</div>
+</div>
+</header>
+<!-- END: NavigationBar -->
+<!-- BEGIN: MainContent -->
+<main class="flex-grow max-w-[1720px] mx-auto w-full px-6 lg:px-12 pt-10 pb-20">
+<!-- Header Section -->
+<div class="flex flex-col md:flex-row md:items-end justify-between mb-9 pb-2 gap-4">
+<div>
+<!-- Orange Eyebrow -->
+<p class="text-[12px] font-bold tracking-wider text-[#D95C00] uppercase mb-2">
+          Ambiente Interativo Instantâneo • Sem Registo
+        </p>
+<!-- Main Page Title -->
+<h1 class="text-3xl md:text-[38px] font-bold text-[#0E1726] serif-title tracking-tight mb-3">
+          Explore Atlas de Exemplo Completos
+        </h1>
+<!-- Description -->
+<p class="text-[14px] text-[#475569] max-w-3xl leading-relaxed">
+          Cada viagem de exemplo inclui selos verificados e estimados, escalões de orçamento pré-gerados, alternativas locais, Plano B de chuva e um grupo ativo com votos e despesas partilhadas.
+        </p>
+</div>
+<!-- Action Button Right -->
+<div class="flex-shrink-0">
+<button class="bg-[#0E1726] hover:bg-[#1E293B] text-white text-[13.5px] font-medium px-4 py-2 rounded-md transition shadow-sm" onclick="openTripModal('Nova Viagem')" type="button">
+          Criar Nova Viagem
+        </button>
+</div>
+</div>
+<!-- Cards Grid (3 Columns) -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-purpose="trip-cards-grid">
+<!-- CARD 1: Lisboa -->
+<div class="bg-white border border-[#E8E4DD] rounded-xl p-6 flex flex-col justify-between shadow-xs hover:shadow-md transition-shadow">
+<div>
+<!-- Header: Dates & Verified Status -->
+<div class="flex items-center justify-between text-[12.5px] text-[#475569] mb-4">
+<span class="font-medium text-[#475569]">2026-11-18 → 2026-11-21</span>
+<div class="flex items-center space-x-1.5 text-[#107050] font-medium text-[12px]">
+<span class="w-2.5 h-2.5 rounded-full bg-[#10B981]"></span>
+<span class="text-[#059669] font-semibold">60% Verificado</span>
+</div>
+</div>
+<!-- City Title -->
+<h2 class="text-2xl font-bold text-[#0E1726] serif-title mb-3">
+            Lisboa, Portugal (4 Dias)
+          </h2>
+<!-- Subtitle / Highlights -->
+<p class="text-[13px] text-[#475569] leading-relaxed mb-4">
+            Alma de Alfama, Azulejos e Pôr do Sol no Tejo — inclui ligações oficiais de museus, Plano B para chuva, alternativas locais sem multidões e despesas de grupo.
+          </p>
+<!-- Interests -->
+<p class="text-[12.5px] text-[#475569] mb-5">
+<span class="text-[#334155]">Interesses:</span> Gastronomia • História • Miradouros • Arquitetura • Música
+          </p>
+<!-- Travelers & Budget Meta -->
+<div class="space-y-1 text-[13px] text-[#475569] mb-8">
+<p><span class="font-bold text-[#0E1726]">Viajantes do Grupo:</span> Ana (€380), Rui (€350), Sofia (€320)</p>
+<p><span class="font-bold text-[#0E1726]">Orçamento Total:</span> €1050 • 3 despesas registadas</p>
+</div>
+</div>
+<!-- Buttons Area -->
+<div class="space-y-2.5 pt-2">
+<button class="w-full bg-[#D95C00] hover:bg-[#C24E00] text-white text-[13.5px] font-semibold py-2.5 rounded-md transition shadow-xs text-center block" onclick="openTripModal('Lisboa')" type="button">
+            Abrir Atlas Demo de Lisboa
+          </button>
+<div class="grid grid-cols-2 gap-2">
+<button class="bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#1E293B] text-[12.5px] font-medium py-2 px-2 rounded-md transition text-center" onclick="openToolModal('Simulador de Orçamento - Lisboa')" type="button">
+              Simulador de Orçamento
+            </button>
+<button class="bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#1E293B] text-[12.5px] font-medium py-2 px-2 rounded-md transition text-center" onclick="openToolModal('Grupo e Votações - Lisboa')" type="button">
+              Grupo e Votações
+            </button>
+</div>
+</div>
+</div>
+<!-- CARD 2: Porto -->
+<div class="bg-white border border-[#E8E4DD] rounded-xl p-6 flex flex-col justify-between shadow-xs hover:shadow-md transition-shadow">
+<div>
+<!-- Header: Dates & Verified Status -->
+<div class="flex items-center justify-between text-[12.5px] text-[#475569] mb-4">
+<span class="font-medium text-[#475569]">2026-12-04 → 2026-12-06</span>
+<div class="flex items-center space-x-1.5 text-[#107050] font-medium text-[12px]">
+<span class="w-2.5 h-2.5 rounded-full bg-[#10B981]"></span>
+<span class="text-[#059669] font-semibold">83% Verificado</span>
+</div>
+</div>
+<!-- City Title -->
+<h2 class="text-2xl font-bold text-[#0E1726] serif-title mb-3">
+            Porto, Portugal (3 Dias)
+          </h2>
+<!-- Subtitle / Highlights -->
+<p class="text-[13px] text-[#475569] leading-relaxed mb-4">
+            Azulejos de São Bento, Clérigos e Caves de Gaia — inclui ligações oficiais de museus, Plano B para chuva, alternativas locais sem multidões e despesas de grupo.
+          </p>
+<!-- Interests -->
+<p class="text-[12.5px] text-[#475569] mb-5">
+<span class="text-[#334155]">Interesses:</span> Vinhos • Arquitetura • Gastronomia • Cultura
+          </p>
+<!-- Travelers & Budget Meta -->
+<div class="space-y-1 text-[13px] text-[#475569] mb-8">
+<p><span class="font-bold text-[#0E1726]">Viajantes do Grupo:</span> Clara (€340), Miguel (€340)</p>
+<p><span class="font-bold text-[#0E1726]">Orçamento Total:</span> €680 • 1 despesas registadas</p>
+</div>
+</div>
+<!-- Buttons Area -->
+<div class="space-y-2.5 pt-2">
+<button class="w-full bg-[#D95C00] hover:bg-[#C24E00] text-white text-[13.5px] font-semibold py-2.5 rounded-md transition shadow-xs text-center block" onclick="openTripModal('Porto')" type="button">
+            Abrir Atlas Demo de Porto
+          </button>
+<div class="grid grid-cols-2 gap-2">
+<button class="bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#1E293B] text-[12.5px] font-medium py-2 px-2 rounded-md transition text-center" onclick="openToolModal('Simulador de Orçamento - Porto')" type="button">
+              Simulador de Orçamento
+            </button>
+<button class="bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#1E293B] text-[12.5px] font-medium py-2 px-2 rounded-md transition text-center" onclick="openToolModal('Grupo e Votações - Porto')" type="button">
+              Grupo e Votações
+            </button>
+</div>
+</div>
+</div>
+<!-- CARD 3: Roma -->
+<div class="bg-white border border-[#E8E4DD] rounded-xl p-6 flex flex-col justify-between shadow-xs hover:shadow-md transition-shadow">
+<div>
+<!-- Header: Dates & Verified Status -->
+<div class="flex items-center justify-between text-[12.5px] text-[#475569] mb-4">
+<span class="font-medium text-[#475569]">2026-11-24 → 2026-11-28</span>
+<div class="flex items-center space-x-1.5 text-[#107050] font-medium text-[12px]">
+<span class="w-2.5 h-2.5 rounded-full bg-[#10B981]"></span>
+<span class="text-[#059669] font-semibold">83% Verificado</span>
+</div>
+</div>
+<!-- City Title -->
+<h2 class="text-2xl font-bold text-[#0E1726] serif-title mb-3">
+            Roma, Itália (5 Dias)
+          </h2>
+<!-- Subtitle / Highlights -->
+<p class="text-[13px] text-[#475569] leading-relaxed mb-4">
+            Coliseu, Fórum Romano e Ruas de Monti — inclui ligações oficiais de museus, Plano B para chuva, alternativas locais sem multidões e despesas de grupo.
+          </p>
+<!-- Interests -->
+<p class="text-[12.5px] text-[#475569] mb-5">
+<span class="text-[#334155]">Interesses:</span> História • Gastronomia • Arte • Arquitetura
+          </p>
+<!-- Travelers & Budget Meta -->
+<div class="space-y-1 text-[13px] text-[#475569] mb-8">
+<p><span class="font-bold text-[#0E1726]">Viajantes do Grupo:</span> Elena (€725), Lucas (€725)</p>
+<p><span class="font-bold text-[#0E1726]">Orçamento Total:</span> €1450 • 1 despesas registadas</p>
+</div>
+</div>
+<!-- Buttons Area -->
+<div class="space-y-2.5 pt-2">
+<button class="w-full bg-[#D95C00] hover:bg-[#C24E00] text-white text-[13.5px] font-semibold py-2.5 rounded-md transition shadow-xs text-center block" onclick="openTripModal('Roma')" type="button">
+            Abrir Atlas Demo de Roma
+          </button>
+<div class="grid grid-cols-2 gap-2">
+<button class="bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#1E293B] text-[12.5px] font-medium py-2 px-2 rounded-md transition text-center" onclick="openToolModal('Simulador de Orçamento - Roma')" type="button">
+              Simulador de Orçamento
+            </button>
+<button class="bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#1E293B] text-[12.5px] font-medium py-2 px-2 rounded-md transition text-center" onclick="openToolModal('Grupo e Votações - Roma')" type="button">
+              Grupo e Votações
+            </button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- END: MainContent -->
+<!-- BEGIN: Footer -->
+<footer class="w-full bg-[#0A1120] text-white pt-14 pb-8 border-t border-slate-800" data-purpose="site-footer">
+<div class="max-w-[1720px] mx-auto px-6 lg:px-12">
+<!-- Top Row Footer -->
+<div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-8 pb-12">
+<!-- Left: Brand and Mission Statement -->
+<div class="max-w-md">
+<div class="flex items-center space-x-2 mb-3">
+<svg class="w-4 h-4 text-[#D95C00]" fill="currentColor" viewbox="0 0 24 24">
+<circle cx="12" cy="12" fill="none" r="10" stroke="currentColor" stroke-width="2"></circle>
+<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" fill="none" stroke="currentColor" stroke-width="2"></path>
+<path d="M2 12h20" stroke="currentColor" stroke-width="2"></path>
+</svg>
+<span class="text-xl font-bold tracking-tight text-white brand-mark">AtlasGenie</span>
+</div>
+<p class="text-[13px] text-[#94A3B8] leading-relaxed">
+            O único planeador de viagens onde sabe o que está verificado, quanto custa e mantém o controlo — a solo ou com o seu grupo.
+          </p>
+</div>
+<!-- Center: Links in 2 Columns -->
+<div class="grid grid-cols-2 gap-x-12 gap-y-2.5 text-[13px] text-[#CBD5E1]">
+<a class="hover:text-white transition" href="#demo">Experimentar Demo</a>
+<a class="hover:text-white transition" href="#dashboard">Painel de Viagens</a>
+<a class="hover:text-white transition" href="#faq">Perguntas Frequentes</a>
+<a class="hover:text-white transition flex items-center space-x-1.5" href="#github">
+<svg class="w-3.5 h-3.5 text-slate-400" fill="currentColor" viewbox="0 0 24 24">
+<path clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" fill-rule="evenodd"></path>
+</svg>
+<span>Repositório GitHub</span>
+</a>
+</div>
+<!-- Right: Support CTA -->
+<div>
+<button class="bg-[#D95C00] hover:bg-[#C24E00] text-white px-5 py-2.5 rounded-md font-semibold text-[13px] flex items-center space-x-2 transition shadow-md" type="button">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Contactar Suporte</span>
+</button>
+</div>
+</div>
+<!-- Bottom Legend and Copyright Row -->
+<div class="pt-6 border-t border-slate-800/80 flex flex-col md:flex-row justify-between items-center text-[12px] text-[#64748B] gap-4">
+<div>
+          © 2026 AtlasGenie • Criado para viajantes independentes na Europa.
+        </div>
+<!-- Legend -->
+<div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px]">
+<!-- Green dot -->
+<div class="flex items-center space-x-1.5">
+<span class="w-2.5 h-2.5 rounded-full bg-[#10B981]"></span>
+<span class="text-[#94A3B8]">Fontes Oficiais Verificadas</span>
+</div>
+<!-- Dot separator -->
+<span class="text-slate-600">•</span>
+<!-- Yellow dot -->
+<div class="flex items-center space-x-1.5">
+<span class="w-2.5 h-2.5 rounded-full bg-[#EAB308]"></span>
+<span class="text-[#94A3B8]">~Estimativas IA</span>
+</div>
+<!-- Dot separator -->
+<span class="text-slate-600">•</span>
+<!-- Cycle icon -->
+<div class="flex items-center space-x-1.5">
+<svg class="w-3.5 h-3.5 text-[#94A3B8]" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="text-[#94A3B8]">Alterações Controladas por Si</span>
+</div>
+</div>
+</div>
+</div>
+</footer>
+<!-- END: Footer -->
+<!-- BEGIN: InteractiveModal -->
+<div class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs hidden z-50 flex items-center justify-center p-4" id="demoModal">
+<div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 text-[#1E293B] border border-slate-200">
+<div class="flex justify-between items-center mb-4">
+<h3 class="text-lg font-bold serif-title text-[#0E1726]" id="modalTitle">Demonstração de Viagem</h3>
+<button class="text-slate-400 hover:text-slate-600" onclick="closeModal()">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+<p class="text-sm text-slate-600 mb-6 leading-relaxed" id="modalBody">
+        Carregando o roteiro detalhado, orçamentos partilhados e pontos offline sincronizados para esta rota.
+      </p>
+<div class="flex justify-end space-x-3">
+<button class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md" onclick="closeModal()">
+          Fechar
+        </button>
+<button class="px-4 py-2 text-sm font-medium text-white bg-[#D95C00] hover:bg-[#C24E00] rounded-md shadow-xs" onclick="closeModal()">
+          Continuar no Atlas
+        </button>
+</div>
+</div>
+</div>
+<!-- END: InteractiveModal -->
+<script data-purpose="modal-handler">
+    function openTripModal(cityName) {
+      document.getElementById('modalTitle').innerText = 'Atlas Demo: ' + cityName;
+      document.getElementById('modalBody').innerText = 'A carregar o itinerário interativo completo para ' + cityName + ', com despesas em tempo real, votações do grupo ativas e plano alternativo para chuva.';
+      document.getElementById('demoModal').classList.remove('hidden');
+    }
+
+    function openToolModal(toolName) {
+      document.getElementById('modalTitle').innerText = toolName;
+      document.getElementById('modalBody').innerText = 'Painel interativo de simulação de divisões de custos e votação por item ativado para este grupo de viajantes.';
+      document.getElementById('demoModal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('demoModal').classList.add('hidden');
+    }
+  </script>
+</body></html>
