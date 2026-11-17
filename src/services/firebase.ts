@@ -121,7 +121,15 @@ export function handleFirestoreError(
 export async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
   const cred = await signInWithPopup(auth, provider);
-  await ensureUserProfile(cred.user.uid, cred.user.displayName || 'Traveller', cred.user.email || '');
+  try {
+    await ensureUserProfile(
+      cred.user.uid,
+      cred.user.displayName || 'Traveller',
+      cred.user.email || ''
+    );
+  } catch (err) {
+    console.warn('Firestore profile sync warning after Google sign-in:', err);
+  }
   return cred.user;
 }
 
@@ -135,7 +143,11 @@ export async function registerWithEmail(name: string, email: string, pass: strin
   if (name) {
     await updateProfile(cred.user, { displayName: name });
   }
-  await ensureUserProfile(cred.user.uid, name || 'Traveller', email);
+  try {
+    await ensureUserProfile(cred.user.uid, name || 'Traveller', email);
+  } catch (err) {
+    console.warn('Firestore profile sync warning after email registration:', err);
+  }
   return cred.user;
 }
 
@@ -233,34 +245,33 @@ export async function syncUserProfile(
 
   writeLocalUserProfile(uid, normalizedProfile);
 
-  if (auth.currentUser && auth.currentUser.uid === uid && auth.currentUser.emailVerified) {
-    const path = `users/${uid}`;
+  if (auth.currentUser && auth.currentUser.uid === uid) {
+    const userDocRef = doc(db, 'users', uid);
     try {
-      await setDoc(
-        doc(db, 'users', uid),
-        {
-          ...mergedDoc,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const existingSnap = await getDoc(userDocRef).catch(() => null);
+      if (existingSnap && existingSnap.exists()) {
+        await setDoc(
+          userDocRef,
+          {
+            ...mergedDoc,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } else {
+        await setDoc(
+          userDocRef,
+          {
+            ...mergedDoc,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, path);
-    }
-  } else if (auth.currentUser && auth.currentUser.uid === uid) {
-    try {
-      await setDoc(
-        doc(db, 'users', uid),
-        {
-          ...mergedDoc,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch {
-      // Unverified email/password user in preview environment; profile is persisted in local cache
+      // Log structured error internally without throwing raw JSON into the UI
+      console.warn('Firestore users profile write fallback (cached locally):', error);
     }
   }
 
@@ -277,24 +288,40 @@ export async function ensureUserProfile(
   overrides?: Partial<TravelerProfilePreferences>
 ): Promise<UserProfile> {
   const existing = readLocalUserProfile(uid);
-  return syncUserProfile(uid, {
-    name: name || (typeof existing?.name === 'string' ? existing.name : 'Viajante'),
-    email: email || (typeof existing?.email === 'string' ? existing.email : 'traveller@atlasgenie.eu'),
-    defaultGroupSize:
-      overrides?.defaultGroupSize ??
-      (typeof existing?.defaultGroupSize === 'number' ? existing.defaultGroupSize : undefined),
-    defaultPaceLevel:
-      overrides?.defaultPaceLevel ??
-      (typeof existing?.defaultPaceLevel === 'number' ? existing.defaultPaceLevel : undefined),
-    savedInterests:
-      overrides?.savedInterests ??
-      (Array.isArray(existing?.savedInterests) ? (existing.savedInterests as string[]) : undefined),
-    savedRestrictions:
-      overrides?.savedRestrictions ??
-      (Array.isArray(existing?.savedRestrictions)
-        ? (existing.savedRestrictions as string[])
-        : undefined),
-  });
+  try {
+    return await syncUserProfile(uid, {
+      name: name || (typeof existing?.name === 'string' ? existing.name : 'Viajante'),
+      email: email || (typeof existing?.email === 'string' ? existing.email : 'traveller@atlasgenie.eu'),
+      defaultGroupSize:
+        overrides?.defaultGroupSize ??
+        (typeof existing?.defaultGroupSize === 'number' ? existing.defaultGroupSize : undefined),
+      defaultPaceLevel:
+        overrides?.defaultPaceLevel ??
+        (typeof existing?.defaultPaceLevel === 'number' ? existing.defaultPaceLevel : undefined),
+      savedInterests:
+        overrides?.savedInterests ??
+        (Array.isArray(existing?.savedInterests) ? (existing.savedInterests as string[]) : undefined),
+      savedRestrictions:
+        overrides?.savedRestrictions ??
+        (Array.isArray(existing?.savedRestrictions)
+          ? (existing.savedRestrictions as string[])
+          : undefined),
+    });
+  } catch (err) {
+    console.warn('ensureUserProfile fallback:', err);
+    const fallbackDoc = buildInitialUserProfileDocument({
+      uid,
+      name: name || 'Viajante',
+      email: email || 'traveller@atlasgenie.eu',
+    });
+    return {
+      ...fallbackDoc,
+      notificationPrefs: {
+        enabled: fallbackDoc.notificationEnabled,
+        daysBefore: fallbackDoc.reminderDaysBefore,
+      },
+    };
+  }
 }
 
 export {

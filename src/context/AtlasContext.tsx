@@ -871,17 +871,28 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     if (bundle) {
-      const nextTravelers = [...bundle.travelers, newTraveler];
+      const filteredExisting = bundle.travelers.filter(
+        (t) => !(newTraveler.userId && t.userId === newTraveler.userId && !newTraveler.userId.startsWith('guest-'))
+      );
+      const nextTravelers = [...filteredExisting, newTraveler];
+      const nextMemberIds = Array.from(
+        new Set([
+          ...(bundle.trip.memberIds || []),
+          ...(newTraveler.userId ? [newTraveler.userId] : []),
+        ])
+      );
       const nextBundle: FullTripBundle = {
         ...bundle,
         trip: {
           ...bundle.trip,
           groupEnabled: true,
           travelersCount: nextTravelers.length,
+          memberIds: nextMemberIds,
         },
         travelers: nextTravelers,
       };
       setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+      writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
       setActiveTravelerId(tripId, id);
       await syncBundleToFirestore(nextBundle);
       showToast(String(i18n.t('toast.travelerJoined', { name: newTraveler.displayName })));

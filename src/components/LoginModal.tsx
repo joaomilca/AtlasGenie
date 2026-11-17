@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { signInWithGoogle } from '../services/firebase';
-import { useAuth, mapFirebaseAuthError } from '../context/AuthContext';
+import { useAuth, formatCleanAuthOrFirestoreError } from '../context/AuthContext';
 import { useAtlas } from '../context/AtlasContext';
 
 interface LoginModalProps {
@@ -39,7 +39,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
       onSuccess?.();
       onClose();
     } catch (err: unknown) {
-      setError(mapFirebaseAuthError(err, i18n.language));
+      setError(formatCleanAuthOrFirestoreError(err, i18n.language));
     } finally {
       setLoading(false);
     }
@@ -53,8 +53,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
       showToast(t('settings.accountLoginSuccess'));
       onSuccess?.();
       onClose();
-    } catch (err: any) {
-      setError(err?.message || t('auth.errGoogle'));
+    } catch (err: unknown) {
+      const cleanMsg = formatCleanAuthOrFirestoreError(err, i18n.language);
+      setError(cleanMsg);
+      showToast(cleanMsg, 'alert');
     } finally {
       setLoading(false);
     }

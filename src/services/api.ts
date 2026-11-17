@@ -11,14 +11,22 @@ import {
 } from '../types/models';
 import { DEMO_TRIPS } from '../data/demoTrips';
 import {
+  ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+  ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
   CHAT_ASSISTANT_PT_DIRECTIVE,
+  CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE,
+  GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
   GooglePlaceDetailsResult,
   MULTI_OPTION_PROPOSALS_DIRECTIVE,
   NON_LATIN_SCRIPT_DIRECTIVE,
   NUCLEAR_LANGUAGE_PREFIX_EN,
   NUCLEAR_LANGUAGE_PREFIX_PT,
   PROPER_NOUN_PRESERVATION_DIRECTIVE,
+  RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+  SMART_RADIUS_EXPANSION_DIRECTIVE,
+  STRICT_INTENT_MATCHING_DIRECTIVE,
   buildChatAssistantSystemPrompt,
+  buildCustomActivitySystemPrompt,
   buildFunctionResponsePayload,
   buildGlobalLanguageDirective,
   buildJitTranslateSystemPrompt,
@@ -28,18 +36,24 @@ import {
   calculateHaversineTravel,
   computePaceMetrics,
   deduplicateAndMergeProposals,
+  detectRequestedActivityIntent,
   enforceStrictBudgetCapOnDays,
   evaluateBudgetGuard,
   evaluateBudgetTierFromPerPersonBudget,
   extractPlaceQueryArgs,
+  filterAndSanitizeProposalsForRegionAndIntent,
   formatGroundedPlaceReply,
   inferItineraryLanguage,
   isInformationalPlaceQuery,
+  isProposalIntentMismatched,
+  isVenueSpoofedForDestination,
   mergeJitTranslatedBundle,
   normalizeGooglePlacesApiResponse,
   normalizeInputBudget,
   normalizeJitLanguageCode,
   normalizeTargetUiLanguage,
+  resolveIntentAndRegionProposals,
+  resolveRegionalCustomActivity,
   resolveVerifiedPlaceDetails,
   sanitizeItineraryForAI,
   TRANSLATION_TIMEOUT_MS,
@@ -50,28 +64,42 @@ import {
 } from '../utils/domainLogic';
 
 export {
+  ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+  ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
   CHAT_ASSISTANT_PT_DIRECTIVE,
+  CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE,
+  GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
   MULTI_OPTION_PROPOSALS_DIRECTIVE,
   NON_LATIN_SCRIPT_DIRECTIVE,
   NUCLEAR_LANGUAGE_PREFIX_EN,
   NUCLEAR_LANGUAGE_PREFIX_PT,
   PROPER_NOUN_PRESERVATION_DIRECTIVE,
+  RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+  SMART_RADIUS_EXPANSION_DIRECTIVE,
+  STRICT_INTENT_MATCHING_DIRECTIVE,
   TRANSLATION_TIMEOUT_MS,
   buildChatAssistantSystemPrompt,
+  buildCustomActivitySystemPrompt,
   buildGlobalLanguageDirective,
   buildJitTranslateSystemPrompt,
   buildNuclearLanguagePrefix,
   buildStrictBudgetConstraintDirective,
   buildUniversalProperNounDirective,
+  detectRequestedActivityIntent,
   enforceStrictBudgetCapOnDays,
   evaluateBudgetGuard,
   evaluateBudgetTierFromPerPersonBudget,
   fetchWithTranslationTimeout,
+  filterAndSanitizeProposalsForRegionAndIntent,
   inferItineraryLanguage,
+  isProposalIntentMismatched,
+  isVenueSpoofedForDestination,
   mergeJitTranslatedBundle,
   normalizeInputBudget,
   normalizeJitLanguageCode,
   normalizeTargetUiLanguage,
+  resolveIntentAndRegionProposals,
+  resolveRegionalCustomActivity,
   runAutoTranslateWithRecovery,
   sanitizeItineraryForAI,
   translateItineraryBundleDeterministic,
@@ -223,6 +251,13 @@ export function buildGenerateItinerarySystemPrompt(
     'Each day MUST explicitly include accommodation: { name, type (hotel/hostel/apartment), price, isPriceVerified, coordinates }, intercity_transit: { method, duration, price, isPriceVerified } (ONLY on days where the user changes cities), and meals: { breakfast, lunch, dinner } with specific distinct restaurant names, estimated prices, isPriceVerified, and coordinates.',
     'CRITICAL: You MUST use the Google Search tool to fetch current 2026 prices for venues, hotels, and transit. If you successfully find a current, real-world price via Search, you MUST set isPriceVerified: true. If the search fails or you cannot confirm the exact price and must rely on an estimate, you MUST set isPriceVerified: false.',
     constraintsDirective,
+    CUSTOM_ACTIVITY_GEOLOCATION_DIRECTIVE,
+    ANTI_SPOOFING_GEOFENCING_DIRECTIVE,
+    SMART_RADIUS_EXPANSION_DIRECTIVE,
+    STRICT_INTENT_MATCHING_DIRECTIVE,
+    ABSTRACT_INTENT_TRANSLATION_DIRECTIVE,
+    RELAXED_FALLBACK_SWEET_SPOT_DIRECTIVE,
+    GRACEFUL_NO_HALLUCINATION_DIRECTIVE,
     "Never hallucinate or place activities in random cities. If you don't have enough data for a full day, add generic local walks within the correct city bounds rather than jumping to a different city.",
     'The user may request small towns, rural areas, or nature reserves. If they do, adapt the itinerary to focus on local hiking trails, nature walks, and small-town exploration. Never reject a valid small town just because it lacks major tourist attractions.',
     'Return strictly valid JSON matching the schema. Never invent fake URLs. All AI-generated prices and opening hours are treated as estimates unless verified by an official source.',
@@ -1100,6 +1135,31 @@ export function enforceUniqueActivitiesAndCustomRequests(
     const cityLabel = day.city || (isEn ? 'City' : 'Cidade');
     const lastIdx = day.activities.length - 1;
     const targetAct = day.activities[lastIdx];
+
+    const impliesNatureOrMountain =
+      /\b(mountain|hike|hiking|trail|trek|trekking|serra|montanha|trilho|caminhada|natureza|parque natural|national park)\b/i.test(
+        lowerCustom
+      );
+
+    if (impliesNatureOrMountain) {
+      const regionalResolved = resolveRegionalCustomActivity({
+        requestText: cleanCustom,
+        destination: cityLabel,
+        startTime: targetAct.startTime,
+        estimatedCost: targetAct.costOptions.mid.estimatedCost || 15,
+        baseCoords: { lat: targetAct.location.lat, lng: targetAct.location.lng },
+        uiLanguage,
+      });
+      if (regionalResolved.activity) {
+        const nextActs = day.activities.map((a, idx) =>
+          idx === lastIdx ? { ...regionalResolved.activity!, id: targetAct.id } : a
+        );
+        return {
+          ...day,
+          activities: nextActs,
+        };
+      }
+    }
 
     const customTitle = isNightlifeOrClubRequest
       ? isEn
@@ -2242,10 +2302,12 @@ export async function requestAiProposals(params: {
   usedFallback: boolean;
   toolUsed?: string;
   placeDetails?: GooglePlaceDetailsResult;
+  error?: { code: string; message: string };
 }> {
   const resolvedUiLanguage =
     params.uiLanguage || (params.language === 'en' ? 'en' : 'pt-PT');
   const isEn = normalizeTargetUiLanguage(resolvedUiLanguage) === 'en';
+  const effectiveDestination = (params.currentDay?.city || params.destination || 'Lisbon').trim();
   const sanitizedItinerary = sanitizeItineraryForAI(params.itinerary || params.currentDay);
   const assistantSystemPrompt = buildChatAssistantSystemPrompt(
     sanitizedItinerary,
@@ -2265,251 +2327,24 @@ export async function requestAiProposals(params: {
   const baseLng = firstAct?.location.lng ?? -9.1334;
   const lowerMsg = params.message.toLowerCase();
 
-  // Helper to build 3 distinct, verified multi-option proposals in target uiLanguage preserving proper nouns
-  const buildThreeChatAlternatives = (): ProposalChange[] => {
-    const target =
-      activeDayList.find(
-        (a) => !a.id.startsWith('act-chat-') && !a.id.startsWith('act-comp-')
-      ) || firstAct;
-    const isAddRequest =
-      lowerMsg.includes('adicion') ||
-      lowerMsg.includes('add ') ||
-      lowerMsg.includes('inclu') ||
-      !target;
-    const propType: 'add' | 'replace' = isAddRequest ? 'add' : 'replace';
-    const destLower = params.destination.toLowerCase();
-    const isEastAsia =
-      destLower.includes('seul') ||
-      destLower.includes('seoul') ||
-      destLower.includes('coreia') ||
-      destLower.includes('korea') ||
-      destLower.includes('pequim') ||
-      destLower.includes('beijing') ||
-      destLower.includes('tóquio') ||
-      destLower.includes('tokyo');
-
-    const optionBlueprints: {
-      suffixId: string;
-      title: string;
-      venueName: string;
-      category: Activity['category'];
-      tier: BudgetTier;
-      budgetCost: number;
-      midCost: number;
-      premiumCost: number;
-      description: string;
-      reason: string;
-      latOffset: number;
-      lngOffset: number;
-    }[] = isEastAsia
-      ? [
-          {
-            suffixId: 'opt1',
-            title: '景福宫 (Palácio Gyeongbokgung) & Bukchon Walk',
-            venueName: '景福宫 (Palácio Gyeongbokgung)',
-            category: 'culture',
-            tier: 'budget',
-            budgetCost: 6,
-            midCost: 14,
-            premiumCost: 36,
-            description: isEn
-              ? 'Option 1 (Budget / Heritage): Morning visit to the historic royal complex with a walk through traditional alleys.'
-              : 'Opção 1 (Económica / Património): Visita matinal ao complexo real histórico com caminhada pelas vielas tradicionais.',
-            reason: isEn
-              ? 'Option 1 Verified Budget (€6) — preserves local proper nouns.'
-              : 'Opção 1 Económica verificada (6€) — preserva os nomes próprios locais com tradução PT-PT entre parênteses.',
-            latOffset: 0.0022,
-            lngOffset: -0.0018,
-          },
-          {
-            suffixId: 'opt2',
-            title: '광장시장 (Mercado Gwangjang) Street Gastronomy',
-            venueName: '광장시장 (Mercado Gwangjang)',
-            category: 'food',
-            tier: 'mid',
-            budgetCost: 9,
-            midCost: 18,
-            premiumCost: 38,
-            description: isEn
-              ? 'Option 2 (Mid-Range / Local Gastronomy): Authentic tasting across historic market stalls without tourist crowds.'
-              : 'Opção 2 (Intermédia / Gastronomia Local): Degustação autêntica nas bancas históricas sem multidões.',
-            reason: isEn
-              ? 'Option 2 Verified Mid-Range (€18) — ideal balance of authentic cuisine and walking proximity.'
-              : 'Opção 2 Intermédia verificada (18€) — equilíbrio ideal entre gastronomia autêntica e proximidade geográfica.',
-            latOffset: -0.0026,
-            lngOffset: 0.0024,
-          },
-          {
-            suffixId: 'opt3',
-            title: '창덕궁 후원 (Jardim Secreto de Changdeokgung)',
-            venueName: '창덕궁 후원 (Jardim Secreto de Changdeokgung)',
-            category: 'nature',
-            tier: 'premium',
-            budgetCost: 12,
-            midCost: 24,
-            premiumCost: 48,
-            description: isEn
-              ? 'Option 3 (Premium / Exclusive Guided Tour): Reserved access to royal pavilions and UNESCO gardens.'
-              : 'Opção 3 (Premium / Visita Guiada Exclusiva): Acesso reservado aos pavilhões reais e jardins classificados pela UNESCO.',
-            reason: isEn
-              ? 'Option 3 Verified Premium (€48) — serene experience with reserved access and historian guide.'
-              : 'Opção 3 Premium verificada (48€) — experiência tranquila com acesso reservado e guia historiador.',
-            latOffset: 0.0034,
-            lngOffset: 0.0029,
-          },
-        ]
-      : [
-          {
-            suffixId: 'opt1',
-            title: `Mercado de Campo de Ourique & Tasca da Esquina (${params.destination})`,
-            venueName: `Mercado de Campo de Ourique, ${params.destination}`,
-            category: 'food',
-            tier: 'budget',
-            budgetCost: 8,
-            midCost: 14,
-            premiumCost: 28,
-            description: isEn
-              ? 'Option 1 (Budget / Authentic): Neighbourhood culinary stop frequented by locals with a short transit leg.'
-              : 'Opção 1 (Económica / Autêntica): Paragem gastronómica de bairro frequentada por residentes locais, com deslocação curta.',
-            reason: isEn
-              ? `Option 1 Budget (€8) tailored to your request ("${params.message}"), preserving original proper nouns.`
-              : `Opção 1 Económica (8€) adaptada ao seu pedido («${params.message}»), mantendo os nomes próprios originais.`,
-            latOffset: 0.0022,
-            lngOffset: -0.0019,
-          },
-          {
-            suffixId: 'opt2',
-            title: `Atelier National du Azulejo & Miradouro de Santa Catarina (${params.destination})`,
-            venueName: `Miradouro de Santa Catarina, ${params.destination}`,
-            category: 'culture',
-            tier: 'mid',
-            budgetCost: 10,
-            midCost: 19,
-            premiumCost: 38,
-            description: isEn
-              ? 'Option 2 (Mid-Range / Cultural): Verified cultural experience paired with a late-afternoon panoramic viewpoint.'
-              : 'Opção 2 (Intermédia / Cultural): Experiência cultural verificada combinada com vista panorâmica ao final da tarde.',
-            reason: isEn
-              ? `Option 2 Mid-Range (€19) balancing cultural heritage and comfortable pacing on Day ${params.currentDay.dayNumber}.`
-              : `Opção 2 Intermédia (19€) com equilíbrio entre património cultural e ritmo confortável no Dia ${params.currentDay.dayNumber}.`,
-            latOffset: -0.0028,
-            lngOffset: 0.0023,
-          },
-          {
-            suffixId: 'opt3',
-            title: `Palácio Belmonte Private Wine Salon & Terrace (${params.destination})`,
-            venueName: `Palácio Belmonte, ${params.destination}`,
-            category: 'food',
-            tier: 'premium',
-            budgetCost: 16,
-            midCost: 28,
-            premiumCost: 56,
-            description: isEn
-              ? 'Option 3 (Premium / Exclusive): Private guided tasting on a historic terrace with priority skip-the-line access.'
-              : 'Opção 3 (Premium / Exclusiva): Prova comentada privada num terraço histórico com reserva prioritária sem filas.',
-            reason: isEn
-              ? `Option 3 Premium (€56) for a top-tier private experience on Day ${params.currentDay.dayNumber}.`
-              : `Opção 3 Premium (56€) para uma experiência privada de topo no Dia ${params.currentDay.dayNumber}.`,
-            latOffset: 0.0036,
-            lngOffset: 0.0031,
-          },
-        ];
-
-    return optionBlueprints.map((bp, idx) => {
-      const actId = `act-chat-${params.currentDay.id}-${target?.id || 'slot'}-${bp.suffixId}`;
-      const propId = `prop-chat-${params.currentDay.id}-${target?.id || 'slot'}-${bp.suffixId}`;
-      const startTime =
-        propType === 'add'
-          ? idx === 0
-            ? '16:00'
-            : idx === 1
-            ? '16:30'
-            : '17:00'
-          : target?.startTime || '11:00';
-
-      const payload: Activity = {
-        id: actId,
-        title: bp.title,
-        category: bp.category,
-        description: bp.description,
-        startTime,
-        durationMin: 90,
-        openingHoursText: '10:00 – 20:00',
-        isOutdoor: idx === 1,
-        interestTags: ['culture', 'food'],
-        location: {
-          name: bp.venueName,
-          lat: Number((baseLat + bp.latOffset).toFixed(5)),
-          lng: Number((baseLng + bp.lngOffset).toFixed(5)),
-        },
-        costOptions: {
-          budget: {
-            title: `${bp.title} — ${isEn ? 'Budget' : 'Económico'}`,
-            venueName: bp.venueName,
-            estimatedCost: bp.budgetCost,
-            isPriceVerified: true,
-            description: isEn ? 'Verified essential entry or tasting' : 'Entrada ou degustação essencial verificada',
-            coordinates: {
-              lat: Number((baseLat + bp.latOffset).toFixed(5)),
-              lng: Number((baseLng + bp.lngOffset).toFixed(5)),
-            },
-          },
-          mid: {
-            title: `${bp.title} — ${isEn ? 'Mid-Range' : 'Intermédio'}`,
-            venueName: bp.venueName,
-            estimatedCost: bp.midCost,
-            isPriceVerified: true,
-            description: isEn ? 'Recommended complete experience' : 'Experiência completa recomendada',
-            coordinates: {
-              lat: Number((baseLat + bp.latOffset + 0.0008).toFixed(5)),
-              lng: Number((baseLng + bp.lngOffset - 0.0008).toFixed(5)),
-            },
-          },
-          premium: {
-            title: `${bp.title} — Premium`,
-            venueName: bp.venueName,
-            estimatedCost: bp.premiumCost,
-            isPriceVerified: true,
-            description: isEn ? 'Private guided experience with priority access' : 'Experiência privada com acesso prioritário',
-            coordinates: {
-              lat: Number((baseLat + bp.latOffset - 0.0009).toFixed(5)),
-              lng: Number((baseLng + bp.lngOffset + 0.0009).toFixed(5)),
-            },
-          },
-        },
-        selectedTier: bp.tier,
-        isPriceVerified: true,
-        priceConfidence: {
-          status: 'verified',
-          sourceUrl: 'https://www.visitportugal.com/',
-          verifiedAt: '2026-10-28',
-          notes: isEn ? 'Verified rate 2026' : 'Tarifa verificada 2026',
-        },
-        hoursConfidence: {
-          status: 'verified',
-          sourceUrl: 'https://www.visitportugal.com/',
-          verifiedAt: '2026-10-28',
-          notes: isEn ? 'Confirmed opening hours 10:00 – 20:00' : 'Horário confirmado 10:00 – 20:00',
-        },
-        whyThis: bp.reason,
-        touristTrapScore: 18 + idx * 4,
-        votes: {},
-      };
-
+  // Pre-evaluate strict intent & geographic impossibility before calling live API
+  if (params.taskType === 'chat') {
+    const preIntent = detectRequestedActivityIntent(params.message, effectiveDestination);
+    if (preIntent === 'impossible') {
+      const impossibleResult = resolveIntentAndRegionProposals({
+        destination: effectiveDestination,
+        message: params.message,
+        currentDay: params.currentDay,
+        uiLanguage: resolvedUiLanguage,
+      });
       return {
-        id: propId,
-        dayId: params.currentDay.id,
-        dayNumber: params.currentDay.dayNumber,
-        type: propType,
-        targetActivityId: propType === 'replace' ? target?.id : undefined,
-        targetActivityTitle: propType === 'replace' ? target?.title : undefined,
-        payload,
-        reason: bp.reason,
-        source: 'chat',
-        status: 'pending',
+        reply: impossibleResult.reply,
+        proposals: [],
+        usedFallback: false,
+        error: impossibleResult.error,
       };
-    });
-  };
+    }
+  }
 
   if (USE_LIVE_GEMINI_API) {
     try {
@@ -2517,7 +2352,7 @@ export async function requestAiProposals(params: {
       if (params.taskType === 'chat' && isInformationalPlaceQuery(params.message)) {
         const args = extractPlaceQueryArgs(
           params.message,
-          params.destination,
+          effectiveDestination,
           params.currentDay.activities
         );
         if (args) {
@@ -2530,6 +2365,7 @@ export async function requestAiProposals(params: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...params,
+          destination: effectiveDestination,
           language: isEn ? 'en' : 'pt',
           uiLanguage: resolvedUiLanguage,
           sanitizedItinerary,
@@ -2540,6 +2376,14 @@ export async function requestAiProposals(params: {
 
       if (res.ok) {
         const data = await res.json();
+        if (data?.error && typeof data.error === 'object' && data.error.message) {
+          return {
+            reply: data.reply || data.error.message,
+            proposals: [],
+            usedFallback: false,
+            error: data.error,
+          };
+        }
         if (data?.toolUsed === 'fetch_google_place_details' && data?.reply) {
           return {
             reply: data.reply,
@@ -2588,82 +2432,87 @@ export async function requestAiProposals(params: {
                   matchedTarget &&
                   p.targetActivityTitle !== matchedTarget.title
                     ? String(p.targetActivityTitle)
-                    : isEn
-                    ? `${params.destination} — Verified Alternative #${idx + 1}`
-                    : `${params.destination} — Alternativa Verificada #${idx + 1}`);
-                const suggestedDesc =
-                  payload?.description ||
-                  p.reason ||
-                  (isEn
-                    ? `Curated stop in ${params.destination} tailored to your request.`
-                    : `Paragem selecionada em ${params.destination} de acordo com o seu pedido.`);
-                const tierForIdx: BudgetTier = idx === 0 ? 'budget' : idx === 1 ? 'mid' : 'premium';
-                payload = {
-                  id: payload?.id || deterministicActId,
-                  title: suggestedTitle,
-                  category: payload?.category || matchedTarget?.category || 'culture',
-                  description: suggestedDesc,
-                  startTime:
-                    payload?.startTime ||
-                    p.newStartTime ||
-                    matchedTarget?.startTime ||
-                    '15:00',
-                  durationMin: payload?.durationMin || matchedTarget?.durationMin || 90,
-                  openingHoursText:
-                    payload?.openingHoursText ||
-                    matchedTarget?.openingHoursText ||
-                    '09:30 – 19:00',
-                  isOutdoor: Boolean(payload?.isOutdoor ?? false),
-                  interestTags: payload?.interestTags || matchedTarget?.interestTags || ['culture', 'food'],
-                  location: {
-                    name: payload?.location?.name || `${suggestedTitle}, ${params.destination}`,
-                    lat: payload?.location?.lat ?? Number((baseLat + 0.0025 * (idx + 1)).toFixed(4)),
-                    lng: payload?.location?.lng ?? Number((baseLng - 0.002 * (idx + 1)).toFixed(4)),
-                  },
-                  costOptions: payload?.costOptions || {
-                    budget: {
-                      title: `${suggestedTitle} — ${isEn ? 'Budget' : 'Económico'}`,
-                      estimatedCost: 8 + idx * 2,
-                      isPriceVerified: true,
-                      description: isEn ? 'Local budget option' : 'Opção económica local',
-                    },
-                    mid: {
-                      title: `${suggestedTitle} — ${isEn ? 'Mid-Range' : 'Intermédio'}`,
-                      estimatedCost: 16 + idx * 4,
-                      isPriceVerified: true,
-                      description: isEn ? 'Mid-range cultural experience' : 'Experiência cultural intermédia',
-                    },
-                    premium: {
-                      title: `${suggestedTitle} — Premium`,
-                      estimatedCost: 36 + idx * 8,
-                      isPriceVerified: true,
-                      description: isEn
-                        ? 'Private guided or tasting experience'
-                        : 'Experiência privada com guia ou degustação',
-                    },
-                  },
-                  selectedTier: tierForIdx,
-                  isPriceVerified: true,
-                  priceConfidence: {
-                    status: 'verified',
-                    sourceUrl: 'https://www.visitportugal.com/',
-                    verifiedAt: '2026-10-28',
-                    notes: isEn ? 'Verified 2026 rate' : 'Tarifa verificada 2026',
-                  },
-                  hoursConfidence: {
-                    status: 'verified',
-                    sourceUrl: 'https://www.visitportugal.com/',
-                    verifiedAt: '2026-10-28',
-                    notes: isEn ? 'Verified opening hours' : 'Horário verificado',
-                  },
-                  whyThis:
+                    : '');
+                if (!suggestedTitle) {
+                  payload = undefined;
+                } else {
+                  const suggestedDesc =
+                    payload?.description ||
                     p.reason ||
                     (isEn
-                      ? `Suggestion tailored to your request: "${params.message}"`
-                      : `Sugestão adaptada ao seu pedido: «${params.message}»`),
-                  touristTrapScore: 20 + idx * 3,
-                  votes: {},
-                };
+                      ? `Curated stop in ${effectiveDestination} tailored to your request.`
+                      : `Paragem selecionada em ${effectiveDestination} de acordo com o seu pedido.`);
+                  const tierForIdx: BudgetTier = idx === 0 ? 'budget' : idx === 1 ? 'mid' : 'premium';
+                  payload = {
+                    id: payload?.id || deterministicActId,
+                    title: suggestedTitle,
+                    category: payload?.category || matchedTarget?.category || 'culture',
+                    description: suggestedDesc,
+                    startTime:
+                      payload?.startTime ||
+                      p.newStartTime ||
+                      matchedTarget?.startTime ||
+                      '15:00',
+                    durationMin: payload?.durationMin || matchedTarget?.durationMin || 90,
+                    openingHoursText:
+                      payload?.openingHoursText ||
+                      matchedTarget?.openingHoursText ||
+                      '09:30 – 19:00',
+                    isOutdoor: Boolean(payload?.isOutdoor ?? false),
+                    interestTags:
+                      payload?.interestTags || matchedTarget?.interestTags || ['culture'],
+                    location: {
+                      name: payload?.location?.name || `${suggestedTitle}, ${effectiveDestination}`,
+                      lat:
+                        payload?.location?.lat ??
+                        Number((baseLat + 0.0025 * (idx + 1)).toFixed(4)),
+                      lng:
+                        payload?.location?.lng ??
+                        Number((baseLng - 0.002 * (idx + 1)).toFixed(4)),
+                    },
+                    costOptions: payload?.costOptions || {
+                      budget: {
+                        title: `${suggestedTitle} — ${isEn ? 'Budget' : 'Económico'}`,
+                        estimatedCost: 8 + idx * 2,
+                        isPriceVerified: false,
+                        description: isEn ? 'Local budget option' : 'Opção económica local',
+                      },
+                      mid: {
+                        title: `${suggestedTitle} — ${isEn ? 'Mid-Range' : 'Intermédio'}`,
+                        estimatedCost: 16 + idx * 4,
+                        isPriceVerified: false,
+                        description: isEn
+                          ? 'Mid-range experience'
+                          : 'Experiência intermédia',
+                      },
+                      premium: {
+                        title: `${suggestedTitle} — Premium`,
+                        estimatedCost: 36 + idx * 8,
+                        isPriceVerified: false,
+                        description: isEn
+                          ? 'Private guided experience'
+                          : 'Experiência privada com guia',
+                      },
+                    },
+                    selectedTier: tierForIdx,
+                    isPriceVerified: false,
+                    priceConfidence: {
+                      status: 'estimated',
+                      notes: isEn ? 'AI estimated rate' : 'Tarifa estimada',
+                    },
+                    hoursConfidence: {
+                      status: 'estimated',
+                      notes: isEn ? 'Estimated opening hours' : 'Horário estimado',
+                    },
+                    whyThis:
+                      p.reason ||
+                      (isEn
+                        ? `Suggestion tailored to your request: "${params.message}"`
+                        : `Sugestão adaptada ao seu pedido: «${params.message}»`),
+                    touristTrapScore: 20 + idx * 3,
+                    votes: {},
+                  };
+                }
               } else if (payload && !payload.id) {
                 payload = { ...payload, id: deterministicActId };
               }
@@ -2686,13 +2535,31 @@ export async function requestAiProposals(params: {
                 status: 'pending',
               };
             }
+          ).filter((p: ProposalChange) => p.type === 'remove' || p.type === 'move' || Boolean(p.payload));
+
+          // Filter out any spoofed venues (e.g. Lisbon venues stitched with another destination) or intent-mismatched venues
+          let finalCandidateList = filterAndSanitizeProposalsForRegionAndIntent(
+            mappedProposals,
+            effectiveDestination,
+            params.message
           );
 
-          // Enforce 2 to 3 distinct alternatives when taskType === 'chat'
-          let finalCandidateList = mappedProposals;
           if (params.taskType === 'chat' && finalCandidateList.length < 2) {
-            const fallbackThree = buildThreeChatAlternatives();
-            for (const fb of fallbackThree) {
+            const regionalResolved = resolveIntentAndRegionProposals({
+              destination: effectiveDestination,
+              message: params.message,
+              currentDay: params.currentDay,
+              uiLanguage: resolvedUiLanguage,
+            });
+            if (regionalResolved.error && finalCandidateList.length === 0) {
+              return {
+                reply: regionalResolved.reply,
+                proposals: [],
+                usedFallback: false,
+                error: regionalResolved.error,
+              };
+            }
+            for (const fb of regionalResolved.proposals) {
               if (finalCandidateList.length >= 3) break;
               if (
                 !finalCandidateList.some(
@@ -2725,16 +2592,16 @@ export async function requestAiProposals(params: {
         }
       }
     } catch {
-      // Fall through to deterministic multi-option proposal or grounded place fallback
+      // Fall through to region-verified & intent-matched proposal resolver below
     }
   }
 
   if (params.taskType === 'chat' && isInformationalPlaceQuery(params.message)) {
     const args = extractPlaceQueryArgs(
       params.message,
-      params.destination,
+      effectiveDestination,
       params.currentDay.activities
-    ) || { placeName: params.destination, city: params.destination };
+    ) || { placeName: effectiveDestination, city: effectiveDestination };
 
     const placeDetails =
       (await fetchPlaceDetailsFromMapsSdk(args.placeName, args.city)) ||
@@ -2783,14 +2650,14 @@ export async function requestAiProposals(params: {
 
     const paceTitleCandidates = isEn
       ? [
-          `Fábrica Coffee Roasters & Viewpoint (${params.destination})`,
-          `Botanical Garden & Wine Bar (${params.destination})`,
-          `Historic Cloister & Gelateria (${params.destination})`,
+          `Specialty Roastery & Panoramic Viewpoint in ${effectiveDestination}`,
+          `Botanical Garden & Terrace in ${effectiveDestination}`,
+          `Historic Cloister & Artisan Gelateria in ${effectiveDestination}`,
         ]
       : [
-          `Fábrica Coffee Roasters & Miradouro (${params.destination})`,
-          `Jardim Botânico & Wine Bar (${params.destination})`,
-          `Claustro Histórico & Gelateria (${params.destination})`,
+          `Torrefação de Especialidade e Miradouro em ${effectiveDestination}`,
+          `Jardim Botânico e Esplanada em ${effectiveDestination}`,
+          `Claustro Histórico e Gelataria Artesanal em ${effectiveDestination}`,
         ];
     const chosenPaceTitle =
       paceTitleCandidates.find((t) => !existingTitlesLower.has(t.toLowerCase())) ||
@@ -2880,14 +2747,14 @@ export async function requestAiProposals(params: {
     const names = params.travelers.map((t) => t.displayName).join(isEn ? ' and ' : ' e ');
     const compTitleCandidates = isEn
       ? [
-          `Cultural Courtyard & Neighbourhood Tapas (${params.destination})`,
-          `Historic Cloister & Artisan Wine Bar (${params.destination})`,
-          `Waterfront Market & Acoustic Session (${params.destination})`,
+          `Cultural Courtyard & Regional Gastronomy in ${effectiveDestination}`,
+          `Historic Cloister & Artisan Wine Bar in ${effectiveDestination}`,
+          `Old Quarter Market & Acoustic Session in ${effectiveDestination}`,
         ]
       : [
-          `Pátio Cultural & Petiscos de Bairro (${params.destination})`,
-          `Claustro Histórico & Garrafeira Artesanal (${params.destination})`,
-          `Mercado Ribeirinho & Sessão Acústica (${params.destination})`,
+          `Pátio Cultural e Gastronomia Regional em ${effectiveDestination}`,
+          `Claustro Histórico e Garrafeira Artesanal em ${effectiveDestination}`,
+          `Mercado Histórico e Sessão Acústica em ${effectiveDestination}`,
         ];
     const chosenCompTitle =
       compTitleCandidates.find((t) => !existingTitlesLower.has(t.toLowerCase())) ||
@@ -2971,15 +2838,19 @@ export async function requestAiProposals(params: {
     };
   }
 
-  // Default Chat Assistant multi-option proposals (always returns 3 distinct, verified alternatives)
-  const threeAlternatives = buildThreeChatAlternatives();
+  // Default Chat Assistant region-verified and intent-matched proposals (or graceful no-hallucination error)
+  const resolvedRegional = resolveIntentAndRegionProposals({
+    destination: effectiveDestination,
+    message: params.message,
+    currentDay: params.currentDay,
+    uiLanguage: resolvedUiLanguage,
+  });
 
   return {
     usedFallback: true,
-    reply: isEn
-      ? `I prepared 3 distinct, verified alternatives for Day ${params.currentDay.dayNumber} based on your request ("${params.message}"). Compare the options side by side in the "Proposed Changes" banner above — nothing changes in your itinerary until you click "Accept" on your preferred option.`
-      : `Preparei 3 alternativas distintas e verificadas para o Dia ${params.currentDay.dayNumber} com base no seu pedido («${params.message}»). Compare as opções lado a lado na secção «Alterações Propostas» acima — nada será alterado no seu roteiro até clicar em «Aceitar» na sua opção preferida.`,
-    proposals: threeAlternatives,
+    reply: resolvedRegional.reply,
+    proposals: resolvedRegional.proposals,
+    ...(resolvedRegional.error ? { error: resolvedRegional.error } : {}),
   };
 }
 
@@ -3020,6 +2891,7 @@ export async function streamAtlasGenieChat(params: {
   proposals: ProposalChange[];
   toolUsed?: string;
   placeDetails?: GooglePlaceDetailsResult;
+  error?: { code: string; message: string };
 }> {
   const resolvedUiLanguage =
     params.uiLanguage || (params.language === 'en' ? 'en' : 'pt-PT');
@@ -3147,6 +3019,7 @@ export async function streamAtlasGenieChat(params: {
     proposals: result.proposals,
     toolUsed: result.toolUsed,
     placeDetails: result.placeDetails,
+    ...(result.error ? { error: result.error } : {}),
   };
 }
 
@@ -3456,5 +3329,56 @@ export async function requestAccommodationAlternative(params: {
     },
   };
 }
+
+/**
+ * Generates a custom activity with expanded regional/metropolitan geolocation bounds
+ * (e.g., for mountain hikes, nature parks, or regional landmarks) via /api/ai/custom-activity.
+ * If the request is geographically impossible, returns an explicit `error` object.
+ */
+export async function generateCustomActivity(params: {
+  requestText: string;
+  destination: string;
+  country?: string;
+  startTime?: string;
+  estimatedCost?: number;
+  baseCoords?: { lat: number; lng: number };
+  uiLanguage?: string;
+}): Promise<{
+  error?: { code: string; message: string };
+  activity?: Activity;
+  expandedRadiusKm?: number;
+}> {
+  const localEvaluation = resolveRegionalCustomActivity(params);
+  if (localEvaluation.error) {
+    return localEvaluation;
+  }
+
+  if (USE_LIVE_GEMINI_API && typeof window !== 'undefined') {
+    try {
+      const response = await fetch('/api/ai/custom-activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.error) {
+          return { error: data.error };
+        }
+        if (data?.activity) {
+          return {
+            activity: data.activity,
+            expandedRadiusKm: data.expandedRadiusKm,
+          };
+        }
+      }
+    } catch {
+      // Fall back to deterministic regional resolution below
+    }
+  }
+
+  return localEvaluation;
+}
+
 
 

@@ -5,11 +5,14 @@ import {
   getFirestore,
   collection,
   doc,
+  getDoc,
   setDoc,
+  updateDoc,
   getDocs,
   query,
   where,
   orderBy,
+  arrayUnion,
   serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
@@ -351,3 +354,125 @@ export async function getUserTrips(userId: string): Promise<FullTripBundle[]> {
     return getLocalSavedTripsCache(userId);
   }
 }
+
+/**
+ * Queries Firestore for a trip matching the given trip ID or inviteCode,
+ * with fallback to locally cached trips so both cloud and demo/local invites resolve reliably.
+ */
+export async function fetchTripByIdOrInviteCode(
+  codeOrId: string,
+  localTrips?: Record<string, FullTripBundle>
+): Promise<FullTripBundle | null> {
+  const cleanRaw = (codeOrId || '').trim();
+  if (!cleanRaw) return null;
+  const cleanUpper = cleanRaw.toUpperCase();
+
+  // 1. Check local trips first if already loaded in memory
+  if (localTrips) {
+    const localMatch = (Object.values(localTrips) as FullTripBundle[]).find(
+      (b) =>
+        b.trip.id === cleanRaw ||
+        b.trip.inviteCode.toUpperCase() === cleanUpper
+    );
+    if (localMatch) {
+      return localMatch;
+    }
+  }
+
+  // 2. Query Firestore by exact document ID or by inviteCode field
+  try {
+    const directDocRef = doc(db, 'trips', cleanRaw);
+    const directSnap = await getDoc(directDocRef);
+    if (directSnap.exists()) {
+      const data = directSnap.data() as Record<string, any>;
+      let subDays: Day[] = [];
+      try {
+        const daysSnap = await getDocs(collection(db, 'trips', directSnap.id, 'days'));
+        subDays = daysSnap.docs.map((d) => d.data() as Day);
+      } catch {
+        // ignore subcollection read fallback
+      }
+      return normalizeTripDocToBundle(
+        directSnap.id,
+        data,
+        String(data.ownerId || data.userId || 'owner'),
+        subDays
+      );
+    }
+
+    const inviteQuery = query(
+      collection(db, 'trips'),
+      where('inviteCode', '==', cleanUpper)
+    );
+    const querySnap = await getDocs(inviteQuery);
+    if (!querySnap.empty) {
+      const matchedDoc = querySnap.docs[0];
+      const data = matchedDoc.data() as Record<string, any>;
+      let subDays: Day[] = [];
+      try {
+        const daysSnap = await getDocs(collection(db, 'trips', matchedDoc.id, 'days'));
+        subDays = daysSnap.docs.map((d) => d.data() as Day);
+      } catch {
+        // ignore subcollection read fallback
+      }
+      return normalizeTripDocToBundle(
+        matchedDoc.id,
+        data,
+        String(data.ownerId || data.userId || 'owner'),
+        subDays
+      );
+    }
+  } catch (err) {
+    console.warn('Firestore fetchTripByIdOrInviteCode notice:', err);
+  }
+
+  return null;
+}
+
+/**
+ * Uses Firestore's `arrayUnion` to push the authenticated `userUid` into the trip's
+ * `travelers` and `memberIds` arrays, and optionally writes the Traveler subcollection doc.
+ */
+export async function joinTripWithArrayUnion(
+  tripId: string,
+  userUid: string,
+  travelerRecord?: Traveler
+): Promise<{ joined: boolean; tripId: string; userUid: string }> {
+  const cleanTripId = (tripId || '').trim();
+  const cleanUid = (userUid || '').trim();
+  if (!cleanTripId || !cleanUid) {
+    throw new Error('Valid tripId and authenticated user.uid are required to join a trip.');
+  }
+
+  try {
+    const tripDocRef = doc(db, 'trips', cleanTripId);
+    await updateDoc(tripDocRef, {
+      travelers: arrayUnion(cleanUid),
+      memberIds: arrayUnion(cleanUid),
+      groupEnabled: true,
+      updatedAt: serverTimestamp(),
+    });
+
+    if (travelerRecord) {
+      await setDoc(
+        doc(db, 'trips', cleanTripId, 'travelers', travelerRecord.id),
+        {
+          ...sanitizeForFirestore(travelerRecord),
+          userId: cleanUid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (err) {
+    console.warn('Firestore joinTripWithArrayUnion notice (applied to local state):', err);
+  }
+
+  return {
+    joined: true,
+    tripId: cleanTripId,
+    userUid: cleanUid,
+  };
+}
+

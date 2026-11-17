@@ -30,5 +30,11 @@ test('Dirty Dozen #1-12: Firestore rules structural & invariant verification', (
   assert.ok(rules.includes('defaultPaceLevel'));
   assert.ok(rules.includes('savedInterests'));
   assert.ok(rules.includes('savedRestrictions'));
+  // 10. Travelers array & authenticated owner access
+  assert.ok(rules.includes('request.auth != null'));
+  assert.ok(rules.includes('request.auth.uid == userId'));
+  assert.ok(rules.includes('request.auth.uid in tripData.travelers'));
+  assert.ok(rules.includes('request.auth.uid in incoming().travelers'));
 });
+
 
