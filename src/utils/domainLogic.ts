@@ -546,6 +546,173 @@ export function optimizeBudgetTiers(
   };
 }
 
+export interface NormalizeTravelersOptions {
+  tripId?: string;
+  ownerId?: string;
+  ownerName?: string;
+  defaultInterests?: string[];
+  totalBudget?: number;
+  travelersCount?: number;
+  defaultPace?: number;
+}
+
+const TRAVELER_PALETTE = ['#D97706', '#0D9488', '#2563EB', '#E11D48', '#7C3AED', '#059669'];
+
+/**
+ * Normalizes a travelers list from Firestore or local state.
+ * Safely handles mixed arrays containing both Traveler objects and raw UID strings
+ * (written by Firestore `arrayUnion(uid)`), partial objects, or string-spread objects
+ * (`{ '0': 'u', '1': 'i', ... }`), preventing White Screen crashes and preserving all members.
+ */
+export function normalizeTravelersList(
+  rawTravelers: unknown,
+  rawTravelerProfiles?: unknown,
+  options: NormalizeTravelersOptions = {}
+): Traveler[] {
+  const tripId = String(options.tripId || 'trip');
+  const ownerId = String(options.ownerId || 'owner');
+  const defaultInterests =
+    Array.isArray(options.defaultInterests) && options.defaultInterests.length > 0
+      ? options.defaultInterests.map((i) => String(i))
+      : ['food', 'culture'];
+  const defaultBudget = Math.max(
+    50,
+    Math.round(
+      (Number(options.totalBudget) || 800) / Math.max(1, Number(options.travelersCount) || 2)
+    )
+  );
+
+  const combinedInput: unknown[] = [
+    ...(Array.isArray(rawTravelers) ? rawTravelers : []),
+    ...(Array.isArray(rawTravelerProfiles) ? rawTravelerProfiles : []),
+  ];
+
+  const objectTravelers: Traveler[] = [];
+  const rawUidStrings: string[] = [];
+  const seenIds = new Set<string>();
+  const seenUserIds = new Set<string>();
+
+  for (const item of combinedInput) {
+    if (!item) continue;
+    if (typeof item === 'string') {
+      const cleanUid = item.trim();
+      if (cleanUid) rawUidStrings.push(cleanUid);
+      continue;
+    }
+    if (typeof item === 'object') {
+      const rec = item as Record<string, unknown>;
+      // Detect accidental string spread `{ '0': 'u', '1': 'i', ... }` without displayName/id
+      if (typeof rec.displayName !== 'string' && typeof rec.id !== 'string') {
+        const indexedChars: string[] = [];
+        let k = 0;
+        while (typeof rec[String(k)] === 'string' && (rec[String(k)] as string).length === 1) {
+          indexedChars.push(rec[String(k)] as string);
+          k++;
+        }
+        const reconstructedUid = indexedChars.join('').trim();
+        if (reconstructedUid) {
+          rawUidStrings.push(reconstructedUid);
+        }
+        continue;
+      }
+
+      const rawId = typeof rec.id === 'string' && rec.id.trim() ? rec.id.trim() : '';
+      const rawUserId =
+        typeof rec.userId === 'string' && rec.userId.trim() ? rec.userId.trim() : '';
+      const resolvedId =
+        rawId || (rawUserId ? `trav-${rawUserId.slice(0, 8)}` : `trav-${objectTravelers.length + 1}`);
+      const resolvedUserId = rawUserId || resolvedId;
+
+      if (seenIds.has(resolvedId)) continue;
+      if (
+        resolvedUserId &&
+        !resolvedUserId.startsWith('guest-') &&
+        seenUserIds.has(resolvedUserId)
+      ) {
+        continue;
+      }
+
+      const cleanName =
+        typeof rec.displayName === 'string' && rec.displayName.trim()
+          ? rec.displayName.trim()
+          : resolvedUserId === ownerId && options.ownerName
+          ? options.ownerName
+          : `Traveler ${objectTravelers.length + 1}`;
+
+      const interestsList = Array.isArray(rec.interests)
+        ? rec.interests
+            .filter((x): x is string => typeof x === 'string' && Boolean(x.trim()))
+            .map((x) => x.trim())
+        : defaultInterests;
+
+      const budgetNum = Number(rec.budgetPerPerson);
+      const paceNum = Number(rec.preferredPace);
+      const color =
+        typeof rec.color === 'string' && rec.color.trim()
+          ? rec.color.trim()
+          : TRAVELER_PALETTE[objectTravelers.length % TRAVELER_PALETTE.length];
+      const avatar =
+        typeof rec.avatar === 'string' && rec.avatar.trim()
+          ? rec.avatar.trim().slice(0, 2).toUpperCase()
+          : (cleanName[0] || 'T').toUpperCase();
+
+      const normalized: Traveler = {
+        id: resolvedId,
+        tripId: typeof rec.tripId === 'string' && rec.tripId.trim() ? rec.tripId.trim() : tripId,
+        ownerId:
+          typeof rec.ownerId === 'string' && rec.ownerId.trim() ? rec.ownerId.trim() : ownerId,
+        userId: resolvedUserId,
+        displayName: cleanName,
+        interests: interestsList.length > 0 ? interestsList : defaultInterests,
+        budgetPerPerson: Number.isFinite(budgetNum) && budgetNum >= 0 ? budgetNum : defaultBudget,
+        constraints:
+          typeof rec.constraints === 'string' && rec.constraints.trim()
+            ? rec.constraints.trim()
+            : 'None',
+        preferredPace:
+          Number.isFinite(paceNum) && paceNum >= 1 && paceNum <= 5 ? Math.round(paceNum) : 3,
+        color,
+        avatar,
+      };
+
+      seenIds.add(normalized.id);
+      if (normalized.userId) seenUserIds.add(normalized.userId);
+      objectTravelers.push(normalized);
+    }
+  }
+
+  // Hydrate any raw UID strings that do not yet have a corresponding Traveler profile object
+  for (const uid of rawUidStrings) {
+    if (seenIds.has(uid) || seenUserIds.has(uid) || seenIds.has(`trav-${uid.slice(0, 6)}`)) {
+      continue;
+    }
+    const isCreator = uid === ownerId;
+    const fallbackName = isCreator
+      ? options.ownerName || 'Organizer'
+      : `Member ${objectTravelers.length + 1}`;
+    const synthId = `trav-${uid.slice(0, 8)}`;
+    const color = TRAVELER_PALETTE[objectTravelers.length % TRAVELER_PALETTE.length];
+    const synth: Traveler = {
+      id: synthId,
+      tripId,
+      ownerId,
+      userId: uid,
+      displayName: fallbackName,
+      interests: defaultInterests,
+      budgetPerPerson: defaultBudget,
+      constraints: 'None',
+      preferredPace: 3,
+      color,
+      avatar: (fallbackName[0] || 'M').toUpperCase(),
+    };
+    seenIds.add(synth.id);
+    seenUserIds.add(uid);
+    objectTravelers.push(synth);
+  }
+
+  return objectTravelers;
+}
+
 export interface PersonFairness {
   travelerId: string;
   displayName: string;
@@ -564,37 +731,64 @@ export interface FairnessReport {
 /**
  * Group Fairness Meter calculator (Feature C).
  * Evaluates how well each traveler's interests are represented per person and per day.
+ * Wrapped in defensive optional chaining and safe fallbacks so undefined properties never crash React.
  */
-export function computeGroupFairness(days: Day[], travelers: Traveler[]): FairnessReport {
-  if (travelers.length === 0) {
+export function computeGroupFairness(
+  days: Day[] | undefined | null,
+  travelers: Traveler[] | undefined | null
+): FairnessReport {
+  const safeDays = Array.isArray(days) ? days.filter(Boolean) : [];
+  const safeTravelers = normalizeTravelersList(travelers);
+
+  if (safeTravelers.length === 0) {
     return { overallFairnessIndex: 100, perPerson: [], tradeOffExplanations: [] };
   }
 
-  const perPerson: PersonFairness[] = travelers.map((traveler) => {
-    const normInterests = traveler.interests.map((i) => i.toLowerCase());
+  const perPerson: PersonFairness[] = safeTravelers.map((traveler, idx) => {
+    const rawInterests = Array.isArray(traveler?.interests) ? traveler.interests : [];
+    const normInterests = rawInterests
+      .filter((i): i is string => typeof i === 'string')
+      .map((i) => i.toLowerCase());
+    const travelerNameLower = String(traveler?.displayName || '').toLowerCase();
+    const travelerId = String(traveler?.id || `trav-${idx + 1}`);
     let totalMatched = 0;
     let totalActivities = 0;
     const perDayScore: Record<number, number> = {};
 
-    for (const day of days) {
-      const activeList = day.activePlan === 'B' && day.planB.length > 0 ? day.planB : day.activities;
+    for (const day of safeDays) {
+      const planBList = Array.isArray(day?.planB) ? day.planB : [];
+      const planAList = Array.isArray(day?.activities) ? day.activities : [];
+      const activeList =
+        day?.activePlan === 'B' && planBList.length > 0 ? planBList : planAList;
       let dayMatches = 0;
       for (const act of activeList) {
+        if (!act) continue;
         totalActivities++;
-        const tags = [act.category, ...(act.interestTags || [])].map((t) => t.toLowerCase());
+        const rawTags = [
+          act?.category || '',
+          ...(Array.isArray(act?.interestTags) ? act.interestTags : []),
+        ];
+        const tags = rawTags
+          .filter((t): t is string => typeof t === 'string' && Boolean(t))
+          .map((t) => t.toLowerCase());
+        const whyThisLower = String(act?.whyThis || '').toLowerCase();
         const isMatch =
           normInterests.some((interest) =>
             tags.some((t) => t.includes(interest) || interest.includes(t))
           ) ||
-          act.whyThis.toLowerCase().includes(traveler.displayName.toLowerCase()) ||
-          act.votes?.[traveler.id] === 'up';
+          (travelerNameLower.length > 0 && whyThisLower.includes(travelerNameLower)) ||
+          act?.votes?.[travelerId] === 'up' ||
+          (traveler?.userId ? act?.votes?.[traveler.userId] === 'up' : false);
         if (isMatch) {
           dayMatches++;
           totalMatched++;
         }
       }
-      perDayScore[day.dayNumber] =
-        activeList.length > 0 ? Math.min(100, Math.round((dayMatches / activeList.length) * 100 + 20)) : 50;
+      const dayNum = Number(day?.dayNumber) || 1;
+      perDayScore[dayNum] =
+        activeList.length > 0
+          ? Math.min(100, Math.round((dayMatches / activeList.length) * 100 + 20))
+          : 50;
     }
 
     const overallScore =
@@ -603,31 +797,40 @@ export function computeGroupFairness(days: Day[], travelers: Traveler[]): Fairne
         : 75;
 
     return {
-      travelerId: traveler.id,
-      displayName: traveler.displayName,
-      color: traveler.color,
-      overallScore,
+      travelerId,
+      displayName: String(traveler?.displayName || `Traveler ${idx + 1}`),
+      color: String(traveler?.color || TRAVELER_PALETTE[idx % TRAVELER_PALETTE.length]),
+      overallScore: Number.isFinite(overallScore) ? overallScore : 75,
       matchedActivitiesCount: totalMatched,
       perDayScore,
     };
   });
 
-  const scores = perPerson.map((p) => p.overallScore);
-  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
-  const maxSpread = Math.max(...scores) - Math.min(...scores);
-  const overallFairnessIndex = Math.max(0, Math.min(100, Math.round(avg - maxSpread * 0.4)));
+  const scores = perPerson.map((p) => (Number.isFinite(p?.overallScore) ? p.overallScore : 0));
+  const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+  const maxSpread = scores.length > 0 ? Math.max(...scores) - Math.min(...scores) : 0;
+  const rawFairness = Math.round(avg - maxSpread * 0.4);
+  const overallFairnessIndex = Number.isFinite(rawFairness)
+    ? Math.max(0, Math.min(100, rawFairness))
+    : 0;
 
   const tradeOffExplanations: string[] = [];
-  if (travelers.length >= 2 && days.length >= 2) {
-    const t1 = travelers[0];
-    const t2 = travelers[1];
+  if (safeTravelers.length >= 2 && safeDays.length >= 2) {
+    const t1 = safeTravelers[0];
+    const t2 = safeTravelers[1];
+    const t1Interests = (t1?.interests || []).slice(0, 2).join(', ') || 'general';
+    const t2Interests = (t2?.interests || []).slice(0, 2).join(', ') || 'general';
     tradeOffExplanations.push(
-      `${t1.displayName} (${t1.interests.slice(0, 2).join(', ')}) is balanced with ${t2.displayName} (${t2.interests.slice(0, 2).join(', ')}) across alternate mornings and evenings.`
+      `${t1?.displayName || 'Traveler 1'} (${t1Interests}) is balanced with ${
+        t2?.displayName || 'Traveler 2'
+      } (${t2Interests}) across alternate mornings and evenings.`
     );
-    if (travelers.length >= 3) {
-      const t3 = travelers[2];
+    if (safeTravelers.length >= 3) {
+      const t3 = safeTravelers[2];
       tradeOffExplanations.push(
-        `Group pace and per-person budget are capped to respect ${t3.displayName}'s €${t3.budgetPerPerson} target.`
+        `Group pace and per-person budget are capped to respect ${
+          t3?.displayName || 'Traveler 3'
+        }'s €${Number(t3?.budgetPerPerson) || 0} target.`
       );
     }
   }
@@ -666,17 +869,22 @@ export interface ExpenseSummaryResult {
 /**
  * Split the Bill & Min-Transfer Debt Settlement algorithm (Feature D).
  * Guarantees that net balances sum to 0 (within 0.01 rounding) and minimises transfers.
+ * Wrapped in defensive checks so undefined/empty inputs never throw or produce NaN.
  */
 export function computeExpenseBalancesAndSettlement(
-  expenses: Expense[],
-  travelers: Traveler[]
+  expenses: Expense[] | undefined | null,
+  travelers: Traveler[] | undefined | null
 ): ExpenseSummaryResult {
+  const safeExpenses = Array.isArray(expenses) ? expenses.filter(Boolean) : [];
+  const safeTravelers = normalizeTravelersList(travelers);
+
   const nameMap: Record<string, string> = {};
   const paidMap: Record<string, number> = {};
   const owedMap: Record<string, number> = {};
 
-  for (const t of travelers) {
-    nameMap[t.id] = t.displayName;
+  for (const t of safeTravelers) {
+    if (!t?.id) continue;
+    nameMap[t.id] = String(t.displayName || t.id);
     paidMap[t.id] = 0;
     owedMap[t.id] = 0;
   }
@@ -691,25 +899,32 @@ export function computeExpenseBalancesAndSettlement(
   };
   const byActivity: Record<string, number> = {};
 
-  for (const exp of expenses) {
-    totalSpent += exp.amount;
-    byCategory[exp.category] = (byCategory[exp.category] || 0) + exp.amount;
-    if (exp.activityId) {
-      byActivity[exp.activityId] = (byActivity[exp.activityId] || 0) + exp.amount;
+  for (const exp of safeExpenses) {
+    const amount = Number(exp?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+
+    totalSpent += amount;
+    const cat = String(exp?.category || 'other');
+    byCategory[cat] = (byCategory[cat] || 0) + amount;
+    if (exp?.activityId) {
+      byActivity[exp.activityId] = (byActivity[exp.activityId] || 0) + amount;
     }
 
-    if (exp.settled) continue;
+    if (exp?.settled) continue;
 
-    if (paidMap[exp.paidBy] === undefined) {
-      paidMap[exp.paidBy] = 0;
-      owedMap[exp.paidBy] = 0;
-      nameMap[exp.paidBy] = exp.paidBy;
+    const paidBy = String(exp?.paidBy || safeTravelers[0]?.id || 'unknown');
+    if (paidMap[paidBy] === undefined) {
+      paidMap[paidBy] = 0;
+      owedMap[paidBy] = 0;
+      nameMap[paidBy] = paidBy;
     }
-    paidMap[exp.paidBy] += exp.amount;
+    paidMap[paidBy] += amount;
 
-    const splitEntries = Object.entries(exp.splits || {});
+    const splitEntries = Object.entries(exp?.splits || {}).filter(
+      ([tId, val]) => Boolean(tId) && Number.isFinite(Number(val)) && Number(val) >= 0
+    );
     if (splitEntries.length > 0) {
-      const splitSum = splitEntries.reduce((acc, [, val]) => acc + val, 0);
+      const splitSum = splitEntries.reduce((acc, [, val]) => acc + Number(val), 0);
       for (const [tId, rawShare] of splitEntries) {
         if (owedMap[tId] === undefined) {
           paidMap[tId] = 0;
@@ -718,27 +933,32 @@ export function computeExpenseBalancesAndSettlement(
         }
         // Normalize in case shares or rounding drifted slightly from exp.amount
         const normalizedAmount =
-          splitSum > 0 ? (rawShare / splitSum) * exp.amount : exp.amount / splitEntries.length;
-        owedMap[tId] += normalizedAmount;
+          splitSum > 0
+            ? (Number(rawShare) / splitSum) * amount
+            : amount / Math.max(1, splitEntries.length);
+        owedMap[tId] += Number.isFinite(normalizedAmount) ? normalizedAmount : 0;
       }
-    } else if (travelers.length > 0) {
-      const equalShare = exp.amount / travelers.length;
-      for (const t of travelers) {
-        owedMap[t.id] += equalShare;
+    } else if (safeTravelers.length > 0) {
+      const equalShare = amount / safeTravelers.length;
+      for (const t of safeTravelers) {
+        if (!t?.id) continue;
+        owedMap[t.id] = (owedMap[t.id] || 0) + equalShare;
       }
     }
   }
 
   const balances: TravelerBalance[] = Object.keys(nameMap).map((id) => {
-    const paidTotal = Math.round((paidMap[id] || 0) * 100) / 100;
-    const owedTotal = Math.round((owedMap[id] || 0) * 100) / 100;
-    const netBalance = Math.round((paidMap[id] - owedMap[id]) * 100) / 100;
+    const paidRaw = Number(paidMap[id]) || 0;
+    const owedRaw = Number(owedMap[id]) || 0;
+    const paidTotal = Math.round(paidRaw * 100) / 100;
+    const owedTotal = Math.round(owedRaw * 100) / 100;
+    const netBalance = Math.round((paidRaw - owedRaw) * 100) / 100;
     return {
       travelerId: id,
-      displayName: nameMap[id],
-      paidTotal,
-      owedTotal,
-      netBalance,
+      displayName: nameMap[id] || id,
+      paidTotal: Number.isFinite(paidTotal) ? paidTotal : 0,
+      owedTotal: Number.isFinite(owedTotal) ? owedTotal : 0,
+      netBalance: Number.isFinite(netBalance) ? netBalance : 0,
     };
   });
 

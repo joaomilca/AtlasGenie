@@ -14,6 +14,8 @@ import {
   handleFirestoreError,
   OperationType,
 } from '../services/firebase';
+import { arrayUnion } from 'firebase/firestore';
+import { joinTripWithArrayUnion } from '../firebase';
 import {
   Activity,
   BudgetTier,
@@ -37,6 +39,7 @@ import {
   deduplicateAndMergeProposals,
   getProposalTargetKey,
   hasValidItineraryData,
+  normalizeTravelersList,
   parseActiveTripFromStorage,
   readActiveTripFromLocalStorage,
   recalculateDayTravelTimes,
@@ -217,130 +220,219 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
-  // Real-time Firestore listener for authenticated user's trips
+  // Real-time Firestore listener for authenticated user's trips (memberIds & travelers array-contains)
   useEffect(() => {
     if (!authReady || !currentUser || !auth.currentUser) return;
 
     const tripsPath = 'trips';
-    const q = query(collection(db, tripsPath), where('memberIds', 'array-contains', currentUser.uid));
+    const handleSnapshotChanges = (snapshot: any) => {
+      snapshot.docChanges().forEach((change: any) => {
+        const tripData = change.doc.data() as any;
+        const tripId = change.doc.id;
+        if (change.type === 'removed') {
+          setTrips((prev) => {
+            const next = { ...prev };
+            delete next[tripId];
+            return next;
+          });
+        } else {
+          setTrips((prev) => {
+            const existing = prev[tripId];
+            const activePersisted = readActiveTripFromLocalStorage();
+            const fallbackExisting =
+              existing ||
+              (activePersisted && activePersisted.trip.id === tripId ? activePersisted : undefined);
+            const resolvedDays =
+              Array.isArray(tripData.days) && tripData.days.length > 0
+                ? tripData.days
+                : fallbackExisting?.days || [];
+            if (resolvedDays.length === 0) {
+              return prev;
+            }
+            const nestedTrip =
+              tripData.trip && typeof tripData.trip === 'object' ? tripData.trip : {};
+            const resolvedOwnerId =
+              tripData.userId || tripData.ownerId || nestedTrip.ownerId || currentUser.uid;
+            const resolvedInterests =
+              tripData.interests || nestedTrip.interests || fallbackExisting?.trip.interests || [];
+            const resolvedTotalBudget = Number(
+              tripData.totalBudget ?? nestedTrip.totalBudget ?? fallbackExisting?.trip.totalBudget ?? 800
+            );
+            const resolvedTravelersCount = Number(
+              tripData.travelersCount ??
+                nestedTrip.travelersCount ??
+                fallbackExisting?.trip.travelersCount ??
+                2
+            );
 
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          const tripData = change.doc.data() as any;
-          const tripId = change.doc.id;
-          if (change.type === 'removed') {
-            setTrips((prev) => {
-              const next = { ...prev };
-              delete next[tripId];
-              return next;
-            });
-          } else {
-            setTrips((prev) => {
-              const existing = prev[tripId];
-              const activePersisted = readActiveTripFromLocalStorage();
-              const fallbackExisting =
-                existing ||
-                (activePersisted && activePersisted.trip.id === tripId ? activePersisted : undefined);
-              const resolvedDays =
-                Array.isArray(tripData.days) && tripData.days.length > 0
-                  ? tripData.days
-                  : fallbackExisting?.days || [];
-              if (resolvedDays.length === 0) {
-                return prev;
+            const normalizedTravelers = normalizeTravelersList(
+              tripData.travelers,
+              [
+                ...(Array.isArray(tripData.travelerProfiles) ? tripData.travelerProfiles : []),
+                ...(fallbackExisting?.travelers || []),
+              ],
+              {
+                tripId,
+                ownerId: resolvedOwnerId,
+                defaultInterests: resolvedInterests,
+                totalBudget: resolvedTotalBudget,
+                travelersCount: resolvedTravelersCount,
               }
-              const nestedTrip = tripData.trip && typeof tripData.trip === 'object' ? tripData.trip : {};
-              return {
-                ...prev,
-                [tripId]: {
-                  trip: {
-                    id: tripId,
-                    ownerId: tripData.userId || tripData.ownerId || nestedTrip.ownerId || currentUser.uid,
-                    destination: tripData.destination || nestedTrip.destination || 'Lisbon',
-                    country: tripData.country || nestedTrip.country,
-                    startDate: tripData.startDate || nestedTrip.startDate || '2026-05-14',
-                    endDate: tripData.endDate || nestedTrip.endDate || '2026-05-17',
-                    currency: tripData.currency || nestedTrip.currency || 'EUR',
-                    totalBudget: Number(tripData.totalBudget ?? nestedTrip.totalBudget ?? 800),
-                    travelersCount: Number(tripData.travelersCount ?? nestedTrip.travelersCount ?? 2),
-                    interests: tripData.interests || nestedTrip.interests || [],
-                    defaultPace: tripData.defaultPace || nestedTrip.defaultPace || 3,
-                    status: tripData.status || nestedTrip.status || 'planned',
-                    memberIds: tripData.memberIds || nestedTrip.memberIds || [currentUser.uid],
-                    inviteCode: tripData.inviteCode || nestedTrip.inviteCode || 'ATLAS1',
-                    assumptions: tripData.assumptions || nestedTrip.assumptions || [],
-                    groupEnabled: Boolean(tripData.groupEnabled ?? nestedTrip.groupEnabled),
-                    isDemo: false,
-                  },
-                  days: resolvedDays,
-                  travelers:
-                    Array.isArray(tripData.travelers) && tripData.travelers.length > 0
-                      ? tripData.travelers
-                      : fallbackExisting?.travelers || [],
-                  expenses:
-                    Array.isArray(tripData.expenses) && tripData.expenses.length > 0
-                      ? tripData.expenses
-                      : fallbackExisting?.expenses || [],
-                },
-              };
-            });
-          }
-        });
-      },
-      (error) => {
-        console.warn('Firestore snapshot listener notice:', error);
-      }
+            );
+
+            const resolvedMemberIds = Array.from(
+              new Set([
+                resolvedOwnerId,
+                ...(Array.isArray(tripData.memberIds) ? tripData.memberIds : []),
+                ...(Array.isArray(nestedTrip.memberIds) ? nestedTrip.memberIds : []),
+                ...normalizedTravelers
+                  .map((t) => t.userId)
+                  .filter((u): u is string => Boolean(u && !u.startsWith('guest-'))),
+              ])
+            );
+
+            const resolvedLang =
+              tripData.language ||
+              nestedTrip.language ||
+              fallbackExisting?.language ||
+              fallbackExisting?.trip.language ||
+              'pt';
+
+            const updatedBundle: FullTripBundle = {
+              language: resolvedLang,
+              trip: {
+                id: tripId,
+                ownerId: resolvedOwnerId,
+                destination: tripData.destination || nestedTrip.destination || 'Lisbon',
+                country: tripData.country || nestedTrip.country || fallbackExisting?.trip.country,
+                startDate: tripData.startDate || nestedTrip.startDate || '2026-05-14',
+                endDate: tripData.endDate || nestedTrip.endDate || '2026-05-17',
+                currency: tripData.currency || nestedTrip.currency || 'EUR',
+                totalBudget: resolvedTotalBudget,
+                travelersCount: Math.max(resolvedTravelersCount, normalizedTravelers.length || 1),
+                interests: resolvedInterests,
+                defaultPace: tripData.defaultPace || nestedTrip.defaultPace || 3,
+                status: tripData.status || nestedTrip.status || 'planned',
+                memberIds: resolvedMemberIds,
+                inviteCode: tripData.inviteCode || nestedTrip.inviteCode || 'ATLAS1',
+                assumptions: tripData.assumptions || nestedTrip.assumptions || [],
+                groupEnabled: Boolean(
+                  tripData.groupEnabled ?? nestedTrip.groupEnabled ?? normalizedTravelers.length > 1
+                ),
+                isDemo: false,
+                language: resolvedLang,
+              },
+              days: resolvedDays,
+              travelers: normalizedTravelers,
+              expenses: Array.isArray(tripData.expenses)
+                ? tripData.expenses
+                : fallbackExisting?.expenses || [],
+            };
+
+            return {
+              ...prev,
+              [tripId]: updatedBundle,
+            };
+          });
+        }
+      });
+    };
+
+    const qMembers = query(
+      collection(db, tripsPath),
+      where('memberIds', 'array-contains', currentUser.uid)
+    );
+    const qTravelers = query(
+      collection(db, tripsPath),
+      where('travelers', 'array-contains', currentUser.uid)
     );
 
-    return () => unsub();
+    const unsubMembers = onSnapshot(qMembers, handleSnapshotChanges, (error) => {
+      console.warn('Firestore memberIds snapshot listener notice:', error);
+    });
+    const unsubTravelers = onSnapshot(qTravelers, handleSnapshotChanges, (error) => {
+      console.warn('Firestore travelers snapshot listener notice:', error);
+    });
+
+    return () => {
+      unsubMembers();
+      unsubTravelers();
+    };
   }, [authReady, currentUser]);
 
   const syncBundleToFirestore = async (bundle: FullTripBundle) => {
-    if (!currentUser || !currentUser.emailVerified || bundle.trip.isDemo) return;
+    const activeUser = currentUser || auth.currentUser;
+    if (!activeUser || bundle.trip.isDemo) return;
     const tripId = bundle.trip.id;
     const tripPath = `trips/${tripId}`;
     try {
+      const normalizedTravelers = normalizeTravelersList(bundle.travelers, undefined, {
+        tripId,
+        ownerId: bundle.trip.ownerId || activeUser.uid,
+        defaultInterests: bundle.trip.interests,
+        totalBudget: bundle.trip.totalBudget,
+        travelersCount: bundle.trip.travelersCount,
+      });
+      const sanitizedTravelers = JSON.parse(JSON.stringify(normalizedTravelers)) as Traveler[];
+      const sanitizedDays = JSON.parse(JSON.stringify(bundle.days || [])) as Day[];
+      const sanitizedExpenses = JSON.parse(JSON.stringify(bundle.expenses || [])) as Expense[];
+      const memberUids = Array.from(
+        new Set([
+          bundle.trip.ownerId || activeUser.uid,
+          activeUser.uid,
+          ...(bundle.trip.memberIds || []),
+          ...sanitizedTravelers
+            .map((t) => t.userId)
+            .filter((u): u is string => Boolean(u && !u.startsWith('guest-'))),
+        ])
+      )
+        .filter((m) => /^[a-zA-Z0-9_-]+$/.test(m))
+        .slice(0, 10);
+
       await setDoc(
         doc(db, 'trips', tripId),
         {
           id: bundle.trip.id,
-          userId: bundle.trip.ownerId,
-          ownerId: bundle.trip.ownerId,
+          userId: bundle.trip.ownerId || activeUser.uid,
+          ownerId: bundle.trip.ownerId || activeUser.uid,
           destination: bundle.trip.destination.slice(0, 120),
+          country: bundle.trip.country || '',
           startDate: bundle.trip.startDate.slice(0, 32),
           endDate: bundle.trip.endDate.slice(0, 32),
           currency: bundle.trip.currency.slice(0, 10),
           totalBudget: Number(bundle.trip.totalBudget),
-          travelersCount: Number(bundle.trip.travelersCount),
+          travelersCount: Math.max(Number(bundle.trip.travelersCount), sanitizedTravelers.length),
           interests: bundle.trip.interests.slice(0, 10),
           defaultPace: Number(bundle.trip.defaultPace),
           status: bundle.trip.status,
-          memberIds: bundle.trip.memberIds.slice(0, 10),
+          memberIds: arrayUnion(...memberUids),
+          travelers: arrayUnion(...memberUids, ...sanitizedTravelers),
+          travelerProfiles: arrayUnion(...sanitizedTravelers),
+          days: sanitizedDays,
+          expenses: sanitizedExpenses,
           inviteCode: bundle.trip.inviteCode.slice(0, 32),
           assumptions: bundle.trip.assumptions.slice(0, 10),
-          groupEnabled: Boolean(bundle.trip.groupEnabled),
-          createdAt: serverTimestamp(),
+          groupEnabled: Boolean(bundle.trip.groupEnabled || sanitizedTravelers.length > 1),
+          language: bundle.language || bundle.trip.language || 'pt',
           updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
 
-      for (const day of bundle.days) {
+      for (const day of sanitizedDays) {
         await setDoc(
           doc(db, 'trips', tripId, 'days', day.id),
           {
             id: day.id,
             tripId,
-            ownerId: bundle.trip.ownerId,
+            ownerId: bundle.trip.ownerId || activeUser.uid,
             date: day.date,
             dayNumber: day.dayNumber,
             paceLevel: day.paceLevel,
             paceScore: day.paceScore,
             activePlan: day.activePlan,
-            activities: day.activities.slice(0, 10),
-            planB: day.planB.slice(0, 10),
-            createdAt: serverTimestamp(),
+            activities: (day.activities || []).slice(0, 10),
+            planB: (day.planB || []).slice(0, 10),
             updatedAt: serverTimestamp(),
           },
           { merge: true }
@@ -867,16 +959,29 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...travelerInput,
       id,
       tripId,
-      ownerId: bundle?.trip.ownerId || 'demo-user',
+      ownerId: bundle?.trip.ownerId || currentUser?.uid || 'demo-user',
     };
 
     if (bundle) {
-      const filteredExisting = bundle.travelers.filter(
-        (t) => !(newTraveler.userId && t.userId === newTraveler.userId && !newTraveler.userId.startsWith('guest-'))
+      const existingNormalized = normalizeTravelersList(bundle.travelers, undefined, {
+        tripId,
+        ownerId: bundle.trip.ownerId,
+        defaultInterests: bundle.trip.interests,
+        totalBudget: bundle.trip.totalBudget,
+        travelersCount: bundle.trip.travelersCount,
+      });
+      const filteredExisting = existingNormalized.filter(
+        (t) =>
+          !(
+            newTraveler.userId &&
+            t.userId === newTraveler.userId &&
+            !newTraveler.userId.startsWith('guest-')
+          )
       );
       const nextTravelers = [...filteredExisting, newTraveler];
       const nextMemberIds = Array.from(
         new Set([
+          bundle.trip.ownerId,
           ...(bundle.trip.memberIds || []),
           ...(newTraveler.userId ? [newTraveler.userId] : []),
         ])
@@ -886,7 +991,7 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         trip: {
           ...bundle.trip,
           groupEnabled: true,
-          travelersCount: nextTravelers.length,
+          travelersCount: Math.max(bundle.trip.travelersCount || 1, nextTravelers.length),
           memberIds: nextMemberIds,
         },
         travelers: nextTravelers,
@@ -894,6 +999,13 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
       writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
       setActiveTravelerId(tripId, id);
+      if (!bundle.trip.isDemo) {
+        await joinTripWithArrayUnion(
+          tripId,
+          newTraveler.userId || newTraveler.id,
+          newTraveler
+        );
+      }
       await syncBundleToFirestore(nextBundle);
       showToast(String(i18n.t('toast.travelerJoined', { name: newTraveler.displayName })));
     }
@@ -912,16 +1024,18 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: `exp-${Date.now().toString(36)}`,
       tripId,
       ownerId: bundle.trip.ownerId,
-      authorId: currentUser?.uid || 'demo-user',
+      authorId: currentUser?.uid || auth.currentUser?.uid || 'demo-user',
     };
 
     const nextBundle: FullTripBundle = {
       ...bundle,
-      expenses: [newExpense, ...bundle.expenses],
+      expenses: [newExpense, ...(bundle.expenses || [])],
     };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
 
-    if (currentUser && currentUser.emailVerified && !bundle.trip.isDemo) {
+    const activeUser = currentUser || auth.currentUser;
+    if (activeUser && !bundle.trip.isDemo) {
       try {
         await setDoc(doc(db, 'trips', tripId, 'expenses', newExpense.id), {
           ...newExpense,
@@ -931,31 +1045,33 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `trips/${tripId}/expenses/${newExpense.id}`);
       }
+      await syncBundleToFirestore(nextBundle);
     }
     showToast(String(i18n.t('toast.expenseRecorded')));
   };
 
   const deleteExpense = async (tripId: string, expenseId: string) => {
     const currentBundle = trips[tripId];
-    setTrips((prev) => {
-      const bundle = prev[tripId];
-      if (!bundle) return prev;
-      const nextExpenses = removeExpenseById(bundle.expenses, expenseId);
-      return {
-        ...prev,
-        [tripId]: {
-          ...bundle,
-          expenses: nextExpenses,
-        },
-      };
-    });
+    if (!currentBundle) return;
+    const nextExpenses = removeExpenseById(currentBundle.expenses || [], expenseId);
+    const nextBundle: FullTripBundle = {
+      ...currentBundle,
+      expenses: nextExpenses,
+    };
+    setTrips((prev) => ({
+      ...prev,
+      [tripId]: nextBundle,
+    }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
 
-    if (currentUser && currentUser.emailVerified && currentBundle && !currentBundle.trip.isDemo) {
+    const activeUser = currentUser || auth.currentUser;
+    if (activeUser && !currentBundle.trip.isDemo) {
       try {
         await deleteDoc(doc(db, 'trips', tripId, 'expenses', expenseId));
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `trips/${tripId}/expenses/${expenseId}`);
       }
+      await syncBundleToFirestore(nextBundle);
     }
     showToast(String(i18n.t('expenses.deletedToast', { defaultValue: 'Expense deleted.' })));
   };
@@ -964,11 +1080,13 @@ export const AtlasProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const bundle = trips[tripId];
     if (!bundle) return;
 
-    const nextExpenses = bundle.expenses.map((e) =>
+    const nextExpenses = (bundle.expenses || []).map((e) =>
       e.id === expenseId ? { ...e, settled: !e.settled } : e
     );
     const nextBundle: FullTripBundle = { ...bundle, expenses: nextExpenses };
     setTrips((prev) => ({ ...prev, [tripId]: nextBundle }));
+    writeActiveTripToLocalStorageGuarded(nextBundle, { allowDemoOverwrite: true });
+    await syncBundleToFirestore(nextBundle);
     showToast(String(i18n.t('toast.settlementUpdated')));
   };
 

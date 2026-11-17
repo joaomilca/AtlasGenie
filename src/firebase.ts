@@ -19,6 +19,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import type { FullTripBundle, Trip, Day, Traveler, Expense } from './types/models';
+import { normalizeTravelersList } from './utils/domainLogic';
 
 // Use the provisioned AI Studio Firebase configuration (including firestoreDatabaseId)
 export const firebaseConfig = firebaseAppletConfig;
@@ -83,47 +84,90 @@ function extractCreatedAtMillis(data: Record<string, any>): number {
   return 0;
 }
 
-function normalizeTripDocToBundle(
+export function normalizeTripDocToBundle(
   docId: string,
   data: Record<string, any>,
   fallbackUserId: string,
-  subDays?: Day[]
+  subDays?: Day[],
+  subTravelers?: Traveler[],
+  subExpenses?: Expense[]
 ): FullTripBundle {
   const nestedTrip = (data.trip && typeof data.trip === 'object' ? data.trip : {}) as Partial<Trip>;
   const destination = String(data.destination || nestedTrip.destination || 'Lisbon');
   const startDate = String(data.startDate || nestedTrip.startDate || '2026-05-14');
   const endDate = String(data.endDate || nestedTrip.endDate || '2026-05-17');
+  const resolvedOwnerId = String(
+    data.ownerId || data.userId || nestedTrip.ownerId || fallbackUserId || 'owner'
+  );
+  const resolvedTripId = docId || String(nestedTrip.id || data.id || `trip-${Date.now()}`);
+  const resolvedInterests = Array.isArray(data.interests)
+    ? data.interests
+    : Array.isArray(nestedTrip.interests)
+    ? nestedTrip.interests
+    : ['food', 'culture'];
+  const resolvedTotalBudget = Number(data.totalBudget ?? nestedTrip.totalBudget ?? 800);
+  const resolvedTravelersCount = Number(data.travelersCount ?? nestedTrip.travelersCount ?? 2);
+
+  const combinedProfileSources = [
+    ...(Array.isArray(subTravelers) ? subTravelers : []),
+    ...(Array.isArray(data.travelerProfiles) ? data.travelerProfiles : []),
+  ];
+
+  const travelers: Traveler[] = normalizeTravelersList(data.travelers, combinedProfileSources, {
+    tripId: resolvedTripId,
+    ownerId: resolvedOwnerId,
+    ownerName: typeof data.ownerName === 'string' ? data.ownerName : undefined,
+    defaultInterests: resolvedInterests,
+    totalBudget: resolvedTotalBudget,
+    travelersCount: resolvedTravelersCount,
+  }).map((t) => ({
+    ...t,
+    tripId: resolvedTripId,
+    ownerId: resolvedOwnerId,
+  }));
+
+  const rawMemberIds = Array.isArray(data.memberIds)
+    ? data.memberIds
+    : Array.isArray(nestedTrip.memberIds)
+    ? nestedTrip.memberIds
+    : [resolvedOwnerId];
+  const mergedMemberIds = Array.from(
+    new Set([
+      resolvedOwnerId,
+      ...rawMemberIds.filter((m): m is string => typeof m === 'string' && Boolean(m.trim())),
+      ...travelers.map((t) => t.userId).filter((u): u is string => Boolean(u && !u.startsWith('guest-'))),
+    ])
+  );
+
+  const resolvedLang = String(
+    data.language || nestedTrip.language || 'pt'
+  );
 
   const trip: Trip = {
-    id: docId || String(nestedTrip.id || data.id || `trip-${Date.now()}`),
-    ownerId: String(data.userId || data.ownerId || nestedTrip.ownerId || fallbackUserId),
+    id: resolvedTripId,
+    ownerId: resolvedOwnerId,
     destination,
     country: data.country || nestedTrip.country || undefined,
     startDate,
     endDate,
     currency: String(data.currency || nestedTrip.currency || 'EUR'),
-    totalBudget: Number(data.totalBudget ?? nestedTrip.totalBudget ?? 800),
-    travelersCount: Number(data.travelersCount ?? nestedTrip.travelersCount ?? 2),
-    interests: Array.isArray(data.interests)
-      ? data.interests
-      : Array.isArray(nestedTrip.interests)
-      ? nestedTrip.interests
-      : ['food', 'culture'],
+    totalBudget: resolvedTotalBudget,
+    travelersCount: Math.max(resolvedTravelersCount, travelers.length || 1),
+    interests: resolvedInterests,
     defaultPace: Number(data.defaultPace ?? nestedTrip.defaultPace ?? 3),
     status: (data.status || nestedTrip.status || 'planned') as Trip['status'],
-    memberIds: Array.isArray(data.memberIds)
-      ? data.memberIds
-      : Array.isArray(nestedTrip.memberIds)
-      ? nestedTrip.memberIds
-      : [fallbackUserId],
+    memberIds: mergedMemberIds,
     inviteCode: String(data.inviteCode || nestedTrip.inviteCode || 'ATLAS26'),
     assumptions: Array.isArray(data.assumptions)
       ? data.assumptions
       : Array.isArray(nestedTrip.assumptions)
       ? nestedTrip.assumptions
       : [],
-    groupEnabled: Boolean(data.groupEnabled ?? nestedTrip.groupEnabled ?? false),
+    groupEnabled: Boolean(
+      data.groupEnabled ?? nestedTrip.groupEnabled ?? travelers.length > 1
+    ),
     isDemo: false,
+    language: resolvedLang,
   };
 
   const resolvedDays =
@@ -141,23 +185,21 @@ function normalizeTripDocToBundle(
     }))
     .sort((a, b) => a.dayNumber - b.dayNumber);
 
-  const travelers: Traveler[] = Array.isArray(data.travelers)
-    ? (data.travelers as Traveler[]).map((t) => ({
-        ...t,
-        tripId: trip.id,
-        ownerId: trip.ownerId,
-      }))
-    : [];
+  const resolvedExpenses =
+    subExpenses && subExpenses.length > 0
+      ? subExpenses
+      : Array.isArray(data.expenses)
+      ? (data.expenses as Expense[])
+      : [];
 
-  const expenses: Expense[] = Array.isArray(data.expenses)
-    ? (data.expenses as Expense[]).map((e) => ({
-        ...e,
-        tripId: trip.id,
-        ownerId: trip.ownerId,
-      }))
-    : [];
+  const expenses: Expense[] = resolvedExpenses.map((e) => ({
+    ...e,
+    tripId: trip.id,
+    ownerId: trip.ownerId,
+  }));
 
   return {
+    language: resolvedLang,
     trip,
     days,
     travelers,
@@ -166,7 +208,8 @@ function normalizeTripDocToBundle(
 }
 
 /**
- * Adds a new trip document to the `trips` collection in Firestore with a `createdAt` timestamp.
+ * Adds or updates a trip document in the `trips` collection in Firestore,
+ * preserving the creator and all travelers using `arrayUnion`.
  */
 export async function saveTrip(
   userId: string,
@@ -195,69 +238,140 @@ export async function saveTrip(
     : [];
 
   const nowMs = Date.now();
-  const tripRef = doc(collection(db, 'trips'));
+  const existingTripId =
+    rawTrip.id && !rawTrip.id.startsWith('demo-') ? rawTrip.id : undefined;
+  const tripRef = existingTripId
+    ? doc(db, 'trips', existingTripId)
+    : doc(collection(db, 'trips'));
   const savedDocId = tripRef.id;
 
-  const cleanInviteCode = String(
-    rawTrip.inviteCode || `AG${nowMs.toString(36).slice(-4).toUpperCase()}`
+  const cleanInviteCode =
+    String(rawTrip.inviteCode || `AG${nowMs.toString(36).slice(-4).toUpperCase()}`)
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 32) || 'ATLAS26';
+
+  const resolvedInterests = (rawTrip.interests || ['food', 'culture'])
+    .slice(0, 10)
+    .map((i) => String(i).slice(0, 50));
+  const resolvedTotalBudget = Math.min(1000000, Math.max(0, Number(rawTrip.totalBudget ?? 800)));
+  const resolvedTravelersCount = Math.min(
+    50,
+    Math.max(1, Number(rawTrip.travelersCount ?? Math.max(1, rawTravelers.length || 2)))
+  );
+
+  const normalizedTravelers = normalizeTravelersList(rawTravelers, undefined, {
+    tripId: savedDocId,
+    ownerId: userId,
+    ownerName:
+      auth.currentUser?.displayName ||
+      (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : 'Organizer'),
+    defaultInterests: resolvedInterests,
+    totalBudget: resolvedTotalBudget,
+    travelersCount: resolvedTravelersCount,
+  });
+
+  if (normalizedTravelers.length === 0 && userId) {
+    const fallbackCreatorName =
+      auth.currentUser?.displayName ||
+      (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : 'Organizer');
+    normalizedTravelers.push({
+      id: `trav-${userId.slice(0, 6)}`,
+      tripId: savedDocId,
+      ownerId: userId,
+      userId,
+      displayName: fallbackCreatorName,
+      interests: resolvedInterests,
+      budgetPerPerson: Math.round(resolvedTotalBudget / Math.max(1, resolvedTravelersCount)),
+      constraints: 'None',
+      preferredPace: Math.min(5, Math.max(1, Number(rawTrip.defaultPace ?? 3))),
+      color: '#D97706',
+      avatar: (fallbackCreatorName[0] || 'O').toUpperCase(),
+    });
+  }
+
+  const sanitizedTravelers = sanitizeForFirestore(normalizedTravelers);
+  const memberUids = Array.from(
+    new Set([
+      userId,
+      ...(rawTrip.memberIds || []),
+      ...normalizedTravelers
+        .map((t) => t.userId)
+        .filter((u): u is string => Boolean(u && !u.startsWith('guest-'))),
+    ])
   )
-    .replace(/[^a-zA-Z0-9_-]/g, '')
-    .slice(0, 32) || 'ATLAS26';
+    .filter((m) => /^[a-zA-Z0-9_-]+$/.test(m))
+    .slice(0, 10);
 
   const strictTripDoc = {
     id: savedDocId,
-    userId,
-    ownerId: userId,
+    userId: rawTrip.ownerId || userId,
+    ownerId: rawTrip.ownerId || userId,
     destination: String(rawTrip.destination || 'Lisbon').slice(0, 120),
+    country: rawTrip.country || '',
     startDate: String(rawTrip.startDate || '2026-05-14').slice(0, 32),
     endDate: String(rawTrip.endDate || '2026-05-17').slice(0, 32),
     currency: String(rawTrip.currency || 'EUR').slice(0, 10),
-    totalBudget: Math.min(1000000, Math.max(0, Number(rawTrip.totalBudget ?? 800))),
-    travelersCount: Math.min(
-      50,
-      Math.max(1, Number(rawTrip.travelersCount ?? Math.max(1, rawTravelers.length || 2)))
-    ),
-    interests: (rawTrip.interests || ['food', 'culture'])
-      .slice(0, 10)
-      .map((i) => String(i).slice(0, 50)),
+    totalBudget: resolvedTotalBudget,
+    travelersCount: Math.max(resolvedTravelersCount, normalizedTravelers.length),
+    interests: resolvedInterests,
     defaultPace: Math.min(5, Math.max(1, Number(rawTrip.defaultPace ?? 3))),
     status:
       rawTrip.status === 'draft' || rawTrip.status === 'ongoing'
         ? rawTrip.status
         : ('planned' as const),
-    memberIds: Array.from(new Set([userId, ...(rawTrip.memberIds || [])]))
-      .filter((m) => /^[a-zA-Z0-9_-]+$/.test(m))
-      .slice(0, 10),
+    memberIds: arrayUnion(...memberUids),
+    travelers: arrayUnion(...memberUids, ...sanitizedTravelers),
+    travelerProfiles: arrayUnion(...sanitizedTravelers),
+    days: sanitizeForFirestore(rawDays),
+    expenses: sanitizeForFirestore(rawExpenses),
     inviteCode: cleanInviteCode,
     assumptions: (rawTrip.assumptions || [])
       .slice(0, 10)
       .map((a) => String(a).slice(0, 200)),
-    groupEnabled: Boolean(rawTrip.groupEnabled),
+    groupEnabled: Boolean(rawTrip.groupEnabled || normalizedTravelers.length > 1),
+    language: rawTrip.language || (tripData as any)?.language || 'pt',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
 
   try {
-    await setDoc(tripRef, strictTripDoc);
+    await setDoc(tripRef, strictTripDoc, { merge: true });
+
+    for (const traveler of sanitizedTravelers) {
+      await setDoc(
+        doc(db, 'trips', savedDocId, 'travelers', traveler.id),
+        {
+          ...traveler,
+          tripId: savedDocId,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
 
     for (const day of rawDays) {
       const cleanDayId =
         String(day.id || `day-${day.dayNumber}`).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128) ||
         `day-${day.dayNumber}`;
-      await setDoc(doc(db, 'trips', savedDocId, 'days', cleanDayId), {
-        id: cleanDayId,
-        tripId: savedDocId,
-        ownerId: userId,
-        date: String(day.date || strictTripDoc.startDate).slice(0, 32),
-        dayNumber: Math.min(30, Math.max(1, Number(day.dayNumber || 1))),
-        paceLevel: Math.min(5, Math.max(1, Number(day.paceLevel || 3))),
-        paceScore: Math.min(100, Math.max(0, Number(day.paceScore || 50))),
-        activePlan: day.activePlan === 'B' ? 'B' : 'A',
-        activities: sanitizeForFirestore((day.activities || []).slice(0, 10)),
-        planB: sanitizeForFirestore((day.planB || []).slice(0, 10)),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(
+        doc(db, 'trips', savedDocId, 'days', cleanDayId),
+        {
+          id: cleanDayId,
+          tripId: savedDocId,
+          ownerId: rawTrip.ownerId || userId,
+          date: String(day.date || strictTripDoc.startDate).slice(0, 32),
+          dayNumber: Math.min(30, Math.max(1, Number(day.dayNumber || 1))),
+          paceLevel: Math.min(5, Math.max(1, Number(day.paceLevel || 3))),
+          paceScore: Math.min(100, Math.max(0, Number(day.paceScore || 50))),
+          activePlan: day.activePlan === 'B' ? 'B' : 'A',
+          activities: sanitizeForFirestore((day.activities || []).slice(0, 10)),
+          planB: sanitizeForFirestore((day.planB || []).slice(0, 10)),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
     }
   } catch (err) {
     console.warn('Firestore saveTrip notice (cached locally):', err);
@@ -265,14 +379,26 @@ export async function saveTrip(
 
   const localBundlePayload = sanitizeForFirestore({
     ...strictTripDoc,
+    id: savedDocId,
+    userId: rawTrip.ownerId || userId,
+    ownerId: rawTrip.ownerId || userId,
+    memberIds: memberUids,
+    travelers: sanitizedTravelers,
+    travelerProfiles: sanitizedTravelers,
     country: rawTrip.country || '',
     days: rawDays,
-    travelers: rawTravelers,
     expenses: rawExpenses,
     createdAtMs: nowMs,
   });
 
-  const savedBundle = normalizeTripDocToBundle(savedDocId, localBundlePayload, userId, rawDays);
+  const savedBundle = normalizeTripDocToBundle(
+    savedDocId,
+    localBundlePayload,
+    userId,
+    rawDays,
+    sanitizedTravelers,
+    rawExpenses
+  );
   const existingLocal = getLocalSavedTripsCache(userId).filter(
     (b) => b.trip.id !== savedBundle.trip.id
   );
@@ -282,7 +408,8 @@ export async function saveTrip(
 }
 
 /**
- * Queries the `trips` collection in Firestore where `userId` matches the logged-in user,
+ * Queries the `trips` collection in Firestore where `travelers` array-contains `userId`,
+ * `memberIds` array-contains `userId`, or `userId` matches the logged-in user,
  * ordered by `createdAt` descending.
  */
 export async function getUserTrips(userId: string): Promise<FullTripBundle[]> {
@@ -290,30 +417,35 @@ export async function getUserTrips(userId: string): Promise<FullTripBundle[]> {
 
   try {
     const tripsRef = collection(db, 'trips');
-    let docsList: { id: string; data: Record<string, any> }[] = [];
+    const docMap = new Map<string, Record<string, any>>();
 
-    try {
-      const orderedQuery = query(
-        tripsRef,
-        where('userId', '==', userId),
-        orderBy('createdAt', 'desc')
-      );
-      const snapshot = await getDocs(orderedQuery);
-      docsList = snapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        data: docSnap.data() as Record<string, any>,
-      }));
-    } catch {
-      // Fallback if composite index (userId ASC, createdAt DESC) is still building in Firestore
-      const fallbackQuery = query(tripsRef, where('userId', '==', userId));
-      const snapshot = await getDocs(fallbackQuery);
-      docsList = snapshot.docs
-        .map((docSnap) => ({
-          id: docSnap.id,
-          data: docSnap.data() as Record<string, any>,
-        }))
-        .sort((a, b) => extractCreatedAtMillis(b.data) - extractCreatedAtMillis(a.data));
+    const collectQueryDocs = async (q: ReturnType<typeof query>) => {
+      try {
+        const snap = await getDocs(q);
+        for (const docSnap of snap.docs) {
+          docMap.set(docSnap.id, docSnap.data() as Record<string, any>);
+        }
+      } catch {
+        // Ignore individual query index error and rely on fallback queries
+      }
+    };
+
+    // 1. Primary collaborative query: where travelers array-contains userId
+    await Promise.all([
+      collectQueryDocs(query(tripsRef, where('travelers', 'array-contains', userId))),
+      collectQueryDocs(query(tripsRef, where('memberIds', 'array-contains', userId))),
+      collectQueryDocs(
+        query(tripsRef, where('userId', '==', userId), orderBy('createdAt', 'desc'))
+      ),
+    ]);
+
+    if (docMap.size === 0) {
+      await collectQueryDocs(query(tripsRef, where('userId', '==', userId)));
     }
+
+    const docsList = Array.from(docMap.entries())
+      .map(([id, data]) => ({ id, data }))
+      .sort((a, b) => extractCreatedAtMillis(b.data) - extractCreatedAtMillis(a.data));
 
     const localCacheById = new Map(
       getLocalSavedTripsCache(userId).map((b) => [b.trip.id, b] as const)
@@ -322,9 +454,17 @@ export async function getUserTrips(userId: string): Promise<FullTripBundle[]> {
     const firestoreBundles: FullTripBundle[] = await Promise.all(
       docsList.map(async (item) => {
         let subDays: Day[] = [];
+        let subTravelers: Traveler[] = [];
+        let subExpenses: Expense[] = [];
         try {
-          const daysSnap = await getDocs(collection(db, 'trips', item.id, 'days'));
+          const [daysSnap, travSnap, expSnap] = await Promise.all([
+            getDocs(collection(db, 'trips', item.id, 'days')),
+            getDocs(collection(db, 'trips', item.id, 'travelers')),
+            getDocs(collection(db, 'trips', item.id, 'expenses')),
+          ]);
           subDays = daysSnap.docs.map((d) => d.data() as Day);
+          subTravelers = travSnap.docs.map((t) => t.data() as Traveler);
+          subExpenses = expSnap.docs.map((e) => e.data() as Expense);
         } catch {
           // ignore subcollection fetch error
         }
@@ -333,12 +473,10 @@ export async function getUserTrips(userId: string): Promise<FullTripBundle[]> {
           item.id,
           item.data,
           userId,
-          subDays.length > 0 ? subDays : cached?.days
+          subDays.length > 0 ? subDays : cached?.days,
+          subTravelers.length > 0 ? subTravelers : cached?.travelers,
+          subExpenses.length > 0 ? subExpenses : cached?.expenses
         );
-        if (cached) {
-          if (bundle.travelers.length === 0) bundle.travelers = cached.travelers;
-          if (bundle.expenses.length === 0) bundle.expenses = cached.expenses;
-        }
         return bundle;
       })
     );
@@ -381,23 +519,36 @@ export async function fetchTripByIdOrInviteCode(
 
   // 2. Query Firestore by exact document ID or by inviteCode field
   try {
-    const directDocRef = doc(db, 'trips', cleanRaw);
-    const directSnap = await getDoc(directDocRef);
-    if (directSnap.exists()) {
-      const data = directSnap.data() as Record<string, any>;
+    const hydrateDocSnap = async (docId: string, data: Record<string, any>) => {
       let subDays: Day[] = [];
+      let subTravelers: Traveler[] = [];
+      let subExpenses: Expense[] = [];
       try {
-        const daysSnap = await getDocs(collection(db, 'trips', directSnap.id, 'days'));
+        const [daysSnap, travSnap, expSnap] = await Promise.all([
+          getDocs(collection(db, 'trips', docId, 'days')),
+          getDocs(collection(db, 'trips', docId, 'travelers')),
+          getDocs(collection(db, 'trips', docId, 'expenses')),
+        ]);
         subDays = daysSnap.docs.map((d) => d.data() as Day);
+        subTravelers = travSnap.docs.map((t) => t.data() as Traveler);
+        subExpenses = expSnap.docs.map((e) => e.data() as Expense);
       } catch {
         // ignore subcollection read fallback
       }
       return normalizeTripDocToBundle(
-        directSnap.id,
+        docId,
         data,
         String(data.ownerId || data.userId || 'owner'),
-        subDays
+        subDays,
+        subTravelers,
+        subExpenses
       );
+    };
+
+    const directDocRef = doc(db, 'trips', cleanRaw);
+    const directSnap = await getDoc(directDocRef);
+    if (directSnap.exists()) {
+      return await hydrateDocSnap(directSnap.id, directSnap.data() as Record<string, any>);
     }
 
     const inviteQuery = query(
@@ -407,20 +558,7 @@ export async function fetchTripByIdOrInviteCode(
     const querySnap = await getDocs(inviteQuery);
     if (!querySnap.empty) {
       const matchedDoc = querySnap.docs[0];
-      const data = matchedDoc.data() as Record<string, any>;
-      let subDays: Day[] = [];
-      try {
-        const daysSnap = await getDocs(collection(db, 'trips', matchedDoc.id, 'days'));
-        subDays = daysSnap.docs.map((d) => d.data() as Day);
-      } catch {
-        // ignore subcollection read fallback
-      }
-      return normalizeTripDocToBundle(
-        matchedDoc.id,
-        data,
-        String(data.ownerId || data.userId || 'owner'),
-        subDays
-      );
+      return await hydrateDocSnap(matchedDoc.id, matchedDoc.data() as Record<string, any>);
     }
   } catch (err) {
     console.warn('Firestore fetchTripByIdOrInviteCode notice:', err);
@@ -430,8 +568,9 @@ export async function fetchTripByIdOrInviteCode(
 }
 
 /**
- * Uses Firestore's `arrayUnion` to push the authenticated `userUid` into the trip's
- * `travelers` and `memberIds` arrays, and optionally writes the Traveler subcollection doc.
+ * Uses Firestore's `arrayUnion` to append the authenticated `userUid` and `travelerRecord`
+ * into the trip's `travelers`, `travelerProfiles`, and `memberIds` arrays without overwriting
+ * existing travelers or kicking out the original creator.
  */
 export async function joinTripWithArrayUnion(
   tripId: string,
@@ -444,20 +583,47 @@ export async function joinTripWithArrayUnion(
     throw new Error('Valid tripId and authenticated user.uid are required to join a trip.');
   }
 
+  const sanitizedTraveler = travelerRecord
+    ? sanitizeForFirestore({
+        ...travelerRecord,
+        id: travelerRecord.id || `trav-${cleanUid.slice(0, 6)}`,
+        tripId: cleanTripId,
+        userId: cleanUid,
+        displayName: travelerRecord.displayName || 'Traveler',
+        interests: Array.isArray(travelerRecord.interests)
+          ? travelerRecord.interests
+          : ['food', 'culture'],
+        budgetPerPerson: Number(travelerRecord.budgetPerPerson) || 400,
+        constraints: String(travelerRecord.constraints || 'None'),
+        preferredPace: Number(travelerRecord.preferredPace) || 3,
+        color: travelerRecord.color || '#0D9488',
+        avatar: (
+          travelerRecord.avatar ||
+          travelerRecord.displayName?.[0] ||
+          'T'
+        ).toUpperCase(),
+      })
+    : undefined;
+
   try {
     const tripDocRef = doc(db, 'trips', cleanTripId);
     await updateDoc(tripDocRef, {
-      travelers: arrayUnion(cleanUid),
+      travelers: sanitizedTraveler
+        ? arrayUnion(cleanUid, sanitizedTraveler)
+        : arrayUnion(cleanUid),
+      ...(sanitizedTraveler
+        ? { travelerProfiles: arrayUnion(sanitizedTraveler) }
+        : {}),
       memberIds: arrayUnion(cleanUid),
       groupEnabled: true,
       updatedAt: serverTimestamp(),
     });
 
-    if (travelerRecord) {
+    if (sanitizedTraveler) {
       await setDoc(
-        doc(db, 'trips', cleanTripId, 'travelers', travelerRecord.id),
+        doc(db, 'trips', cleanTripId, 'travelers', sanitizedTraveler.id),
         {
-          ...sanitizeForFirestore(travelerRecord),
+          ...sanitizedTraveler,
           userId: cleanUid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -475,4 +641,5 @@ export async function joinTripWithArrayUnion(
     userUid: cleanUid,
   };
 }
+
 

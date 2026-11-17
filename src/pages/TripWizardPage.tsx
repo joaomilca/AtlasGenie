@@ -575,8 +575,15 @@ export const TripWizardPage: React.FC = () => {
           specialPreferences,
           customRequest,
           groupEnabled,
-          ownerId: currentUser?.uid || 'demo-user',
-          ownerName: currentUser?.displayName || 'Ana',
+          ownerId: activeAuthUser?.uid || 'organizer',
+          ownerName:
+            activeAuthUser?.displayName ||
+            userProfile?.name ||
+            (activeAuthUser?.email
+              ? activeAuthUser.email.split('@')[0]
+              : language === 'en'
+              ? 'Organizer'
+              : 'Organizador'),
           language,
           uiLanguage: activeLanguage,
           activeLanguage,

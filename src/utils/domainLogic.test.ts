@@ -2817,6 +2817,120 @@ test('Sprint 40: Prompt Tuning — Smart Radius Expansion (20-30km), Abstract In
   assert.equal(absurdAlgiersRes.proposals.length, 0);
 });
 
+test('Sprint 41: Multiplayer State, arrayUnion Traveler Normalization without Creator Overwrite, and Defensive Rendering Math Guards', async () => {
+  const {
+    normalizeTravelersList,
+    computeGroupFairness,
+    computeExpenseBalancesAndSettlement,
+  } = await import('./domainLogic');
+
+  // 1. Creator + Joined user preservation when Firestore arrayUnion stores both UID strings and Traveler objects
+  const creatorTraveler: Traveler = {
+    id: 'trav-creator-uid-1',
+    tripId: 'trip-123',
+    ownerId: 'uid-creator-1',
+    userId: 'uid-creator-1',
+    displayName: 'Diogo Martins',
+    interests: ['history', 'food'],
+    budgetPerPerson: 600,
+    constraints: 'None',
+    preferredPace: 3,
+    color: '#D97706',
+    avatar: 'D',
+  };
+
+  const joinedTraveler: Traveler = {
+    id: 'trav-joined-uid-2',
+    tripId: 'trip-123',
+    ownerId: 'uid-creator-1',
+    userId: 'uid-joined-2',
+    displayName: 'Beatriz Costa',
+    interests: ['nature', 'culture'],
+    budgetPerPerson: 450,
+    constraints: 'Vegetarian',
+    preferredPace: 2,
+    color: '#0D9488',
+    avatar: 'B',
+  };
+
+  // Simulate Firestore tripDoc where arrayUnion pushed raw UID strings AND Traveler objects (plus a legacy string-spread object)
+  const corruptedStringSpread = { ...('uid-joined-2' as unknown as Record<string, unknown>), tripId: 'trip-123' };
+  const normalized = normalizeTravelersList(
+    ['uid-creator-1', creatorTraveler, 'uid-joined-2', corruptedStringSpread],
+    [joinedTraveler],
+    {
+      tripId: 'trip-123',
+      ownerId: 'uid-creator-1',
+      ownerName: 'Diogo Martins',
+      totalBudget: 1050,
+      defaultPace: 3,
+      defaultInterests: ['history', 'food'],
+    }
+  );
+
+  assert.equal(normalized.length, 2, 'Must deduplicate creator and joined user into 2 valid Traveler records');
+  assert.equal(normalized[0].displayName, 'Diogo Martins');
+  assert.equal(normalized[0].userId, 'uid-creator-1');
+  assert.deepEqual(normalized[0].interests, ['history', 'food']);
+  assert.equal(normalized[1].displayName, 'Beatriz Costa');
+  assert.equal(normalized[1].userId, 'uid-joined-2');
+  assert.deepEqual(normalized[1].interests, ['nature', 'culture']);
+
+  // 2. Defensive math in computeGroupFairness and computeExpenseBalancesAndSettlement with empty or malformed inputs
+  const emptyFairness = computeGroupFairness(undefined as unknown as Day[], [] as Traveler[]);
+  assert.equal(emptyFairness.overallFairnessIndex, 100);
+  assert.deepEqual(emptyFairness.perPerson, []);
+
+  const rawStringFairness = computeGroupFairness(
+    [],
+    ['uid-raw-only', corruptedStringSpread] as unknown as Traveler[]
+  );
+  assert.equal(Number.isFinite(rawStringFairness.overallFairnessIndex), true);
+  assert.equal(rawStringFairness.perPerson.length, 2);
+  for (const p of rawStringFairness.perPerson) {
+    assert.equal(Number.isFinite(p.overallScore), true);
+    assert.ok(p.displayName.length > 0);
+  }
+
+  const emptyExpenseSummary = computeExpenseBalancesAndSettlement(
+    undefined as unknown as Expense[],
+    [] as Traveler[]
+  );
+  assert.equal(emptyExpenseSummary.totalSpent, 0);
+  assert.deepEqual(emptyExpenseSummary.balances, []);
+  assert.deepEqual(emptyExpenseSummary.settlements, []);
+
+  // 3. Expense settlement with normalized live travelers (creator + joined user)
+  const liveExpenseSummary = computeExpenseBalancesAndSettlement(
+    [
+      {
+        id: 'exp-1',
+        tripId: 'trip-123',
+        ownerId: 'uid-creator-1',
+        authorId: 'uid-creator-1',
+        activityId: '',
+        category: 'food',
+        description: 'Dinner in Alfama',
+        amount: 80,
+        currency: 'EUR',
+        paidBy: creatorTraveler.id,
+        splitMode: 'equal',
+        splits: {},
+        date: '2026-11-18',
+        settled: false,
+      },
+    ],
+    normalized
+  );
+  assert.equal(liveExpenseSummary.totalSpent, 80);
+  assert.equal(liveExpenseSummary.balances.length, 2);
+  assert.equal(liveExpenseSummary.settlements.length, 1);
+  assert.equal(liveExpenseSummary.settlements[0].fromTravelerId, joinedTraveler.id);
+  assert.equal(liveExpenseSummary.settlements[0].toTravelerId, creatorTraveler.id);
+  assert.equal(liveExpenseSummary.settlements[0].amount, 40);
+});
+
+
 
 
 

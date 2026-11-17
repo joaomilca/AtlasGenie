@@ -11,6 +11,48 @@ import {
 } from '../utils/domainLogic';
 import { FullTripBundle } from '../types/models';
 
+interface DashboardJoinCodeFormProps {
+  onJoinCodeSubmit: (code: string) => void;
+}
+
+const DashboardJoinCodeForm: React.FC<DashboardJoinCodeFormProps> = React.memo(
+  ({ onJoinCodeSubmit }) => {
+    const { t } = useTranslation();
+    const [joinCodeInput, setJoinCodeInput] = useState('');
+
+    const handleSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      const clean = joinCodeInput.trim();
+      if (!clean) return;
+      onJoinCodeSubmit(clean.toUpperCase());
+    };
+
+    return (
+      <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <label htmlFor="join-code-input" className="sr-only">
+          {t('group.inviteCode')}
+        </label>
+        <input
+          id="join-code-input"
+          type="text"
+          value={joinCodeInput}
+          onChange={(e) => setJoinCodeInput(e.target.value)}
+          placeholder={t('dash.invitePlaceholder')}
+          className="flex-1 sm:flex-initial px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
+        />
+        <button
+          type="submit"
+          className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          {t('dash.joinGroupBtn')}
+        </button>
+      </form>
+    );
+  }
+);
+
+DashboardJoinCodeForm.displayName = 'DashboardJoinCodeForm';
+
 export const DashboardPage: React.FC = () => {
   const {
     deleteTrip,
@@ -24,7 +66,6 @@ export const DashboardPage: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  const [joinCodeInput, setJoinCodeInput] = useState('');
   // Synchronous lazy initialization from localStorage (`atlasgenie_active_trip`)
   const [userTrips, setUserTrips] = useState<FullTripBundle[]>(() => {
     const active = readActiveTripFromLocalStorage();
@@ -82,11 +123,12 @@ export const DashboardPage: React.FC = () => {
     return t('dash.departed');
   };
 
-  const handleJoinSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!joinCodeInput.trim()) return;
-    navigate(`/join/${encodeURIComponent(joinCodeInput.trim().toUpperCase())}`);
-  };
+  const handleJoinCodeNavigate = useCallback(
+    (cleanCode: string) => {
+      navigate(`/join/${encodeURIComponent(cleanCode)}`);
+    },
+    [navigate]
+  );
 
   const handleDeleteSavedTrip = async (tripId: string) => {
     await deleteTrip(tripId);
@@ -158,25 +200,7 @@ export const DashboardPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <form onSubmit={handleJoinSubmit} className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <label htmlFor="join-code-input" className="sr-only">
-              {t('group.inviteCode')}
-            </label>
-            <input
-              id="join-code-input"
-              type="text"
-              value={joinCodeInput}
-              onChange={(e) => setJoinCodeInput(e.target.value)}
-              placeholder={t('dash.invitePlaceholder')}
-              className="flex-1 sm:flex-initial px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono-tabular focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-            <button
-              type="submit"
-              className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              {t('dash.joinGroupBtn')}
-            </button>
-          </form>
+          <DashboardJoinCodeForm onJoinCodeSubmit={handleJoinCodeNavigate} />
 
           <Link
             to="/trips/new"

@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { useAtlas } from '../context/AtlasContext';
 import { useI18n } from '../i18n/I18nContext';
-import { saveTrip, auth } from '../firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { saveTrip, auth, db, normalizeTripDocToBundle } from '../firebase';
 import {
   ACTIVE_TRIP_STORAGE_KEY,
   MAX_TRIP_HISTORY_LENGTH,
@@ -32,6 +33,7 @@ import {
   hasValidItineraryData,
   inferItineraryLanguage,
   normalizeJitLanguageCode,
+  normalizeTravelersList,
   parseActiveTripFromStorage,
   popTripHistoryState,
   pushTripHistoryState,
@@ -47,8 +49,10 @@ import {
   DiffBannerSuspenseFallback,
   MapSuspenseFallback,
   ModalSuspenseFallback,
-  TabViewSuspenseFallback,
 } from '../components/SuspenseFallback';
+import { BudgetTabView } from '../components/BudgetTabView';
+import { GroupTabView } from '../components/GroupTabView';
+import { ExpensesTabView } from '../components/ExpensesTabView';
 import {
   generateCustomActivity,
   requestAccommodationAlternative,
@@ -62,15 +66,6 @@ const LazyAtlasMap = lazy(() => import('../components/AtlasMap'));
 const LazyDiffReviewBanner = lazy(() => import('../components/DiffReviewBanner'));
 const LazyLoginModal = lazy(() => import('../components/LoginModal'));
 const LazyActivityDetailsModal = lazy(() => import('../components/ActivityDetailsModal'));
-const LazyBudgetTabView = lazy(() =>
-  import('../components/BudgetTabView').then((m) => ({ default: m.BudgetTabView }))
-);
-const LazyGroupTabView = lazy(() =>
-  import('../components/GroupTabView').then((m) => ({ default: m.GroupTabView }))
-);
-const LazyExpensesTabView = lazy(() =>
-  import('../components/ExpensesTabView').then((m) => ({ default: m.ExpensesTabView }))
-);
 const LazyGuidedTourOverlay = lazy(() =>
   import('../components/GuidedTourOverlay').then((m) => ({ default: m.GuidedTourOverlay }))
 );
@@ -124,12 +119,53 @@ export const TripWorkspacePage: React.FC = () => {
     }
   });
 
-  // Resolve the active bundle synchronously on mount without falling back to empty/demo state if a matching persisted trip exists
+  // Empty loading shell for non-demo trips while Firestore onSnapshot resolves (never leaks mock demo users "Ana", "Rui", "Sofia")
+  const pendingTripShell: FullTripBundle = useMemo(
+    () => ({
+      language: uiLanguage,
+      trip: {
+        id,
+        ownerId: currentUser?.uid || 'owner',
+        destination: uiLanguage === 'en' ? 'Loading itinerary...' : 'A carregar roteiro...',
+        startDate: '2026-11-18',
+        endDate: '2026-11-20',
+        currency: 'EUR',
+        totalBudget: 800,
+        travelersCount: 1,
+        interests: ['culture', 'food'],
+        defaultPace: 3,
+        status: 'planned',
+        memberIds: currentUser?.uid ? [currentUser.uid] : [],
+        inviteCode: id.slice(0, 6).toUpperCase(),
+        assumptions: [],
+        groupEnabled: true,
+        language: uiLanguage,
+      },
+      days: [
+        {
+          id: `${id}-day-1`,
+          tripId: id,
+          ownerId: currentUser?.uid || 'owner',
+          date: '2026-11-18',
+          dayNumber: 1,
+          paceLevel: 3,
+          paceScore: 50,
+          activePlan: 'A',
+          activities: [],
+          planB: [],
+        },
+      ],
+      travelers: [],
+      expenses: [],
+    }),
+    [currentUser?.uid, id, uiLanguage]
+  );
+
+  // Resolve the active bundle synchronously on mount without leaking demo data into non-demo trips
   const rawBundle =
     (itinerary && itinerary.trip.id === id ? itinerary : null) ||
     trips[id] ||
-    (itinerary && !trips[id] ? itinerary : null) ||
-    trips['demo-lisbon-4d'];
+    (id.startsWith('demo-') ? trips['demo-lisbon-4d'] : pendingTripShell);
   const resolvedBundleLang =
     rawBundle.language || rawBundle.trip?.language || inferItineraryLanguage(rawBundle);
   const bundle: FullTripBundle = useMemo(
@@ -147,6 +183,12 @@ export const TripWorkspacePage: React.FC = () => {
     [rawBundle, resolvedBundleLang]
   );
 
+  // Keep a ref to the latest bundle so real-time snapshot updates can merge cleanly without stale closures
+  const latestBundleRef = useRef<FullTripBundle>(bundle);
+  useEffect(() => {
+    latestBundleRef.current = bundle;
+  }, [bundle]);
+
   // Keep local `itinerary` state synchronized when `trips[id]` updates from context mutations
   useEffect(() => {
     const contextTrip = trips[id];
@@ -162,17 +204,103 @@ export const TripWorkspacePage: React.FC = () => {
               trip: { ...contextTrip.trip, language: lang },
             };
       setItinerary(stamped);
-    } else if (itinerary && hasValidItineraryData(itinerary) && !trips[itinerary.trip.id]) {
+    } else if (
+      itinerary &&
+      itinerary.trip.id === id &&
+      hasValidItineraryData(itinerary) &&
+      !trips[itinerary.trip.id]
+    ) {
       registerFetchedTrips([itinerary]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, trips]);
 
-  // 2. Guarded Persistence (`useEffect`): ONLY save to localStorage if the itinerary has valid, non-empty activities
+  // PHASE 2: Real-Time Firestore Listener (`onSnapshot`) on the active trip document
+  // Updates local `itinerary` and `AtlasContext` state in real time whenever a collaborator accepts Plan B, adds an expense, votes, or joins
   useEffect(() => {
-    const activeTarget = trips[id] || itinerary || bundle;
+    if (!id || id.startsWith('demo-')) return;
+    const tripDocRef = doc(db, 'trips', id);
+    const unsubscribe = onSnapshot(
+      tripDocRef,
+      (docSnap) => {
+        if (!docSnap.exists()) return;
+        const data = docSnap.data() as Record<string, unknown>;
+        const currentFallback =
+          latestBundleRef.current?.trip?.id === id &&
+          hasValidItineraryData(latestBundleRef.current)
+            ? latestBundleRef.current
+            : undefined;
+        const normalized = normalizeTripDocToBundle(
+          docSnap.id,
+          data,
+          currentUser?.uid || '',
+          currentFallback?.days,
+          currentFallback?.travelers,
+          currentFallback?.expenses
+        );
+        if (!normalized) return;
+
+        const mergedDays =
+          Array.isArray(normalized.days) && normalized.days.length > 0
+            ? normalized.days
+            : currentFallback?.days || pendingTripShell.days;
+        const mergedTravelers = normalizeTravelersList(
+          [...(currentFallback?.travelers || []), ...(normalized.travelers || [])],
+          data.travelerProfiles,
+          {
+            tripId: docSnap.id,
+            ownerId: normalized.trip.ownerId,
+            ownerName: typeof data.ownerName === 'string' ? data.ownerName : undefined,
+            totalBudget: normalized.trip.totalBudget,
+            defaultPace: normalized.trip.defaultPace,
+            defaultInterests: normalized.trip.interests,
+          }
+        );
+        const mergedExpenses =
+          Array.isArray(data.expenses)
+            ? normalized.expenses
+            : normalized.expenses.length >= (currentFallback?.expenses?.length || 0)
+            ? normalized.expenses
+            : currentFallback?.expenses || [];
+
+        const liveBundle: FullTripBundle = {
+          ...normalized,
+          trip: {
+            ...normalized.trip,
+            travelersCount: Math.max(
+              normalized.trip.travelersCount || 1,
+              mergedTravelers.length || 1
+            ),
+          },
+          days: mergedDays,
+          travelers: mergedTravelers,
+          expenses: mergedExpenses,
+        };
+
+        setItinerary(liveBundle);
+        if (hasValidItineraryData(liveBundle)) {
+          registerFetchedTrips([liveBundle]);
+          writeActiveTripToLocalStorageGuarded(liveBundle);
+        }
+      },
+      (err) => {
+        // Non-fatal listener warning (e.g. offline or local-only unsaved trip)
+        console.warn('Firestore trip workspace real-time listener notice:', err);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [id, pendingTripShell.days, registerFetchedTrips]);
+
+  // 2. Guarded Persistence (`useEffect`): ONLY save to localStorage if the itinerary has valid, non-empty activities for the active `id`
+  useEffect(() => {
+    const activeTarget =
+      trips[id] || (itinerary && itinerary.trip.id === id ? itinerary : null) || bundle;
     if (
       activeTarget &&
+      activeTarget.trip.id === id &&
       hasValidItineraryData(activeTarget) &&
       activeTarget.days.some((d) => Array.isArray(d.activities) && d.activities.length > 0)
     ) {
@@ -234,7 +362,7 @@ export const TripWorkspacePage: React.FC = () => {
 
   const proposals = proposalsByTrip[bundle.trip.id] || [];
   const activeTravelerId =
-    activeTravelerIdByTrip[bundle.trip.id] || bundle.travelers[0]?.id || 'ana';
+    activeTravelerIdByTrip[bundle.trip.id] || bundle.travelers?.[0]?.id || '';
 
   // Undo History Stack (stores deep clones of up to the last 10 trip states)
   const [tripHistory, setTripHistory] = useState<FullTripBundle[]>([]);
@@ -1471,22 +1599,10 @@ export const TripWorkspacePage: React.FC = () => {
         </div>
       )}
 
-      {/* Sub-Views: Budget / Group / Expenses (Lazy-loaded via Suspense) */}
-      {activeTab === 'budget' && (
-        <Suspense fallback={<TabViewSuspenseFallback />}>
-          <LazyBudgetTabView bundle={bundle} />
-        </Suspense>
-      )}
-      {activeTab === 'group' && (
-        <Suspense fallback={<TabViewSuspenseFallback />}>
-          <LazyGroupTabView bundle={bundle} />
-        </Suspense>
-      )}
-      {activeTab === 'expenses' && (
-        <Suspense fallback={<TabViewSuspenseFallback />}>
-          <LazyExpensesTabView bundle={bundle} />
-        </Suspense>
-      )}
+      {/* Sub-Views: Budget / Group / Expenses */}
+      {activeTab === 'budget' && <BudgetTabView bundle={bundle} />}
+      {activeTab === 'group' && <GroupTabView bundle={bundle} />}
+      {activeTab === 'expenses' && <ExpensesTabView bundle={bundle} />}
 
       {/* Main Itinerary + Map View */}
       {activeTab === 'plan' && (
