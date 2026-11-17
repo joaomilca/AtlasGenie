@@ -1290,6 +1290,8 @@ const DEMO_LOGISTICS_BY_TRIP: Record<
 };
 
 for (const [tripKey, bundle] of Object.entries(DEMO_TRIPS)) {
+  bundle.language = bundle.language || 'pt';
+  bundle.trip.language = bundle.trip.language || 'pt';
   const logistics = DEMO_LOGISTICS_BY_TRIP[tripKey];
   bundle.days.forEach((day, dIdx) => {
     const acc = logistics?.accommodations?.[dIdx] || logistics?.accommodations?.[0];

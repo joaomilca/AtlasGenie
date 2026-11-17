@@ -12,6 +12,7 @@ import {
   Clock,
   Footprints,
   Coffee,
+  Loader2,
   X,
   Bookmark,
   Wallet,
@@ -29,6 +30,8 @@ import {
   computeTripTotalCost,
   evaluateBudgetGuard,
   hasValidItineraryData,
+  inferItineraryLanguage,
+  normalizeJitLanguageCode,
   parseActiveTripFromStorage,
   popTripHistoryState,
   pushTripHistoryState,
@@ -49,6 +52,7 @@ import {
 import {
   requestAccommodationAlternative,
   requestAiProposals,
+  requestJitTripTranslation,
   streamAtlasGenieChat,
 } from '../services/api';
 
@@ -77,6 +81,8 @@ export const TripWorkspacePage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   const { language } = useI18n();
+  const uiLanguage = language;
+  const [isTranslating, setIsTranslating] = useState(false);
   const {
     currentUser,
     trips,
@@ -101,28 +107,65 @@ export const TripWorkspacePage: React.FC = () => {
   const [itinerary, setItinerary] = useState<FullTripBundle | null>(() => {
     try {
       const saved = localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
-      return saved ? parseActiveTripFromStorage(saved) : null;
+      const parsed = saved ? parseActiveTripFromStorage(saved) : null;
+      if (!parsed) return null;
+      const lang = parsed.language || parsed.trip?.language || inferItineraryLanguage(parsed);
+      return {
+        ...parsed,
+        language: lang,
+        trip: {
+          ...parsed.trip,
+          language: lang,
+        },
+      };
     } catch {
       return null;
     }
   });
 
   // Resolve the active bundle synchronously on mount without falling back to empty/demo state if a matching persisted trip exists
-  const bundle =
+  const rawBundle =
+    (itinerary && itinerary.trip.id === id ? itinerary : null) ||
     trips[id] ||
-    (itinerary && (itinerary.trip.id === id || !trips[id]) ? itinerary : null) ||
+    (itinerary && !trips[id] ? itinerary : null) ||
     trips['demo-lisbon-4d'];
+  const resolvedBundleLang =
+    rawBundle.language || rawBundle.trip?.language || inferItineraryLanguage(rawBundle);
+  const bundle: FullTripBundle = useMemo(
+    () =>
+      rawBundle.language === resolvedBundleLang && rawBundle.trip?.language === resolvedBundleLang
+        ? rawBundle
+        : {
+            ...rawBundle,
+            language: resolvedBundleLang,
+            trip: {
+              ...rawBundle.trip,
+              language: resolvedBundleLang,
+            },
+          },
+    [rawBundle, resolvedBundleLang]
+  );
 
   // Keep local `itinerary` state synchronized when `trips[id]` updates from context mutations
   useEffect(() => {
     const contextTrip = trips[id];
     if (contextTrip && hasValidItineraryData(contextTrip) && contextTrip !== itinerary) {
-      setItinerary(contextTrip);
+      const lang =
+        contextTrip.language || contextTrip.trip?.language || inferItineraryLanguage(contextTrip);
+      const stamped =
+        contextTrip.language === lang && contextTrip.trip?.language === lang
+          ? contextTrip
+          : {
+              ...contextTrip,
+              language: lang,
+              trip: { ...contextTrip.trip, language: lang },
+            };
+      setItinerary(stamped);
     } else if (itinerary && hasValidItineraryData(itinerary) && !trips[itinerary.trip.id]) {
       registerFetchedTrips([itinerary]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, itinerary, trips]);
+  }, [id, trips]);
 
   // 2. Guarded Persistence (`useEffect`): ONLY save to localStorage if the itinerary has valid, non-empty activities
   useEffect(() => {
@@ -135,6 +178,58 @@ export const TripWorkspacePage: React.FC = () => {
       writeActiveTripToLocalStorageGuarded(activeTarget);
     }
   }, [bundle, id, itinerary, trips]);
+
+  // 3. JIT Translation Trigger (`useEffect` on `[uiLanguage]`):
+  // Translates the active itinerary in the background via `/api/translate-trip` when `itinerary.language !== uiLanguage`
+  useEffect(() => {
+    const activeTarget =
+      itinerary && itinerary.trip.id === bundle.trip.id ? itinerary : bundle;
+    if (!activeTarget || !hasValidItineraryData(activeTarget)) return;
+
+    const currentItinLang =
+      activeTarget.language ||
+      activeTarget.trip?.language ||
+      inferItineraryLanguage(activeTarget);
+
+    if (
+      currentItinLang === uiLanguage ||
+      normalizeJitLanguageCode(currentItinLang) === normalizeJitLanguageCode(uiLanguage)
+    ) {
+      return;
+    }
+
+    let isCancelled = false;
+    setIsTranslating(true);
+
+    (async () => {
+      try {
+        const translated = await requestJitTripTranslation(activeTarget, uiLanguage);
+        if (isCancelled) return;
+        const updatedItinerary: FullTripBundle = {
+          ...translated,
+          language: uiLanguage,
+          trip: {
+            ...translated.trip,
+            language: uiLanguage,
+          },
+        };
+        setItinerary(updatedItinerary);
+        writeActiveTripToLocalStorageGuarded(updatedItinerary, { allowDemoOverwrite: true });
+        await saveTripBundle(updatedItinerary);
+      } catch (error) {
+        console.error('JIT Translation API failed:', error);
+      } finally {
+        if (!isCancelled) {
+          setIsTranslating(false);
+        }
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiLanguage, id]);
 
   const proposals = proposalsByTrip[bundle.trip.id] || [];
   const activeTravelerId =
@@ -1028,7 +1123,27 @@ export const TripWorkspacePage: React.FC = () => {
   };
 
   return (
-    <main className="max-w-7xl mx-auto px-0 md:px-8 py-6 md:py-8 pb-24 md:pb-16 print:py-2 print:px-0">
+    <main
+      data-itinerary-language={bundle.language || uiLanguage}
+      className="relative max-w-7xl mx-auto px-0 md:px-8 py-6 md:py-8 pb-24 md:pb-16 print:py-2 print:px-0"
+    >
+      {/* JIT Translation Loading Overlay */}
+      {isTranslating && (
+        <div
+          data-testid="jit-translation-overlay"
+          role="status"
+          aria-live="polite"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-xs print:hidden"
+        >
+          <div className="flex items-center gap-3 px-5 py-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 shadow-xl text-sm font-semibold text-slate-900 dark:text-white">
+            <Loader2 className="w-4 h-4 text-[#D97706] animate-spin shrink-0" />
+            <span>
+              {uiLanguage === 'en' ? 'Translating itinerary...' : 'A traduzir roteiro...'}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Print-Only Header (visible only when printing / exporting PDF) */}
       <div className="hidden print:block pb-4 mb-6 border-b-2 border-slate-900" aria-hidden="true">
         <div className="flex items-center justify-between">

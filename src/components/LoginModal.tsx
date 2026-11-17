@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import { X, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { signInWithGoogle } from '../services/firebase';
 import { useAuth, mapFirebaseAuthError } from '../context/AuthContext';
+import { useAtlas } from '../context/AtlasContext';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -13,8 +14,8 @@ interface LoginModalProps {
 export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { t, i18n } = useTranslation();
   const { login, signup } = useAuth();
+  const { showToast } = useAtlas();
   const [isSignup, setIsSignup] = useState(false);
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -29,12 +30,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
     try {
       if (isSignup) {
         await signup(email, password);
+        showToast(t('settings.accountSignupSuccess'));
       } else {
         await login(email, password);
+        showToast(t('settings.accountLoginSuccess'));
       }
+      setPassword('');
       onSuccess?.();
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       setError(mapFirebaseAuthError(err, i18n.language));
     } finally {
       setLoading(false);
@@ -46,6 +50,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
     setLoading(true);
     try {
       await signInWithGoogle();
+      showToast(t('settings.accountLoginSuccess'));
       onSuccess?.();
       onClose();
     } catch (err: any) {
@@ -57,6 +62,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
 
   return (
     <div
+      data-testid="navbar-auth-modal"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
@@ -64,22 +70,26 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
     >
       <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 sm:p-7 space-y-5">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-mono-tabular uppercase tracking-widest text-amber-700 dark:text-amber-400">
-              {t('auth.cloudSyncKicker')}
-            </p>
-            <h2
-              id="login-modal-title"
-              className="font-serif-atlas text-xl font-bold text-slate-900 dark:text-white mt-0.5"
-            >
-              {isSignup ? t('auth.signupTitle') : t('auth.loginTitle')}
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              {t('toast.loginToSave')}
-            </p>
+          <div className="flex items-start gap-2.5">
+            <ShieldCheck className="w-5 h-5 text-[#D97706] mt-0.5 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="text-[11px] font-mono-tabular uppercase tracking-widest text-amber-700 dark:text-amber-400">
+                {t('auth.cloudSyncKicker')}
+              </p>
+              <h2
+                id="login-modal-title"
+                className="font-serif-atlas text-xl font-bold text-slate-900 dark:text-white mt-0.5"
+              >
+                {isSignup ? t('settings.accountSignupBtn') : t('settings.accountLoginBtn')}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                {t('settings.accountSubtitle')}
+              </p>
+            </div>
           </div>
           <button
             type="button"
+            data-testid="login-modal-close-btn"
             onClick={onClose}
             aria-label={t('auth.modalCloseAria')}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -90,6 +100,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
 
         {error && (
           <div
+            data-testid="login-modal-error"
             role="alert"
             className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-200"
           >
@@ -97,14 +108,62 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleGoogle}
-          disabled={loading}
-          className="w-full py-2.5 px-4 text-xs font-semibold text-slate-900 dark:text-white bg-[#FAF6F0] dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-        >
-          {t('auth.googleBtn')}
-        </button>
+        <form onSubmit={handleSubmit} noValidate className="space-y-3.5">
+          <div>
+            <label
+              htmlFor="modal-auth-email"
+              className="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1"
+            >
+              {t('settings.accountEmailLabel')}
+            </label>
+            <input
+              id="modal-auth-email"
+              data-testid="modal-auth-email"
+              type="email"
+              required
+              autoComplete="email"
+              placeholder={t('settings.accountEmailPlaceholder')}
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (error) setError(null);
+              }}
+              className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="modal-auth-password"
+              className="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1"
+            >
+              {t('settings.accountPasswordLabel')}
+            </label>
+            <input
+              id="modal-auth-password"
+              data-testid="modal-auth-password"
+              type="password"
+              required
+              autoComplete={isSignup ? 'new-password' : 'current-password'}
+              placeholder={t('settings.accountPasswordPlaceholder')}
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (error) setError(null);
+              }}
+              className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-[#FAF6F0] dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+          </div>
+
+          <button
+            type="submit"
+            data-testid="modal-auth-submit"
+            disabled={loading}
+            className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 dark:hover:bg-amber-500 disabled:opacity-60 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+          >
+            {isSignup ? t('settings.accountSignupBtn') : t('settings.accountLoginBtn')}
+          </button>
+        </form>
 
         <div className="relative flex py-0.5 items-center">
           <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
@@ -112,70 +171,26 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
           <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-3.5">
-          {isSignup && (
-            <div>
-              <label htmlFor="modal-auth-name" className="block text-xs font-medium mb-1">
-                {t('auth.name')}
-              </label>
-              <input
-                id="modal-auth-name"
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="modal-auth-email" className="block text-xs font-medium mb-1">
-              {t('auth.email')}
-            </label>
-            <input
-              id="modal-auth-email"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="modal-auth-password" className="block text-xs font-medium mb-1">
-              {t('auth.password')}
-            </label>
-            <input
-              id="modal-auth-password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#0F172A] dark:bg-amber-600 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
-          >
-            {isSignup ? t('nav.signup') : t('nav.login')}
-          </button>
-        </form>
+        <button
+          type="button"
+          onClick={handleGoogle}
+          disabled={loading}
+          className="w-full py-2.5 px-4 text-xs font-semibold text-slate-900 dark:text-white bg-[#FAF6F0] dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          {t('auth.googleBtn')}
+        </button>
 
         <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
           <button
             type="button"
+            data-testid="modal-auth-mode-toggle"
             onClick={() => {
               setIsSignup((prev) => !prev);
               setError(null);
             }}
             className="font-semibold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 rounded"
           >
-            {isSignup ? t('auth.alreadyHaveAccount') : t('auth.needAccount')}
+            {isSignup ? t('settings.accountHaveAccountToggle') : t('settings.accountNeedSignupToggle')}
           </button>
           <button
             type="button"
@@ -191,3 +206,4 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
 };
 
 export default React.memo(LoginModal);
+

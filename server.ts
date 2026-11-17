@@ -1,6 +1,6 @@
 import express from 'express';
 import path from 'path';
-import { type FunctionDeclaration, GoogleGenAI, Type } from '@google/genai';
+import { type FunctionDeclaration, GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import {
@@ -12,14 +12,17 @@ import {
   buildChatAssistantSystemPrompt,
   buildFunctionResponsePayload,
   buildGlobalLanguageDirective,
+  buildJitTranslateSystemPrompt,
   buildNuclearLanguagePrefix,
   buildStrictBudgetConstraintDirective,
   buildUniversalProperNounDirective,
   extractPlaceQueryArgs,
   formatGroundedPlaceReply,
   isInformationalPlaceQuery,
+  mergeJitTranslatedBundle,
   normalizeGooglePlacesApiResponse,
   normalizeInputBudget,
+  normalizeJitLanguageCode,
   normalizeTargetUiLanguage,
   resolveVerifiedPlaceDetails,
   sanitizeItineraryForAI,
@@ -1547,11 +1550,171 @@ app.post('/api/ai/translate-itinerary', async (req, res) => {
       setCached(cacheKey, finalBundle);
       return res.json({ bundle: finalBundle, translatedBy: 'gemini' });
     }
-  } catch (error) {
-    console.error('Translation API failed:', error);
+  } catch {
+    // Gracefully fall back to deterministic translation without emitting console.error
   }
 
   return res.json({ bundle: deterministicBundle, translatedBy: 'deterministic' });
+});
+
+// Dedicated JIT Translation Backend Route (/api/translate-trip)
+app.post('/api/translate-trip', async (req, res) => {
+  const {
+    itinerary,
+    bundle,
+    uiLanguage = 'en',
+    targetLanguage = '',
+  } = req.body || {};
+
+  const sourceItinerary = itinerary || bundle;
+  if (!sourceItinerary || !Array.isArray(sourceItinerary.days)) {
+    return res.status(400).json({ error: 'Invalid itinerary payload.' });
+  }
+
+  const rawTargetLang =
+    typeof targetLanguage === 'string' && targetLanguage.trim()
+      ? targetLanguage.trim()
+      : typeof uiLanguage === 'string' && uiLanguage.trim()
+      ? uiLanguage.trim()
+      : 'en';
+  const shortLang = normalizeJitLanguageCode(rawTargetLang);
+  const resolvedLang = normalizeTargetUiLanguage(rawTargetLang);
+  const targetLanguageLabel =
+    shortLang === 'en' ? 'English (en)' : 'European Portuguese (pt-PT)';
+
+  // Exact required system prompt for pure JSON translation
+  const jitSystemPrompt = buildJitTranslateSystemPrompt(targetLanguageLabel);
+
+  // Baseline deterministic translation guarantees instant accuracy for known strings & fallback safety
+  const deterministicBase = mergeJitTranslatedBundle(sourceItinerary, null, shortLang);
+  const fallbackStamped = {
+    ...deterministicBase,
+    language: rawTargetLang,
+    trip: {
+      ...deterministicBase.trip,
+      language: rawTargetLang,
+    },
+  };
+
+  const ai = getGeminiClient();
+  if (!ai || sourceItinerary.trip?.isDemo) {
+    return res.json({
+      itinerary: fallbackStamped,
+      bundle: fallbackStamped,
+      translatedBy: 'deterministic',
+    });
+  }
+
+  try {
+    const cacheKey = `jit-translate:v2:${shortLang}:${sourceItinerary.trip?.id || 'trip'}:${sourceItinerary.days.length}`;
+    const cached = getCached<any>(cacheKey);
+    if (cached) {
+      return res.json({
+        itinerary: cached,
+        bundle: cached,
+        translatedBy: 'cache',
+      });
+    }
+
+    const compactDays = deterministicBase.days.map((d: any) => ({
+      id: d.id,
+      dayNumber: d.dayNumber,
+      theme: d.theme,
+      activities: (d.activities || []).map((a: any) => ({
+        id: a.id,
+        title: a.title,
+        description: a.description,
+        whyThis: a.whyThis,
+      })),
+    }));
+
+    let serverTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      serverTimeoutId = setTimeout(() => {
+        reject(new Error('JIT translation timed out'));
+      }, 14000);
+    });
+
+    const response = await Promise.race([
+      ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: JSON.stringify({
+          targetLanguage: targetLanguageLabel,
+          uiLanguage: resolvedLang,
+          days: compactDays,
+        }),
+        config: {
+          systemInstruction: jitSystemPrompt,
+          responseMimeType: 'application/json',
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          },
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              days: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.STRING },
+                    dayNumber: { type: Type.NUMBER },
+                    theme: { type: Type.STRING },
+                    activities: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          id: { type: Type.STRING },
+                          title: { type: Type.STRING },
+                          description: { type: Type.STRING },
+                          whyThis: { type: Type.STRING },
+                        },
+                        required: ['id', 'title', 'description', 'whyThis'],
+                      },
+                    },
+                  },
+                  required: ['id', 'theme', 'activities'],
+                },
+              },
+            },
+            required: ['days'],
+          },
+        },
+      }),
+      timeoutPromise,
+    ]).finally(() => {
+      if (serverTimeoutId) clearTimeout(serverTimeoutId);
+    });
+
+    const rawText = (response.text || '{}')
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const parsed = JSON.parse(rawText);
+    const finalItinerary = mergeJitTranslatedBundle(sourceItinerary, parsed, shortLang);
+    const stampedItinerary = {
+      ...finalItinerary,
+      language: rawTargetLang,
+      trip: {
+        ...finalItinerary.trip,
+        language: rawTargetLang,
+      },
+    };
+    setCached(cacheKey, stampedItinerary);
+    return res.json({
+      itinerary: stampedItinerary,
+      bundle: stampedItinerary,
+      translatedBy: 'gemini-flash',
+    });
+  } catch {
+    return res.json({
+      itinerary: fallbackStamped,
+      bundle: fallbackStamped,
+      translatedBy: 'deterministic',
+    });
+  }
 });
 
 // Reminder Email Server Function (Feature A9)

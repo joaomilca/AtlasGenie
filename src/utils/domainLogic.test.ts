@@ -2268,3 +2268,73 @@ test('Bug Triage: new_trip_draft Persistence, Strict Budget Enforcement (AI Prom
   assert.ok(defaultDraft.startDate >= todayIso);
   assert.ok(defaultDraft.endDate >= defaultDraft.startDate);
 });
+
+test('37. JIT Translation Pipeline: system prompt, pure JSON merge, price/coordinate immutability, and language state sync', async () => {
+  const {
+    buildJitTranslateSystemPrompt,
+    mergeJitTranslatedBundle,
+    inferItineraryLanguage,
+  } = await import('./domainLogic');
+  const { requestJitTripTranslation } = await import('../services/api');
+
+  // 1. Exact system prompt verification
+  const promptEn = buildJitTranslateSystemPrompt('English (en)');
+  assert.equal(
+    promptEn,
+    'You are a pure JSON translator. Translate all string values (titles, descriptions, reasoning) in the provided JSON to English (en). You MUST return the exact same JSON structure, keys, arrays, and numerical values. Do not alter prices or coordinates. Only translate the human-readable text.'
+  );
+
+  // 2. Demo itinerary has initial language 'pt'
+  const originalBundle: FullTripBundle = JSON.parse(JSON.stringify(DEMO_TRIPS['demo-lisbon-4d']));
+  assert.equal(originalBundle.language, 'pt');
+  assert.equal(inferItineraryLanguage(originalBundle), 'pt');
+
+  const origFirstAct = originalBundle.days[0].activities[0];
+  const origLocation = { ...origFirstAct.location };
+  const origMidCost = origFirstAct.costOptions.mid.estimatedCost;
+
+  // 3. Simulate LLM candidate that translates text AND attempts to tamper with prices/coordinates
+  const candidate = JSON.parse(JSON.stringify(originalBundle));
+  candidate.days[0].theme = 'Historic Center, Belém & Tagus Sunset';
+  candidate.days[0].activities[0].title = 'Guided Walk Through Alfama & Miradouro de Santa Luzia';
+  candidate.days[0].activities[0].description = 'Morning stroll through Moorish alleys and viewpoints.';
+  candidate.days[0].activities[0].whyThis = 'Matches historical culture interests with scenic views.';
+  // Attempt to tamper with numerical price & coordinates (must be rejected by mergeJitTranslatedBundle)
+  candidate.days[0].activities[0].costOptions.mid.estimatedCost = 8888;
+  candidate.days[0].activities[0].location = { name: 'Fake', lat: 0, lng: 0, address: 'Fake' };
+
+  const merged = mergeJitTranslatedBundle(originalBundle, candidate, 'en');
+  assert.equal(merged.language, 'en');
+  assert.equal(merged.trip.language, 'en');
+  assert.equal(merged.days[0].theme, 'Historic Center, Belém & Tagus Sunset');
+  assert.equal(merged.days[0].activities[0].title, 'Guided Walk Through Alfama & Miradouro de Santa Luzia');
+  assert.equal(merged.days[0].activities[0].description, 'Morning stroll through Moorish alleys and viewpoints.');
+  assert.equal(merged.days[0].activities[0].whyThis, 'Matches historical culture interests with scenic views.');
+
+  // Numerical prices and coordinates MUST remain 100% identical to originalBundle
+  assert.equal(merged.days[0].activities[0].costOptions.mid.estimatedCost, origMidCost);
+  assert.deepEqual(merged.days[0].activities[0].location, origLocation);
+
+  // 4. Verify requestJitTripTranslation calls /api/translate-trip and updates .language
+  let calledUrl = '';
+  let calledBody: Record<string, unknown> = {};
+  const mockFetch: typeof fetch = async (input, init) => {
+    calledUrl = String(input);
+    calledBody = JSON.parse(String(init?.body || '{}'));
+    return new Response(JSON.stringify({ itinerary: merged }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const translatedViaApi = await requestJitTripTranslation(originalBundle, 'en', {
+    fetchImpl: mockFetch,
+  });
+  assert.equal(calledUrl, '/api/translate-trip');
+  assert.equal(calledBody.uiLanguage, 'en');
+  assert.equal(translatedViaApi.language, 'en');
+  assert.equal(translatedViaApi.trip.language, 'en');
+  assert.equal(translatedViaApi.days[0].activities[0].title, 'Guided Walk Through Alfama & Miradouro de Santa Luzia');
+  assert.equal(translatedViaApi.days[0].activities[0].costOptions.mid.estimatedCost, origMidCost);
+});
+

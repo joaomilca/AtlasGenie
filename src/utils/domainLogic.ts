@@ -4139,10 +4139,14 @@ export function translateItineraryBundleDeterministic(
     planB: (day.planB || []).map((act) => translateActivityDeterministic(act, targetLang)),
   }));
 
+  const shortLang = targetLang === 'en' ? 'en' : 'pt';
+
   return {
     ...bundle,
+    language: shortLang,
     trip: {
       ...bundle.trip,
+      language: shortLang,
       assumptions: (bundle.trip.assumptions || []).map((a) =>
         translateItineraryText(a, targetLang)
       ),
@@ -4613,6 +4617,259 @@ export function enforceStrictBudgetCapOnDays(
     };
   });
 }
+
+/**
+ * Normalizes a UI/itinerary language string ('en', 'en-US', 'pt', 'pt-PT', etc.)
+ * into the canonical 2-letter language code ('en' | 'pt') used on `itinerary.language` and `uiLanguage`.
+ */
+export function normalizeJitLanguageCode(lang?: string | null): 'en' | 'pt' {
+  const clean = String(lang || '')
+    .trim()
+    .toLowerCase();
+  if (clean === 'en' || clean.startsWith('en-') || clean === 'english') {
+    return 'en';
+  }
+  return 'pt';
+}
+
+/**
+ * Infers the active language ('en' | 'pt') of an itinerary bundle when `.language` was not explicitly persisted.
+ */
+export function inferItineraryLanguage(bundle: FullTripBundle | null | undefined): 'en' | 'pt' {
+  if (!bundle) return 'pt';
+  if (typeof bundle.language === 'string' && bundle.language.trim()) {
+    return normalizeJitLanguageCode(bundle.language);
+  }
+  if (typeof bundle.trip?.language === 'string' && bundle.trip.language.trim()) {
+    return normalizeJitLanguageCode(bundle.trip.language);
+  }
+  const sampleText = [
+    bundle.days?.[0]?.theme || '',
+    bundle.days?.[0]?.activities?.[0]?.whyThis || '',
+    bundle.days?.[0]?.activities?.[0]?.description || '',
+  ].join(' ');
+  if (
+    /\b(Day\s+\d+|Discovering|Selected for your|Tailored for your|Suggested for|Early entry|Walk through)\b/i.test(
+      sampleText
+    )
+  ) {
+    return 'en';
+  }
+  return 'pt';
+}
+
+/**
+ * Builds the strict pure JSON translator system prompt for the `/api/translate-trip` endpoint.
+ */
+export function buildJitTranslateSystemPrompt(targetLanguage: string): string {
+  const cleanTarget = String(targetLanguage || 'en').trim() || 'en';
+  return `You are a pure JSON translator. Translate all string values (titles, descriptions, reasoning) in the provided JSON to ${cleanTarget}. You MUST return the exact same JSON structure, keys, arrays, and numerical values. Do not alter prices or coordinates. Only translate the human-readable text.`;
+}
+
+/**
+ * Safely merges a translated itinerary JSON payload onto the original FullTripBundle,
+ * guaranteeing that the exact JSON structure, keys, arrays, numerical values (prices, durations, scores),
+ * and coordinates remain 100% intact while updating all human-readable text and stamping `.language`.
+ */
+export function mergeJitTranslatedBundle(
+  originalBundle: FullTripBundle,
+  translatedCandidate: any,
+  targetUiLanguage: string
+): FullTripBundle {
+  const normalizedTarget = normalizeTargetUiLanguage(targetUiLanguage);
+  const shortLang = normalizeJitLanguageCode(targetUiLanguage);
+  const deterministicBase = translateItineraryBundleDeterministic(originalBundle, normalizedTarget);
+
+  const pickString = (candidateVal: unknown, fallbackVal: string): string =>
+    typeof candidateVal === 'string' && candidateVal.trim().length > 0
+      ? candidateVal.trim()
+      : fallbackVal;
+
+  const candidateDays = Array.isArray(translatedCandidate?.days) ? translatedCandidate.days : [];
+
+  const mergeActivity = (baseAct: Activity, rawAct: any): Activity => {
+    if (!rawAct || typeof rawAct !== 'object') return baseAct;
+    const mergeCostOpt = (
+      baseOpt: Activity['costOptions']['mid'],
+      rawOpt: any
+    ): Activity['costOptions']['mid'] => ({
+      ...baseOpt,
+      title: pickString(rawOpt?.title, baseOpt.title),
+      description: pickString(rawOpt?.description, baseOpt.description),
+      ...(baseOpt.venueName
+        ? { venueName: pickString(rawOpt?.venueName, baseOpt.venueName) }
+        : {}),
+      // Strictly preserve numerical estimatedCost and coordinates from original
+      estimatedCost: baseOpt.estimatedCost,
+      coordinates: baseOpt.coordinates ? { ...baseOpt.coordinates } : undefined,
+    });
+
+    return {
+      ...baseAct,
+      title: pickString(rawAct.title, baseAct.title),
+      description: pickString(rawAct.description, baseAct.description),
+      whyThis: pickString(rawAct.whyThis, baseAct.whyThis),
+      ...(baseAct.openingHoursText
+        ? { openingHoursText: pickString(rawAct.openingHoursText, baseAct.openingHoursText) }
+        : {}),
+      // Strictly preserve location coordinates and numerical fields
+      durationMin: baseAct.durationMin,
+      touristTrapScore: baseAct.touristTrapScore,
+      location: { ...baseAct.location },
+      costOptions: {
+        budget: mergeCostOpt(baseAct.costOptions.budget, rawAct.costOptions?.budget),
+        mid: mergeCostOpt(baseAct.costOptions.mid, rawAct.costOptions?.mid),
+        premium: mergeCostOpt(baseAct.costOptions.premium, rawAct.costOptions?.premium),
+      },
+      ...(baseAct.localAlternative
+        ? {
+            localAlternative: {
+              ...baseAct.localAlternative,
+              title: pickString(
+                rawAct.localAlternative?.title,
+                baseAct.localAlternative.title
+              ),
+              description: pickString(
+                rawAct.localAlternative?.description,
+                baseAct.localAlternative.description
+              ),
+              reason: pickString(
+                rawAct.localAlternative?.reason,
+                baseAct.localAlternative.reason
+              ),
+              estimatedCost: baseAct.localAlternative.estimatedCost,
+              location: { ...baseAct.localAlternative.location },
+            },
+          }
+        : {}),
+    };
+  };
+
+  const mergedDays: Day[] = deterministicBase.days.map((baseDay, dIdx) => {
+    const rawDay =
+      candidateDays.find((cd: any) => cd && (cd.id === baseDay.id || cd.dayNumber === baseDay.dayNumber)) ||
+      candidateDays[dIdx];
+    if (!rawDay || typeof rawDay !== 'object') return baseDay;
+
+    const rawActivities = Array.isArray(rawDay.activities) ? rawDay.activities : [];
+    const rawPlanB = Array.isArray(rawDay.planB) ? rawDay.planB : [];
+
+    return {
+      ...baseDay,
+      theme: pickString(rawDay.theme, baseDay.theme || ''),
+      ...(baseDay.planBDescription
+        ? {
+            planBDescription: pickString(rawDay.planBDescription, baseDay.planBDescription),
+          }
+        : {}),
+      ...(baseDay.accommodation
+        ? {
+            accommodation: {
+              ...baseDay.accommodation,
+              price: baseDay.accommodation.price,
+              coordinates: { ...baseDay.accommodation.coordinates },
+              ...(baseDay.accommodation.description
+                ? {
+                    description: pickString(
+                      rawDay.accommodation?.description,
+                      baseDay.accommodation.description
+                    ),
+                  }
+                : {}),
+              ...(baseDay.accommodation.whyThis
+                ? {
+                    whyThis: pickString(
+                      rawDay.accommodation?.whyThis,
+                      baseDay.accommodation.whyThis
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      ...(baseDay.meals
+        ? {
+            meals: {
+              breakfast: {
+                ...baseDay.meals.breakfast,
+                name: pickString(rawDay.meals?.breakfast?.name, baseDay.meals.breakfast.name),
+                ...(baseDay.meals.breakfast.cuisine
+                  ? {
+                      cuisine: pickString(
+                        rawDay.meals?.breakfast?.cuisine,
+                        baseDay.meals.breakfast.cuisine
+                      ),
+                    }
+                  : {}),
+                estimatedPrice: baseDay.meals.breakfast.estimatedPrice,
+                coordinates: { ...baseDay.meals.breakfast.coordinates },
+              },
+              lunch: {
+                ...baseDay.meals.lunch,
+                name: pickString(rawDay.meals?.lunch?.name, baseDay.meals.lunch.name),
+                ...(baseDay.meals.lunch.cuisine
+                  ? {
+                      cuisine: pickString(
+                        rawDay.meals?.lunch?.cuisine,
+                        baseDay.meals.lunch.cuisine
+                      ),
+                    }
+                  : {}),
+                estimatedPrice: baseDay.meals.lunch.estimatedPrice,
+                coordinates: { ...baseDay.meals.lunch.coordinates },
+              },
+              dinner: {
+                ...baseDay.meals.dinner,
+                name: pickString(rawDay.meals?.dinner?.name, baseDay.meals.dinner.name),
+                ...(baseDay.meals.dinner.cuisine
+                  ? {
+                      cuisine: pickString(
+                        rawDay.meals?.dinner?.cuisine,
+                        baseDay.meals.dinner.cuisine
+                      ),
+                    }
+                  : {}),
+                estimatedPrice: baseDay.meals.dinner.estimatedPrice,
+                coordinates: { ...baseDay.meals.dinner.coordinates },
+              },
+            },
+          }
+        : {}),
+      activities: baseDay.activities.map((act, aIdx) => {
+        const matchAct =
+          rawActivities.find((ra: any) => ra && ra.id === act.id) || rawActivities[aIdx];
+        return mergeActivity(act, matchAct);
+      }),
+      planB: baseDay.planB.map((act, bIdx) => {
+        const matchAct = rawPlanB.find((rb: any) => rb && rb.id === act.id) || rawPlanB[bIdx];
+        return mergeActivity(act, matchAct);
+      }),
+    };
+  });
+
+  const rawAssumptions = Array.isArray(translatedCandidate?.trip?.assumptions)
+    ? translatedCandidate.trip.assumptions
+    : null;
+
+  return {
+    ...deterministicBase,
+    language: shortLang,
+    trip: {
+      ...deterministicBase.trip,
+      language: shortLang,
+      totalBudget: originalBundle.trip.totalBudget,
+      travelersCount: originalBundle.trip.travelersCount,
+      assumptions:
+        rawAssumptions && rawAssumptions.length === deterministicBase.trip.assumptions.length
+          ? deterministicBase.trip.assumptions.map((baseAssump, idx) =>
+              pickString(rawAssumptions[idx], baseAssump)
+            )
+          : deterministicBase.trip.assumptions,
+    },
+    days: mergedDays,
+  };
+}
+
 
 
 

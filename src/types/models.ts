@@ -246,6 +246,7 @@ export interface Trip {
   assumptions: string[];
   groupEnabled: boolean;
   isDemo?: boolean;
+  language?: string;
 }
 
 export interface TravelerProfilePreferences {
@@ -289,8 +290,10 @@ export interface ProposalChange {
 }
 
 export interface FullTripBundle {
+  language?: string;
   trip: Trip;
   days: Day[];
   travelers: Traveler[];
   expenses: Expense[];
 }
+

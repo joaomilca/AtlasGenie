@@ -41,6 +41,7 @@ import {
   readActiveTripFromLocalStorage,
   recalculateDayTravelTimes,
   removeExpenseById,
+  translateItineraryBundleDeterministic,
   writeActiveTripToLocalStorageGuarded,
 } from '../utils/domainLogic';
 import { i18n } from '../i18n/I18nContext';
@@ -103,7 +104,12 @@ const AtlasContext = createContext<AtlasContextValue | undefined>(undefined);
 const LOCAL_STORAGE_KEY = 'atlasgenie_trips_v1';
 
 function loadInitialTrips(): Record<string, FullTripBundle> {
-  const base = JSON.parse(JSON.stringify(DEMO_TRIPS)) as Record<string, FullTripBundle>;
+  const rawBase = JSON.parse(JSON.stringify(DEMO_TRIPS)) as Record<string, FullTripBundle>;
+  const initialLang = i18n.language === 'en' ? 'en' : 'pt-PT';
+  const base: Record<string, FullTripBundle> = {};
+  for (const [k, b] of Object.entries(rawBase)) {
+    base[k] = translateItineraryBundleDeterministic(b, initialLang);
+  }
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     const activeRaw = localStorage.getItem(ACTIVE_TRIP_STORAGE_KEY);
@@ -113,18 +119,25 @@ function loadInitialTrips(): Record<string, FullTripBundle> {
       const merged: Record<string, FullTripBundle> = { ...base, ...parsed };
       for (const demoKey of Object.keys(base)) {
         if (merged[demoKey] && base[demoKey]) {
+          const sameLang =
+            !merged[demoKey].language || merged[demoKey].language === base[demoKey].language;
           merged[demoKey] = {
             ...merged[demoKey],
             trip: {
               ...merged[demoKey].trip,
               destination: base[demoKey].trip.destination,
               country: base[demoKey].trip.country,
-              assumptions: base[demoKey].trip.assumptions,
+              assumptions: sameLang
+                ? base[demoKey].trip.assumptions
+                : merged[demoKey].trip.assumptions,
               totalBudget: base[demoKey].trip.totalBudget,
             },
             days: merged[demoKey].days.map((day, idx) => ({
               ...day,
-              theme: base[demoKey].days[idx]?.theme || day.theme,
+              theme:
+                sameLang && base[demoKey].days[idx]?.theme
+                  ? base[demoKey].days[idx].theme
+                  : day.theme,
               city: base[demoKey].days[idx]?.city || day.city,
             })),
           };

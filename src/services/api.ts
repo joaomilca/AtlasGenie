@@ -21,6 +21,7 @@ import {
   buildChatAssistantSystemPrompt,
   buildFunctionResponsePayload,
   buildGlobalLanguageDirective,
+  buildJitTranslateSystemPrompt,
   buildNuclearLanguagePrefix,
   buildStrictBudgetConstraintDirective,
   buildUniversalProperNounDirective,
@@ -32,9 +33,12 @@ import {
   evaluateBudgetTierFromPerPersonBudget,
   extractPlaceQueryArgs,
   formatGroundedPlaceReply,
+  inferItineraryLanguage,
   isInformationalPlaceQuery,
+  mergeJitTranslatedBundle,
   normalizeGooglePlacesApiResponse,
   normalizeInputBudget,
+  normalizeJitLanguageCode,
   normalizeTargetUiLanguage,
   resolveVerifiedPlaceDetails,
   sanitizeItineraryForAI,
@@ -55,6 +59,7 @@ export {
   TRANSLATION_TIMEOUT_MS,
   buildChatAssistantSystemPrompt,
   buildGlobalLanguageDirective,
+  buildJitTranslateSystemPrompt,
   buildNuclearLanguagePrefix,
   buildStrictBudgetConstraintDirective,
   buildUniversalProperNounDirective,
@@ -62,7 +67,10 @@ export {
   evaluateBudgetGuard,
   evaluateBudgetTierFromPerPersonBudget,
   fetchWithTranslationTimeout,
+  inferItineraryLanguage,
+  mergeJitTranslatedBundle,
   normalizeInputBudget,
+  normalizeJitLanguageCode,
   normalizeTargetUiLanguage,
   runAutoTranslateWithRecovery,
   sanitizeItineraryForAI,
@@ -1435,9 +1443,11 @@ export async function generateTripItinerary(params: {
             safeTravelersCount
           );
 
+          const resolvedShortLang = resolvedUiLanguage === 'en' ? 'en' : 'pt';
           return {
             usedFallback: false,
             bundle: {
+              language: resolvedShortLang,
               trip: {
                 id: tripId,
                 ownerId: params.ownerId,
@@ -1454,6 +1464,7 @@ export async function generateTripItinerary(params: {
                 inviteCode,
                 assumptions: combinedConstraints,
                 groupEnabled: params.groupEnabled,
+                language: resolvedShortLang,
               },
               days: deduplicatedLiveDays,
               travelers: defaultTravelers,
@@ -1855,9 +1866,11 @@ export async function generateTripItinerary(params: {
     safeTravelersCount
   );
 
+  const resolvedFallbackShortLang = resolvedUiLanguage === 'en' ? 'en' : 'pt';
   return {
     usedFallback: true,
     bundle: {
+      language: resolvedFallbackShortLang,
       trip: {
         id: tripId,
         ownerId: params.ownerId,
@@ -1874,6 +1887,7 @@ export async function generateTripItinerary(params: {
         inviteCode,
         assumptions: combinedConstraints,
         groupEnabled: params.groupEnabled,
+        language: resolvedFallbackShortLang,
       },
       days: deduplicatedFallbackDays,
       travelers: fallbackTravelers,
@@ -1886,6 +1900,69 @@ export interface TranslateTripOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   forceLiveApi?: boolean;
+}
+
+/**
+ * JIT Translation Pipeline Client:
+ * Sends the active itinerary JSON and target `uiLanguage` to `/api/translate-trip`,
+ * preserving the exact JSON structure, keys, arrays, prices, and coordinates while
+ * translating human-readable text and updating `.language` to match `uiLanguage`.
+ */
+export async function requestJitTripTranslation(
+  itinerary: FullTripBundle,
+  uiLanguage: string,
+  options?: TranslateTripOptions
+): Promise<FullTripBundle> {
+  const shortLang = normalizeJitLanguageCode(uiLanguage);
+  const timeoutMs = options?.timeoutMs ?? TRANSLATION_TIMEOUT_MS;
+
+  try {
+    const response = await fetchWithTranslationTimeout(
+      '/api/translate-trip',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itinerary,
+          bundle: itinerary,
+          uiLanguage: shortLang,
+          targetLanguage: shortLang,
+        }),
+      },
+      timeoutMs,
+      options?.fetchImpl
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+      const candidate = data?.itinerary || data?.bundle || data;
+      if (candidate && Array.isArray(candidate.days)) {
+        const merged = mergeJitTranslatedBundle(itinerary, candidate, shortLang);
+        return {
+          ...merged,
+          language: uiLanguage,
+          trip: {
+            ...merged.trip,
+            language: uiLanguage,
+          },
+        };
+      }
+    }
+  } catch (err) {
+    if (options?.forceLiveApi) {
+      throw err;
+    }
+  }
+
+  const fallbackMerged = mergeJitTranslatedBundle(itinerary, null, shortLang);
+  return {
+    ...fallbackMerged,
+    language: uiLanguage,
+    trip: {
+      ...fallbackMerged.trip,
+      language: uiLanguage,
+    },
+  };
 }
 
 /**
